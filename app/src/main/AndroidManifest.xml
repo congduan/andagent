@@ -131,6 +131,16 @@
             android:name=".tools.CameraOverlayService"
             android:exported="false"
             android:foregroundServiceType="camera" />
+        <service android:name=".events.EventMonitorService" android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+        <service android:name=".events.EventNotificationListener"
+            android:label="AndAgent 系统事件监听"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
         <service android:name=".pods.PodsService" android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 

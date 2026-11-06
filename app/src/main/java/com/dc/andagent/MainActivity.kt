@@ -448,6 +448,7 @@ class MainActivity : ComponentActivity() {
         // R51: Android KV 持久化底座（namespace + key，JSON 值 + 可选 TTL）。
         tools.putAll(KV_TOOLS.associateWith { KvTool(appContext, it) })
         tools.putAll(IR_TOOLS.associateWith { IrTool(appContext, it) })
+        tools.putAll(com.dc.andagent.events.EVENT_TOOLS.associateWith { com.dc.andagent.events.EventTool(appContext, it) })
         tools.putAll(com.dc.andagent.pods.PODS_TOOLS.associateWith { com.dc.andagent.pods.PodsTool(appContext, permissionBroker, it) })
         // R12/R13 system APIs + R14 automation.
         tools.putAll(SYSTEM_API_TOOLS.associateWith { SystemApiTool(appContext, permissionBroker, shizuku, it) })

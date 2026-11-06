@@ -73,7 +73,8 @@ object PodsMonitor {
     fun snapshots(since: Long = 0) = synchronized(lock) {
         latest.values.filter { it.timestamp >= since }.sortedWith(compareByDescending<PodSnapshot> { it.isConnected == true }.thenByDescending { it.rssi })
     }
-    fun primary() = snapshots(System.currentTimeMillis() - 30_000).firstOrNull()
+    // 已连接设备广播稀疏（约 2 分钟一包），窗口放宽到 30 分钟；ageSeconds 由调用方展示数据新旧。
+    fun primary() = snapshots(System.currentTimeMillis() - 30 * 60_000L).firstOrNull()
     fun historyJson(minutes: Int, limit: Int = CAPACITY) = synchronized(lock) {
         val cutoff = System.currentTimeMillis() - minutes * 60_000L
         buildJsonArray { history.filter { it.timestamp >= cutoff }.takeLast(limit).forEach { add(it.json()) } }
@@ -103,7 +104,12 @@ object PodsMonitor {
         callback = null; scanner = null; running = false
     }
     fun filters() = listOf(ScanFilter.Builder().setManufacturerData(0x004c, byteArrayOf(0x07), byteArrayOf(-1)).build())
-    fun settings() = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+    // monitor 常驻监听用 LOW_POWER（已连接设备广播稀疏，约 2 分钟一包；
+    // LOW_LATENCY 高占空比扫描不可长期跑）。显式 scan 工具用低延迟短窗。
+    fun settings(lowPower: Boolean = true) = ScanSettings.Builder()
+        .setScanMode(if (lowPower) ScanSettings.SCAN_MODE_LOW_POWER else ScanSettings.SCAN_MODE_LOW_LATENCY)
+        .setReportDelay(0)
+        .build()
 }
 
 class PodsService : Service() {
@@ -173,7 +179,7 @@ class PodsTool(private val context: Context, private val permissions: Permission
                 override fun onScanFailed(code: Int) { error.set(code) }
             }
             try {
-                scanner.startScan(PodsMonitor.filters(), PodsMonitor.settings(), cb)
+                scanner.startScan(PodsMonitor.filters(), PodsMonitor.settings(lowPower = false), cb)
                 delay((args.intArg("duration_ms") ?: 3000).coerceIn(1000, 30000).toLong())
                 if (error.get() != 0) "ERROR: BLE 扫描失败，代码 ${error.get()}" else buildJsonObject {
                     put("devices", buildJsonArray { synchronized(seen) { seen.values.sortedByDescending { it.rssi }.forEach { add(it.json()) } } })
@@ -181,12 +187,16 @@ class PodsTool(private val context: Context, private val permissions: Permission
             } catch (e: Exception) { "ERROR: BLE 扫描失败：${e.message}" }
             finally { runCatching { scanner.stopScan(cb) } }
         }
-        "airpods_status" -> PodsMonitor.primary()?.json()?.toString() ?: "没有近期 AirPods 广播；请打开耳机盒或在系统蓝牙设置连接后重试。"
+        "airpods_status" -> PodsMonitor.primary()?.let { s ->
+                val ageSec = (System.currentTimeMillis() - s.timestamp) / 1000
+                buildJsonObject { s.json().let { j -> j.forEach { (k, v) -> put(k, v) } }; put("ageSeconds", ageSec) }.toString()
+            }
+            ?: "没有缓存到 AirPods 广播。注意：耳机连接到手机后广播会变稀疏（约 2 分钟一包），请开启 airpods_monitor_start 持续监听；或打开盒盖触发密集广播后重试。"
         "airpods_battery" -> PodsMonitor.primary()?.let { s -> buildJsonObject {
             put("model", s.model); put("batteryLeft", s.batteryLeft); put("batteryRight", s.batteryRight)
             put("batteryCase", s.batteryCase); put("chargingL", s.chargingL); put("chargingR", s.chargingR)
             put("chargingCase", s.chargingCase); put("timestamp", s.timestamp)
-        }.toString() } ?: "没有近期 AirPods 广播；请打开耳机盒或在系统蓝牙设置连接后重试。"
+        }.toString() } ?: "没有缓存到 AirPods 电量。请开启 airpods_monitor_start 持续监听，或打开盒盖触发广播后重试。"
         "airpods_monitor_start" -> {
             if (!permission()) return "ERROR: 蓝牙扫描权限被拒绝"
             val interval = (args.intArg("interval_ms") ?: 5000).coerceIn(1000, 60000)
