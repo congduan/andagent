@@ -37,8 +37,25 @@ object AppleBleParser {
     )
     private fun level(n: Int): Int? = if (n == 15) null else (n * 10).coerceAtMost(100)
 
-    /** Data excludes the two-byte Bluetooth company identifier. */
+    /** Data excludes the two-byte Bluetooth company identifier.
+     * 解析整条厂商数据（可含多条 Continuity 消息链：type+len+payload 串联），
+     * 逐条尝试 0x07 状态帧——连接态广播可能把状态消息放在链的第二条
+     * （对照 CAPod ContinuityProtocol.Decoder 的链式解析）。 */
     fun parse(data: ByteArray, rssi: Int, address: String? = null, now: Long = System.currentTimeMillis()): PodSnapshot? {
+        var remaining = data
+        var best: PodSnapshot? = null
+        while (remaining.size >= 2) {
+            val msgLen = (remaining[1].toInt() and 255)
+            if (msgLen + 2 > remaining.size) break
+            val msg = remaining.copyOfRange(0, msgLen + 2)
+            parseSingle(msg, rssi, address, now)?.let { if (best == null || it.isLeftInEar != null) best = it }
+            remaining = remaining.copyOfRange(msgLen + 2, remaining.size)
+        }
+        return best
+    }
+
+    /** 解析单条 Continuity 消息（type + len + payload）。 */
+    private fun parseSingle(data: ByteArray, rssi: Int, address: String?, now: Long): PodSnapshot? {
         if (data.size < 11 || (data[0].toInt() and 255) != 0x07) return null
         val length = data[1].toInt() and 255
         if (length < 9 || data.size < length + 2) return null

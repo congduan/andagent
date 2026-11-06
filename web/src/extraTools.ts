@@ -14,6 +14,8 @@ export const EXTRA_TOOL_DEFS = [
   { name: "camera_overlay_show", description: "在其他 app 上层显示原生相机预览浮窗；首次需要悬浮窗和相机授权。", parameters: { type: "object", properties: { camera: { type: "string", enum: ["back", "front"] }, width_dp: { type: "integer" }, height_dp: { type: "integer" } }, required: [] } },
   { name: "camera_overlay_update", description: "调整相机浮窗摄像头、尺寸或位置。", parameters: { type: "object", properties: { camera: { type: "string", enum: ["back", "front"] }, width_dp: { type: "integer" }, height_dp: { type: "integer" }, x: { type: "integer" }, y: { type: "integer" } }, required: [] } },
   { name: "camera_overlay_hide", description: "关闭相机浮窗并释放相机。", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "camera_info", description: "枚举全部摄像头：数量、朝向、传感器分辨率、输出格式与分辨率、光圈、焦距、能力、OIS、闪光灯、物理摄像头组、帧率范围。", parameters: { type: "object", properties: {} } },
+  { name: "sensor_info", description: "读取指纹硬件信息：传感器是否存在、是否已录入指纹。不做认证。", parameters: { type: "object", properties: {} } },
   { name: "mic_list", description: "列出 AndAgent 录音文件和 MediaStore 音频库记录（时长、大小、格式、时间）。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "screen_orientation_get", description: "读取当前屏幕旋转角、方向、物理像素尺寸与分辨率。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "screen_orientation_set", description: "锁定 AndAgent 主界面横竖屏或恢复系统自动方向。", parameters: { type: "object", properties: { mode: { type: "string", enum: ["portrait", "landscape", "auto", "reverse_portrait", "reverse_landscape"] } }, required: ["mode"] } },

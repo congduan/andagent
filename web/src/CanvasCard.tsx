@@ -119,12 +119,15 @@ export function CanvasCard({ code, data }: { code: string; data?: unknown }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [visible, setVisible] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
+  const [runNonce, setRunNonce] = useState(0);
+  // R67: 重新执行——srcDoc 重新挂载（runNonce 变化）让 iframe 从零重跑代码。
+  const rerun = () => setRunNonce((v) => v + 1);
 
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame || !spec || frame.dataset.ready !== "1") return;
     frame.contentWindow?.postMessage({ type: "canvas", spec: { ...spec, data } }, "*");
-  }, [spec, data, visible]);
+  }, [spec, data, visible, runNonce]);
 
   // andagent 全局对象 RPC 代理：sandbox iframe 的 andagent.kv.* → 这里转发到
   // 原生 KV 通道（kvCall）。异步结果以 andagent-rpc-result 回传给 iframe。
@@ -153,10 +156,12 @@ export function CanvasCard({ code, data }: { code: string; data?: unknown }) {
     <div className={`canvas-card${fullscreen ? " fullscreen" : ""}`}>
       <div className="webview-bar">
         <span className="webview-uri">🎨 {spec.title ?? `Canvas ${spec.width}×${spec.height}`}</span>
+        <button type="button" onClick={rerun}>{t("rerun")}</button>
         <button type="button" onClick={() => setFullscreen((v) => !v)}>{fullscreen ? t("exitFullscreen") : t("fullscreen")}</button>
         <button type="button" onClick={() => { setFullscreen(false); setVisible(false); }}>{t("close")}</button>
       </div>
       <iframe
+        key={runNonce}
         ref={frameRef}
         title={spec.title ?? t("canvasDrawing")}
         sandbox="allow-scripts"
