@@ -124,6 +124,9 @@ import com.dc.andagent.tools.OtgTool
 import com.dc.andagent.tools.MicRecordTool
 import com.dc.andagent.tools.SpeechRecognizeTool
 import com.dc.andagent.tools.CameraInfoTool
+import com.dc.andagent.tools.CameraCaptureTool
+import com.dc.andagent.tools.CameraRecordTool
+import com.dc.andagent.tools.CameraScanTool
 import com.dc.andagent.tools.SensorInfoTool
 import com.dc.andagent.tools.CameraOverlayTool
 import com.dc.andagent.tools.LocationGetTool
@@ -436,6 +439,9 @@ class MainActivity : ComponentActivity() {
             "camera_overlay_update" to CameraOverlayTool(appContext, permissionBroker, "camera_overlay_update", activityProvider = { this.takeIf { !it.isFinishing } }),
             "camera_overlay_hide" to CameraOverlayTool(appContext, permissionBroker, "camera_overlay_hide"),
             "camera_info" to CameraInfoTool(appContext, "camera_info"),
+            "camera_capture" to CameraCaptureTool(appContext, permissionBroker),
+            "camera_record" to CameraRecordTool(appContext, permissionBroker),
+            "camera_scan" to CameraScanTool(appContext, permissionBroker),
             "mic_list" to MicListTool(appContext),
             "screen_orientation_get" to OrientationTool({ this }, "screen_orientation_get"),
             "screen_orientation_set" to OrientationTool({ this }, "screen_orientation_set"),

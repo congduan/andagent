@@ -38,6 +38,11 @@ class FileOpsToolsTest {
 
     @Before fun setUp() {
         app = RuntimeEnvironment.getApplication()
+        // ZipTool/FileOps error strings are bilingual (tr(zh, en)); pin the UI
+        // language to zh AFTER application init (Application.onCreate calls
+        // Lang.attach, which would overwrite an earlier setMode) so the Chinese
+        // fragments asserted below are stable on any host locale.
+        com.dc.andagent.i18n.Lang.setMode(app, com.dc.andagent.i18n.Lang.ZH)
         root = File(app.cacheDir, "r59").apply {
             deleteRecursively()
             mkdirs()
@@ -45,6 +50,7 @@ class FileOpsToolsTest {
     }
 
     @After fun tearDown() {
+        com.dc.andagent.i18n.Lang.setMode(app, com.dc.andagent.i18n.Lang.SYSTEM)
         root.deleteRecursively()
     }
 
