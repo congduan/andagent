@@ -115,6 +115,13 @@
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- R91.5: 原生 SSH 凭据录入（密码/私钥永不经过 WebView 与模型） -->
+        <activity
+            android:name=".tools.SshCredentialActivity"
+            android:exported="false"
+            android:label="SSH 凭据"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- R28: MediaProjection consent trampoline + projection-holding FGS.
              Android 14+ requires getMediaProjection() to run after
              startForeground(type=mediaProjection) — see ProjectionService. -->
@@ -207,6 +214,13 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="andagent" />
+            </intent-filter>
+            <!-- R91.5: andagent://credentials 直达原生凭据录入界面 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="andagent" android:host="credentials" />
             </intent-filter>
         </activity>
 
