@@ -101,7 +101,7 @@ web 化重构（pi+assistant-ui）/ 日历闹钟剪贴板通知 / ECharts / Shiz
 | R72 | **相机三件套**（扩容）：camera_capture（camera2/ImageReader 静态拍照：前后置/分辨率/闪光/JPEG 落相册）/ camera_record（MediaRecorder 相机录像，区别于 screen_record 录屏）/ camera_scan（ZXing 连续取景扫码，analysis 用例复用 vendored core） | TODO | R68 camera_info 已落地作前置 |
 | R73 | 通用 HTTP 工具：http_request（GET/POST/自定义 header/body，复用 OkHttp）+ 局域网探测（ping/port 扫描） | ✅ | a618b9a（2026-11-06 主控复测：254 JVM 单测全绿 + 21 新增 HttpToolsTest）；http:// 允许 LAN 设备（HA/ESPHome） |
 | R74 | R64 底层硬件刀（简报 /tmp/andagent-r64-brief.md 已备）：BLE GATT services/read/write/notify + SPP 收发 + USB 串口 CH340/CP210x/FTDI/PL2303 + usb_bulk，10 工具 | TODO | 简报已备未派 |
-| R75 | 语音识别：speech_recognize（RecognizerIntent / SpeechRecognizer），与 tts/tts_to_file 凑语音闭环 | ✅ | 本轮 0.28.13（code 49）实现 SpeechTools.kt；真机待测：识别回调、超时销毁、无识别服务设备报错 |
+| R75 | 语音识别：speech_recognize（RecognizerIntent / SpeechRecognizer），与 tts/tts_to_file 凑语音闭环 | ✅ | 0.28.13（code 49）8ffc6c4（2026-11-06 主控复测：261 JVM 单测全绿 + web 59 测试全绿 + Codex review 必修项（confidence 缺失时补 null 保结构稳定）已修）；真机待测：识别回调、超时销毁、无识别服务设备报错 |
 | R76 | 地理围栏：geofence_on/off + 事件写 KV（与 R67 事件通道同构，live 轮询即自动化） | TODO | 依赖 R67 事件模式 |
 | R77 | 快捷磁贴 TileService（下拉栏一键触发常用对话）+ ShortcutManager 动态 shortcut 补充 | TODO | |
 | R78 | **智能家居刀**：a) MQTT 客户端（Paho 纯 Java vendored，mqtt_pub/mqtt_sub/sub_unsub，ESPHome/HA/涂鸦 LAN 通用）b) IR 码库查询（ir_code_lookup：irdb.cz 开源码表按品牌/型号查码→喂给 ir_send_pronto，覆盖空调/电视等传统家电）c) HA REST 联动（依赖 R73 http_request，文档引导即可零代码） | TODO | 用户确认（2026-11-06）；已评估绕开 Matter/Thread（targetSdk28 死路）与米家云 API；米家 LAN 协议（UDP+token 握手，python-miio 同源）列为实验项可选 |
