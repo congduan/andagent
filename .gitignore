@@ -19,6 +19,3 @@ web/public/pi-bundle.js
 /app/src/main/assets/dbgui/index.html
 /app/src/main/assets/dbgui/assets/
 /app/src/main/assets/dbgui/sql-wasm.wasm
-
-# 设备截图（验收用，不入库）
-/screenshots/

@@ -11,6 +11,19 @@ An on-device AI assistant for Android. It calls device capabilities directly fro
 - **Model**: any OpenAI-compatible endpoint. Requests are proxied through native OkHttp (to bypass WebView CORS) and streamed back over SSE; a single turn allows up to 200 tool rounds.
 - **Version**: `0.28.7` (versionCode 44), `applicationId = com.dc.andagent`. `app/build.gradle.kts` is authoritative.
 
+## Screenshots
+
+| | | |
+|---|---|---|
+| ![Home with suggested prompts](screenshots/Screenshot_2026-11-07-00-52-50-57_4125a5ea215eda4541496596fa5ea51d.jpg) | ![QuickJS tool call with reasoning](screenshots/Screenshot_2026-11-07-00-53-19-21_4125a5ea215eda4541496596fa5ea51d.jpg) | ![Battery status and ECharts card](screenshots/Screenshot_2026-11-07-00-53-50-67_4125a5ea215eda4541496596fa5ea51d.jpg) |
+| *Home with suggested prompts* | *QuickJS tool call with reasoning* | *Battery status and ECharts card* |
+| ![NFC read in progress](screenshots/Screenshot_2026-11-07-00-54-56-36_4125a5ea215eda4541496596fa5ea51d.jpg) | ![NFC read result](screenshots/Screenshot_2026-11-07-00-55-16-48_4125a5ea215eda4541496596fa5ea51d.jpg) | ![Clipboard tool](screenshots/Screenshot_2026-11-07-00-55-42-85_4125a5ea215eda4541496596fa5ea51d.jpg) |
+| *NFC read in progress* | *NFC read result (MIFARE Classic)* | *Clipboard tool* |
+| ![Embedded Termux: Python 3.14](screenshots/Screenshot_2026-11-07-00-56-45-14_4125a5ea215eda4541496596fa5ea51d.jpg) | ![Python script test results](screenshots/Screenshot_2026-11-07-00-56-58-10_4125a5ea215eda4541496596fa5ea51d.jpg) | ![shell_exec](screenshots/Screenshot_2026-11-07-00-57-33-45_4125a5ea215eda4541496596fa5ea51d.jpg) |
+| *Embedded Termux: Python 3.14* | *Python script test results* | *shell_exec* |
+| ![Vibration tool with destructive badge](screenshots/Screenshot_2026-11-07-00-58-11-83_4125a5ea215eda4541496596fa5ea51d.jpg) | ![Live sensor chart card](screenshots/Screenshot_2026-11-07-01-01-34-82_4125a5ea215eda4541496596fa5ea51d.jpg) | |
+| *Vibration tool with destructive badge* | *Live sensor chart card* | |
+
 ## How it works
 
 ```
@@ -255,10 +268,6 @@ AndAgent is licensed under [Apache-2.0](LICENSE). Third-party attribution:
 - `app/src/main/assets/vendor/scrcpy-LICENSE.txt` — scrcpy server 2.7
 
 Progress, backlog, and milestones are tracked in `ROADMAP-TODO.md`.
-
-## Screenshots
-
-Screenshots will be added after final device capture.
 
 ## Star history
 
