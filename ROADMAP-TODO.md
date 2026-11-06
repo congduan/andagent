@@ -104,3 +104,5 @@ web 化重构（pi+assistant-ui）/ 日历闹钟剪贴板通知 / ECharts / Shiz
 | R75 | 语音识别：speech_recognize（RecognizerIntent / SpeechRecognizer），与 tts/tts_to_file 凑语音闭环 | TODO | |
 | R76 | 地理围栏：geofence_on/off + 事件写 KV（与 R67 事件通道同构，live 轮询即自动化） | TODO | 依赖 R67 事件模式 |
 | R77 | 快捷磁贴 TileService（下拉栏一键触发常用对话）+ ShortcutManager 动态 shortcut 补充 | TODO | |
+| R78 | **智能家居刀**：a) MQTT 客户端（Paho 纯 Java vendored，mqtt_pub/mqtt_sub/sub_unsub，ESPHome/HA/涂鸦 LAN 通用）b) IR 码库查询（ir_code_lookup：irdb.cz 开源码表按品牌/型号查码→喂给 ir_send_pronto，覆盖空调/电视等传统家电）c) HA REST 联动（依赖 R73 http_request，文档引导即可零代码） | TODO | 用户确认（2026-11-06）；已评估绕开 Matter/Thread（targetSdk28 死路）与米家云 API；米家 LAN 协议（UDP+token 握手，python-miio 同源）列为实验项可选 |
+| R79 | 米家 LAN 协议实验刀（可选）：miio UDP+token 握手发现/控制，设备覆盖看运气，先 PoC 再定范围 | TODO-EXPERIMENT | 依赖 R78 MQTT 刀验证网络工具模式后 |
