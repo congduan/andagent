@@ -13,6 +13,7 @@ import { SessionStore } from "./sessions";
 import noticesText from "../../THIRD-PARTY-NOTICES.md?raw";
 import { loadThemeMode, setTheme, type ThemeMode } from "./theme";
 import { setLanguageMode, useI18n, type LanguageMode } from "./i18n";
+import { appConfirm } from "./ConfirmDialog";
 
 type Props = {
   settings: Settings;
@@ -247,8 +248,8 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
       ))}
     </>)}
     <div className="settings-card-actions">
-      <button type="button" className="btn-ghost" onClick={() => {
-        if (!window.confirm(t("clearConfirm"))) return;
+      <button type="button" className="btn-ghost" onClick={async () => {
+        if (!(await appConfirm(t("clearConfirm")))) return;
         try { memoryCall("memory_delete_all", { confirm: true }); refreshMemories(); setMemoryMsg(t("cleared")); }
         catch (e) { setMemoryMsg(String(e)); }
       }}>{t("clearMemory")}</button>
@@ -266,7 +267,7 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
       <div className="settings-card-actions">
         <button type="button" className="btn-ghost" onClick={() => setCronDetail(cronDetail === task.id ? "" : task.id)}>{task.name} · {task.schedule} · {task.kind}</button>
         <label><input type="checkbox" checked={task.enabled} onChange={(e) => { setCronMsg(cronToggle(task.id, e.target.checked)); refreshCron(); }} />{t("enabled")}</label>
-        <button type="button" className="btn-ghost" onClick={() => { if (window.confirm(t("deleteCronConfirm", { name: task.name }))) { setCronMsg(cronDelete(task.id)); refreshCron(); } }}>{t("delete")}</button>
+        <button type="button" className="btn-ghost" onClick={async () => { if (await appConfirm(t("deleteCronConfirm", { name: task.name }))) { setCronMsg(cronDelete(task.id)); refreshCron(); } }}>{t("delete")}</button>
       </div>
       {cronDetail === task.id && <p className="settings-card-note">{t("lastRun")}：{task.lastRun ? new Date(task.lastRun).toLocaleString() : t("neverRun")} · {t("nextRun")}：{task.nextRun ? new Date(task.nextRun).toLocaleString() : t("paused")}<br />{t("lastResult")}：{task.lastResult || t("none")}</p>}
     </div>)}
@@ -282,7 +283,7 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
       {skills.map((skill) => <div key={skill.name} className="settings-card-actions">
         <span title={skill.source}>{skill.name} · {skill.description} · {skill.toolCount} {t("toolsCount")}</span>
         <label><input type="checkbox" checked={skill.enabled} onChange={(e) => { setSkillMsg(skillManage("enable", skill.name, String(e.target.checked))); refreshSkills(); }} />{t("enabled")}</label>
-        <button type="button" className="btn-ghost" onClick={() => { if (window.confirm(t("deleteSkillConfirm", { name: skill.name }))) { setSkillMsg(skillManage("delete", skill.name, "true")); refreshSkills(); } }}>{t("delete")}</button>
+        <button type="button" className="btn-ghost" onClick={async () => { if (await appConfirm(t("deleteSkillConfirm", { name: skill.name }))) { setSkillMsg(skillManage("delete", skill.name, "true")); refreshSkills(); } }}>{t("delete")}</button>
       </div>)}
       <div className="settings-card-actions"><input value={skillSource} onChange={(e) => setSkillSource(e.target.value)} placeholder={t("skillSource")} /><button type="button" className="btn-ghost" onClick={() => { setSkillMsg(skillManage("install", "", skillSource)); refreshSkills(); }}>{t("install")}</button></div>
       <div className="settings-card-actions"><input value={skillQuery} onChange={(e) => setSkillQuery(e.target.value)} placeholder={t("skillSearch")} /><button type="button" className="btn-ghost" onClick={() => setSkillMsg(skillManage("search", "", skillQuery))}>{t("search")}</button><button type="button" className="btn-ghost" onClick={() => { setSkillMsg(skillManage("reload")); refreshSkills(); }}>{t("skillRefresh")}</button></div>
@@ -336,8 +337,8 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
         ? <p className="settings-card-note">{t("sshCredentialEmpty")}</p>
         : creds.map((cred) => <div key={cred.nickname} className="settings-card-actions">
             <span>{cred.nickname} · {cred.user}@{cred.host}:{cred.port} · {cred.authType}</span>
-            <button type="button" className="btn-ghost" onClick={() => {
-              if (!window.confirm(t("sshCredentialDeleteConfirm", { name: cred.nickname }))) return;
+            <button type="button" className="btn-ghost" onClick={async () => {
+              if (!(await appConfirm(t("sshCredentialDeleteConfirm", { name: cred.nickname })))) return;
               setCredMsg(sshCredentialDelete(cred.nickname));
               setCreds(sshCredentialsList());
             }}>{t("delete")}</button>
@@ -367,8 +368,8 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
     {section(t("sshScrub"), <>
       <p className="settings-card-note">{t("sshScrubNote")}</p>
       <div className="settings-card-actions">
-        <button type="button" className="btn-ghost" onClick={() => {
-          if (!window.confirm(t("sshScrubConfirm"))) return;
+        <button type="button" className="btn-ghost" onClick={async () => {
+          if (!(await appConfirm(t("sshScrubConfirm")))) return;
           try {
             const result = SessionStore.scrubSecrets();
             setScrubMsg(result.replaced > 0 ? t("sshScrubDone", { count: result.replaced }) : t("sshScrubNone"));

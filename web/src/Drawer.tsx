@@ -3,6 +3,7 @@ import type { SessionMeta } from "./sessions";
 import { resolvedTheme, toggleTheme } from "./theme";
 import { useI18n } from "./i18n";
 import { fmtTokens, type UsageSum } from "./usage";
+import { appConfirm } from "./ConfirmDialog";
 
 /** ↑in ↓out 小字；会话头部与条目共用。 */
 function UsageTag({ input, output }: { input: number; output: number }) {
@@ -139,9 +140,9 @@ export function Drawer({
                   type="button"
                   className="drawer-del"
                   aria-label={t("deleteSession", { name: s.title })}
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    if (window.confirm(t("confirmDeleteSession", { name: s.title }))) onDelete(s.id);
+                    if (await appConfirm(t("confirmDeleteSession", { name: s.title }))) onDelete(s.id);
                   }}
                 >
                   ×

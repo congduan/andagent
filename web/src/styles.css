@@ -2106,3 +2106,192 @@ button:disabled {
 }
 .settings-subpage .settings-body { overflow-y: auto; }
 .settings-subpage .settings-card:first-of-type { margin-top: 0; }
+
+/* ===== R90 A2UI 结构化表单卡 ===== */
+.a2ui-card {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  overflow: hidden;
+}
+.a2ui-title {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--wash-1);
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.a2ui-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+.a2ui-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.a2ui-label { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.a2ui-req { color: var(--danger); }
+.a2ui-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--wash-1);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.a2ui-input:focus { border-color: var(--border-strong); }
+.a2ui-input-invalid { border-color: var(--danger); }
+.a2ui-field-error { font-size: 12px; color: var(--danger); }
+.a2ui-slider-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.a2ui-slider { width: 100%; accent-color: var(--accent); }
+.a2ui-slider-value { font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+.a2ui-choices { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.a2ui-choice { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.a2ui-choice input { accent-color: var(--accent); }
+.a2ui-switch { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.a2ui-switch input { accent-color: var(--accent); }
+.a2ui-button-group { display: flex; flex-wrap: wrap; gap: 8px; }
+.a2ui-option-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--wash-1);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.a2ui-option-btn-active {
+  border-color: var(--accent);
+  background: rgba(127, 155, 255, 0.12);
+  color: var(--accent);
+}
+.a2ui-inner-card {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--wash-1);
+}
+.a2ui-inner-title { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.a2ui-inner-text { margin-top: 4px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.a2ui-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.a2ui-row > * { flex: 1 1 180px; min-width: 0; }
+.a2ui-col { display: flex; flex-direction: column; gap: 10px; }
+.a2ui-degraded { font-style: italic; opacity: 0.75; }
+.a2ui-warning {
+  margin: 0 12px 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--wash-1);
+  color: var(--muted);
+  font-size: 12px;
+}
+.a2ui-actions { display: flex; justify-content: flex-end; padding: 0 12px 12px; }
+.a2ui-submit {
+  padding: 8px 18px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.a2ui-error { padding: 12px; }
+.a2ui-error-head { margin-bottom: 6px; color: var(--danger); font-size: 13px; font-weight: 600; }
+.a2ui-error-msg {
+  margin: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--wash-2);
+  color: var(--danger);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow: auto;
+}
+.a2ui-submitted { opacity: 0.85; }
+.a2ui-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--wash-1);
+}
+.a2ui-head .a2ui-title { padding: 0; border: 0; background: none; }
+.a2ui-badge {
+  margin-left: auto;
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  font-size: 11px;
+}
+.a2ui-summary {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* App confirm dialog (replaces window.confirm — no WebView URL banner) */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  animation: confirm-in 0.18s ease;
+}
+.confirm-card {
+  width: min(340px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  padding: 22px 20px 16px;
+}
+.confirm-msg {
+  margin: 0 0 20px;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.confirm-actions button {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  padding: 9px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  min-height: 42px;
+}
+.confirm-actions .confirm-ok {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #fff;
+}
+.confirm-actions .confirm-ok:active { transform: scale(0.96); }
+.confirm-actions .confirm-cancel:active { transform: scale(0.96); }
+@keyframes confirm-in { from { opacity: 0; } to { opacity: 1; } }

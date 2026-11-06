@@ -26,6 +26,7 @@ import {
 } from "./bridge";
 import { CopyMenu, useLongPress } from "./CopyMenu";
 import { Drawer } from "./Drawer";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { conversationMarkdown } from "./exportConversation";
 import { MarkdownText } from "./Markdown";
 import { SettingsPanel } from "./Settings";
@@ -675,6 +676,8 @@ export default function App() {
         )}
 
         {showModelSetup && <ModelSetup settings={settings} onboarding={modelOnboarding} onClose={closeModelSetup} onSave={saveSettings} />}
+
+        <ConfirmDialog />
 
         <Drawer
           open={drawerOpen}
