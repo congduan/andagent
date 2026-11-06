@@ -425,9 +425,10 @@ function Composer({ hasKey }: { hasKey: boolean }) {
           </button>
         ) : (
           <ComposerPrimitive.Send className="send-btn" aria-label={t("send")}>
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            {/* Upgraded send icon: 24-grid arrow (paper-plane) with gradient accent dot */}
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none">
               <path
-                d="M4 12l15-8-4.5 8L19 20 4 12z"
+                d="M3.9 20.6 21.2 12.9c.7-.3.7-1.4 0-1.7L3.9 3.4c-.7-.3-1.4.4-1.2 1.1l2.3 6.8c.1.4.5.7.9.7h6.6c.6 0 1 .4 1 1s-.4 1-1 1H5.9c-.4 0-.8.3-.9.7l-2.3 6.8c-.2.7.5 1.4 1.2 1.1z"
                 fill="currentColor"
               />
             </svg>
