@@ -45,4 +45,12 @@ class SshTransferRulesTest {
         assertFalse(p.count(10_000_000))
         assertTrue(p.exceeded)
     }
+
+    @Test fun safeNameRejectsControlChars() {
+        assertEquals("a.log", SshTransferRules.safeName("a.log"))
+        for (bad in listOf("a\nb", "a\tb", "a\u0000b", "a\u0001b", "a\u001fb")) {
+            try { SshTransferRules.safeName(bad); throw AssertionError("accepted control-char name") }
+            catch (_: IllegalArgumentException) { }
+        }
+    }
 }

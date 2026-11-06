@@ -712,12 +712,12 @@ const NETWORK_GUIDE_EN = [
 
 const SSH_TRANSFER_GUIDE = [
   "SSH 文件传输：用户要服务器文件时，先用 ssh_remote_ls 查看远程目录，再用 ssh_download 下载单文件；返回 savedPath 后可交给 file_read 分析。目录可先用 ssh_exec 打包为 tar，再下载单文件。",
-  "上传用 ssh_upload，先说明目标路径和覆盖风险。已存在的远程文件只有用户确认后才传 overwrite=true、confirm=true；默认不覆盖。SSH 会话退后台由前台服务保活，断线后需用户重新连接。",
+  "上传用 ssh_upload，先说明目标路径和覆盖风险。已存在的远程文件只有用户确认后才传 overwrite=true、confirm=true；默认不覆盖。local_path 只能是 Download/AndAgentSsh 或 app_private（ssh_downloads）里的文件，凭据等私有文件禁止上传。SSH 会话退后台由前台服务保活，断线后需用户重新连接。",
 ].join("\n");
 
 const SSH_TRANSFER_GUIDE_EN = [
   "SSH file transfer: for a server file, inspect the remote directory with ssh_remote_ls, then download one file with ssh_download. Pass the returned savedPath to file_read for analysis. For a directory, first create a tar archive with ssh_exec and download that file.",
-  "For ssh_upload, explain the destination and overwrite risk first. Set overwrite=true and confirm=true for an existing remote file only after the user confirms. Background SSH sessions use a foreground keep-alive service; reconnect manually after a disconnect.",
+  "For ssh_upload, explain the destination and overwrite risk first. Set overwrite=true and confirm=true for an existing remote file only after the user confirms; never overwrite by default. local_path must be a file under Download/AndAgentSsh or app_private (ssh_downloads); credentials and other private app files are blocked. Background SSH sessions use a foreground keep-alive service; reconnect manually after a disconnect.",
 ].join("\n");
 
 const HARDWARE_GUIDE = [

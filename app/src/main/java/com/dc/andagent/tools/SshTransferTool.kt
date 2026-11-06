@@ -36,7 +36,8 @@ object SshTransferRules {
     }
     fun safeName(name: String): String {
         require(name.isNotBlank() && name != "." && name != ".." && !name.contains('/') &&
-            !name.contains('\\') && !name.contains('\u0000') && name.length <= 160) { "文件名无效" }
+            !name.contains('\\') && !name.contains('\u0000') && name.length <= 160 &&
+            name.none { it.code < 0x20 }) { "文件名无效" }
         return name
     }
 }
@@ -81,10 +82,11 @@ class SshTransferTool(private val context: Context, override val name: String) :
             required = listOf("session_id", "remote_path"))
         "ssh_upload" -> schemaOf(
             "session_id" to strParam("SSH 会话 ID 或 nickname"),
-            "local_path" to strParam("本地文件绝对路径，限 Download/AndAgentSsh 或 app_private"),
+            "local_path" to strParam("本地文件绝对路径，限 Download/AndAgentSsh 或 app_private（ssh_downloads），其他私有文件禁止上传"),
             "remote_path" to strParam("远程目标文件路径，支持 ~/"),
             "overwrite" to boolParam("允许覆盖已有文件，默认 false"),
             "confirm" to boolParam("确认覆盖风险；覆盖时必须 true"),
+            "max_mb" to intParam("上传大小上限 MB，默认 512，钳制在 1..4096"),
             required = listOf("session_id", "local_path", "remote_path"))
         else -> schemaOf(
             "session_id" to strParam("SSH 会话 ID 或 nickname"),
@@ -196,18 +198,40 @@ class SshTransferTool(private val context: Context, override val name: String) :
     private fun upload(sftp: ChannelSftp, remote: String, args: JsonObject): String {
         val path = args.strArg("local_path") ?: return "ERROR: 缺少 local_path"
         val file = File(path).canonicalFile
-        val privateRoot = context.filesDir.canonicalFile
+        // 只允许上传下载产物，禁止把凭据等任意 app 私有文件传出设备。
+        val privateRoot = File(context.filesDir, "ssh_downloads").canonicalFile
         val downloadRoot = File(Environment.getExternalStorageDirectory(), "Download/AndAgentSsh").canonicalFile
-        require(file.startsWith(privateRoot) || file.startsWith(downloadRoot)) { "本地路径超出授权目录" }
+        require(file.startsWith(privateRoot) || file.startsWith(downloadRoot)) { "本地路径超出授权目录：仅限 Download/AndAgentSsh 或 app_private（ssh_downloads）" }
         require(file.isFile && file.canRead()) { "本地文件不存在或不可读" }
-        val exists = try { sftp.stat(remote); true } catch (e: SftpException) {
-            if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) false else throw e
+        val max = SshTransferRules.maxMb(args.intArg("max_mb")).toLong() * 1_048_576
+        if (file.length() > max) return "ERROR: 文件 ${file.length()} 字节超过 ${max / 1_048_576}MB 上限（可用 max_mb 调整，最高 4096）"
+        val overwriteConfirmed = args.boolArg("overwrite") == true && args.boolArg("confirm") == true
+        if (!overwriteConfirmed) {
+            val exists = try { sftp.stat(remote); true } catch (e: SftpException) {
+                if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) false else throw e
+            }
+            if (exists) {
+                return "CONFIRM_REQUIRED: 远程目标已存在，覆盖将替换原文件。请向用户说明风险；确认后传 overwrite=true、confirm=true。"
+            }
+            // TOCTOU 防护：先传到随机临时名，再原子 rename——rename 在目标已存在时会失败，不会静默覆盖。
+            val tmp = "$remote.andagent-tmp-${java.util.UUID.randomUUID().toString().take(8)}"
+            val progress = SshProgress(file.length(), max)
+            try {
+                file.inputStream().use { sftp.put(it, tmp, progress, ChannelSftp.OVERWRITE) }
+                if (progress.exceeded) return "ERROR: 上传超过大小上限"
+                try {
+                    sftp.rename(tmp, remote)
+                } catch (e: SftpException) {
+                    return "CONFIRM_REQUIRED: 远程目标在传输期间被创建（${e.message ?: "rename 失败"}）。覆盖需 overwrite=true、confirm=true。"
+                }
+            } finally {
+                runCatching { sftp.rm(tmp) }
+            }
+            return "uploadedPath=$remote\nbytes=${file.length()}\n" + progress.lines.joinToString("\n")
         }
-        if (exists && (args.boolArg("overwrite") != true || args.boolArg("confirm") != true)) {
-            return "CONFIRM_REQUIRED: 远程目标已存在，覆盖将替换原文件。请向用户说明风险；确认后传 overwrite=true、confirm=true。"
-        }
-        val progress = SshProgress(file.length(), Long.MAX_VALUE)
+        val progress = SshProgress(file.length(), max)
         file.inputStream().use { sftp.put(it, remote, progress, ChannelSftp.OVERWRITE) }
+        if (progress.exceeded) return "ERROR: 上传超过大小上限"
         return "uploadedPath=$remote\nbytes=${file.length()}\n" + progress.lines.joinToString("\n")
     }
 

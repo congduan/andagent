@@ -23,14 +23,21 @@ class SshKeepAliveService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val manager = getSystemService(NotificationManager::class.java)
-        if (manager.getNotificationChannel(CHANNEL) == null) {
-            manager.createNotificationChannel(NotificationChannel(CHANNEL, "SSH 会话", NotificationManager.IMPORTANCE_LOW))
+        // 通知/startForeground 在锁外任何平台异常都不能拖垮进程（never-crash）。
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            if (manager.getNotificationChannel(CHANNEL) == null) {
+                manager.createNotificationChannel(NotificationChannel(CHANNEL, "SSH 会话", NotificationManager.IMPORTANCE_LOW))
+            }
+            val notification = notification(this, null, null)
+            if (Build.VERSION.SDK_INT >= 29) {
+                ServiceCompat.startForeground(this, ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else startForeground(ID, notification)
+        } catch (e: Exception) {
+            releaseLocks()
+            stopSelf()
+            return START_NOT_STICKY
         }
-        val notification = notification(this, null, null)
-        if (Build.VERSION.SDK_INT >= 29) {
-            ServiceCompat.startForeground(this, ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else startForeground(ID, notification)
         try {
             if (wifiLock == null) {
                 wifiLock = (applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager)
