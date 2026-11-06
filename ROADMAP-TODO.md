@@ -89,3 +89,18 @@ web 化重构（pi+assistant-ui）/ 日历闹钟剪贴板通知 / ECharts / Shiz
 | R66 | 红外遥控：ir_available/ir_send_raw/ir_send_pronto（ConsumerIrManager，Pronto Hex 解析，TRANSMIT_IR 权限） | ✅ +3 | e5247bd + 5 个 fixup（单测 fixture 修正），v0.28.9/code 45 |
 | R67 | 系统级事件监听：media_sessions / media_events_on/off/read / media_send_key（耳机按键模拟，AudioManager.dispatchMediaKeyEvent）/ notif_events_on/off/read / notif_permission（NotificationListenerService，需系统设置授权）/ audio_events_on/off/read（AudioDeviceCallback 零权限）。三通道事件写 KV（media_events/notif_events/audio_events，latest+history，100 条/60KB 上限），供 live 围栏轮询触发自动化；前台服务可从通知一键停止；HARDWARE_GUIDE 双语引导 | ✅ +12 | 35944db（注：该提交信息误标为 airpods scan fix，系并行会话 git add -A 混入所致，实际含 R65 修正 + R66 fixup5 + R67 全部内容，远端已核实为该 HEAD），v0.28.10/code 46，主控复测 226 单测全绿 + web 59 测试全绿；真机待测项：通知授权流程/媒体播放暂停事件/耳机插拔事件（Codex 战报原文 /tmp/andagent-r67-run.md） |
 |  | **当前累计 151 工具（v0.28.10，R67 系统事件监听收口）** |  |
+
+## 🔵 R69+ 能力扩展战役（2026-11-06 用户确认，Codex 依次推进）
+
+> 排序即派工顺序，每刀走「勘察→简报→派工→主控独立复测→发包」循环；前置依赖已在备注标明。
+
+| # | 刀 | 内容 | 状态 | 备注 |
+|---|---|---|---|---|
+| R69 | **桌面快捷方式（一键任务图标）**：shortcut_create（ShortcutManagerCompat.requestPinShortcut，icon 可选 emoji 文字生成/内置图标，deeplink `andagent://send?prompt=..&auto=1` 复用已落地）+ shortcut_list + shortcut_delete（删除用 disable+update 或移除 id 追踪表）+ i18n 引导 | TODO | 前置全齐：deeplink 队列在 AgentBridge.queueDeeplink；无新权限 |
+| R70 | 无障碍服务自动化（AccessibilityService：节点查找按 id/text/描述点击、读屏、滚动、返回手势模拟；targetSdk28 需用户系统设置手动开启） | TODO | 大刀；从「盲点坐标」升级为「控件级操控」 |
+| R71 | 相机拍摄+扫码：camera_capture（camera2/ImageReader，前后置/分辨率/闪光）/ camera_scan（ZXing 已 vendored，分析用例复用） | TODO | R68 camera_info 已落地作前置 |
+| R72 | 通用 HTTP 工具：http_request（GET/POST/自定义 header/body，复用 OkHttp）+ 局域网探测（ping/port 扫描） | TODO | 小刀可插空 |
+| R73 | R64 底层硬件刀（简报 /tmp/andagent-r64-brief.md 已备）：BLE GATT services/read/write/notify + SPP 收发 + USB 串口 CH340/CP210x/FTDI/PL2303 + usb_bulk，10 工具 | TODO | 简报已备未派 |
+| R74 | 语音识别：speech_recognize（RecognizerIntent / SpeechRecognizer），与 tts/tts_to_file 凑语音闭环 | TODO | |
+| R75 | 地理围栏：geofence_on/off + 事件写 KV（与 R67 事件通道同构，live 轮询即自动化） | TODO | 依赖 R67 事件模式 |
+| R76 | 快捷磁贴 TileService（下拉栏一键触发常用对话）+ ShortcutManager 动态 shortcut 补充 | TODO | |
