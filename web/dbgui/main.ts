@@ -47,7 +47,7 @@ $('grid').addEventListener('click', event => { const cell = (event.target as Ele
 $('detail-close').onclick = () => ($<HTMLDialogElement>('detail')).close();
 function release() { database?.close(); database = null; grid?.destroy(); grid = null; currentRows = []; }
 window.addEventListener('pagehide', release);
-$('close').onclick = () => { release(); bridge.close(); };
+$('back').onclick = () => { release(); bridge.close(); };
 async function start() {
   try {
     const info = JSON.parse(bridge.info()); if (info.error) throw new Error(info.error); name = info.name;

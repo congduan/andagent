@@ -647,6 +647,22 @@ const TOOL_DEFS = [
 ] satisfies PiTool[];
 
 /**
+ * Appended to whatever system prompt the user saved, so the reply language
+ * always follows the language of the user's question.
+ */
+const LANGUAGE_GUIDE = [
+  "语言约定：",
+  "始终使用用户提问时所用的语言回复；用户在对话中切换语言时立即跟随切换。",
+  "代码、命令、路径、参数名和标识符保持原样，不要翻译。",
+].join("\n");
+
+const LANGUAGE_GUIDE_EN = [
+  "Language:",
+  "Always reply in the language of the user's latest question, and switch immediately if they change languages mid-conversation.",
+  "Keep code, commands, paths, argument names, and identifiers unchanged.",
+].join("\n");
+
+/**
  * Appended to whatever system prompt the user saved, so the chart protocol is
  * always in effect (stored prompts predate this feature).
  */
@@ -1032,6 +1048,11 @@ export class AgentEngine {
     this.emit();
   }
 
+  renameSession(id: string, title: string): void {
+    this.sessions = SessionStore.rename(id, title);
+    this.emit();
+  }
+
   deleteSession(id: string): void {
     const wasCurrent = id === this.sessionId;
     const sessions = SessionStore.remove(id);
@@ -1121,6 +1142,7 @@ export class AgentEngine {
           model,
           {
             systemPrompt: [
+              currentLanguage() === "en" ? LANGUAGE_GUIDE_EN : LANGUAGE_GUIDE,
               this.settings.systemPrompt.trim(),
               memoryPrompt(content),
               skillPrompt(),

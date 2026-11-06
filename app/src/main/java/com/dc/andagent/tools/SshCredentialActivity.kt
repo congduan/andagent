@@ -81,30 +81,29 @@ class SshCredentialActivity : Activity() {
             setBackgroundColor(BG)
         }
 
-        // 固定标题栏：滚动表单时「关闭」始终可见。
+        // 固定标题栏：滚动表单时「返回」始终可见（与设置子页的 ← 返回一致）。
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(18), dp(12), dp(14))
+            setPadding(dp(8), dp(14), dp(12), dp(12))
         }
+        header.addView(TextView(this).apply {
+            text = "←"
+            contentDescription = "返回"
+            textSize = 22f
+            setTextColor(TEXT)
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+            setOnClickListener { finish() }
+        })
         header.addView(TextView(this).apply {
             text = "SSH 凭据"
             textSize = 20f
             setTextColor(TEXT)
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(TextView(this).apply {
-            text = "✕"
-            contentDescription = "关闭"
-            textSize = 20f
-            setTextColor(TEXT)
-            gravity = Gravity.CENTER
-            isClickable = true
-            isFocusable = true
-            setPadding(dp(12), dp(4), dp(12), dp(4))
-            background = rounded(Color.TRANSPARENT, BORDER)
-            setOnClickListener { finish() }
-        })
         root.addView(header, matchWidth())
         root.addView(View(this).apply { setBackgroundColor(BORDER) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
@@ -222,7 +221,7 @@ class SshCredentialActivity : Activity() {
         }
         bottom.addView(actionButton("清空全部凭据", accent = false) { confirmWipe() },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bottom.addView(actionButton("关闭", accent = true) { finish() },
+        bottom.addView(actionButton("返回", accent = true) { finish() },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 .apply { leftMargin = dp(10) })
         content.addView(bottom, matchWidth())

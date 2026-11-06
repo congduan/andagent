@@ -429,11 +429,14 @@ function Composer({ hasKey }: { hasKey: boolean }) {
             </button>
           ) : (
             <ComposerPrimitive.Send className="send-btn" aria-label={t("send")}>
-              {/* Upgraded send icon: 24-grid arrow (paper-plane) with gradient accent dot */}
-              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none">
+              {/* 纸飞机发送图标：单色平面飞机，尺寸与语音输入图标一致（18px） */}
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none">
                 <path
-                  d="M3.9 20.6 21.2 12.9c.7-.3.7-1.4 0-1.7L3.9 3.4c-.7-.3-1.4.4-1.2 1.1l2.3 6.8c.1.4.5.7.9.7h6.6c.6 0 1 .4 1 1s-.4 1-1 1H5.9c-.4 0-.8.3-.9.7l-2.3 6.8c-.2.7.5 1.4 1.2 1.1z"
+                  d="M22 2 2 9l9 4 4 9z"
                   fill="currentColor"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  strokeLinejoin="round"
                 />
               </svg>
             </ComposerPrimitive.Send>
@@ -618,29 +621,6 @@ export default function App() {
                 />
               </svg>
             </button>
-            <button
-              type="button"
-              className="icon-btn"
-              title={t("settings")}
-              aria-label={t("settings")}
-              onClick={() => setShowSettings(true)}
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                <path
-                  d="M12 15.2a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  fill="none"
-                />
-                <path
-                  d="M19.4 13a7.8 7.8 0 000-2l2-1.5-2-3.4-2.3 1a7.6 7.6 0 00-1.7-1L15 3.6h-4l-.4 2.5a7.6 7.6 0 00-1.7 1l-2.3-1-2 3.4L6.6 11a7.8 7.8 0 000 2l-2 1.5 2 3.4 2.3-1a7.6 7.6 0 001.7 1l.4 2.5h4l.4-2.5a7.6 7.6 0 001.7-1l2.3 1 2-3.4-2-1.5z"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  fill="none"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
           </div>
         </header>
 
@@ -680,19 +660,23 @@ export default function App() {
             settings={settings}
             page={settingsPage}
             onNavigate={setSettingsPage}
-            onBack={() => {
-              // 子页有自己的 history 层：走 back() 让 popstate 统一出栈，
-              // 直接改 state 会触发 sync 的程序化 back，其回响又会多关一层。
-              if (getLayerMgr().layers() > 1) history.back();
-              else setSettingsPage("home");
-            }}
+            // 子页返回只改 UI 状态；history 层由 backLayers.sync() 收回，
+            // 其程序化 back() 的回响由 pendingBacks 吸收，不会连带关掉设置本身。
+            onBack={() => setSettingsPage("home")}
             onClose={closeSettings}
             onSave={saveSettings}
             onModelSetup={openModelSetup}
           />
         )}
 
-        {showModelSetup && <ModelSetup settings={settings} onboarding={modelOnboarding} onClose={closeModelSetup} onSave={saveSettings} />}
+        {showModelSetup && (
+          <ModelSetup
+            settings={settings}
+            onboarding={modelOnboarding}
+            onClose={closeModelSetup}
+            onSave={saveSettings}
+          />
+        )}
 
         <ConfirmDialog />
 
@@ -708,6 +692,8 @@ export default function App() {
             setDrawerOpen(false);
           }}
           onSwitch={(id) => engine.switchSession(id)}
+          onRename={(id, title) => engine.renameSession(id, title)}
+          onSettings={() => { setDrawerOpen(false); setShowSettings(true); }}
           onDelete={(id) => engine.deleteSession(id)}
           onExport={(id) => {
             const session = snapshot.sessions.find((s) => s.id === id);

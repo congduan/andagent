@@ -8,12 +8,12 @@
  * 的记录逐条 back() 掉。若把栈放在 effect 局部变量里，effect 重跑会重建空
  * 栈，push 出去的历史记录就永久残留，返回键行为随之错乱。
  *
- * 归因说明（R63 review 结论）：popstate 事件不携带来源，无法区分"用户返回"
- * 和"我们自己的 back()"。因此不做来源归因，而是让两类事件走同一条收敛路径：
- * 有层（depth>0）就出栈一层并尝试关覆盖层，没层就跳过。程序化 back() 的
- * popstate 到达时 depth 已被 sync() 同步扣减，自然是 no-op；用户手势事件则
- * 正常关层。两种事件交错到达也不会双重出栈或误关下层（极端交错下最坏情形
- * 是刚打开的覆盖层被多关一次，状态仍一致，见单测 4）。
+ * 归因说明：popstate 事件不携带来源，但 sync() 是自己调 back() 的发起者，
+ * 因此用一个 pendingBacks 计数器记账——每次程序化 back() 加一，到达的
+ * popstate 先抵扣这笔账，不再出栈、不再 closeTop。否则 UI 按钮关闭上层时
+ * （例如设置列表里关掉模型设置浮层），回响会把设置层也一起关掉。
+ * 用户手势的 popstate（pendingBacks===0）才是真正的出栈：depth 减一并
+ * 关掉最上层覆盖层。
  */
 export interface BackLayerManager {
   /** 收敛到目标层数：多了就 back()，少了就 pushState()。 */
@@ -29,16 +29,21 @@ export interface BackLayerManager {
 export function createBackLayerManager(onCloseTop: () => boolean): BackLayerManager {
   // 已压入的 history 层数；跨 effect 重跑持久，不随组件状态清零。
   let depth = 0;
+  // sync() 自己发起、尚未回响的 back() 笔数。
+  let pendingBacks = 0;
   let attached = false;
 
   const onPop = () => {
+    // 自己 back() 的回响：depth 已在 sync() 里扣减，这里只销账。
+    if (pendingBacks > 0) {
+      pendingBacks--;
+      return;
+    }
     if (depth > 0) {
       depth--;
-      // 关闭最上层覆盖层；若 UI 状态已先行关闭（例如按钮关闭后程序化
-      // back() 的回响到达），closeTop 返回 false，自然跳过，不会误关下层。
+      // 用户返回手势 / 页面内「← 返回」：出栈一层并关掉最上层覆盖层。
       onCloseTop();
     }
-    // depth === 0：程序化 back() 的回响，或外部导航——交由浏览器默认行为。
   };
 
   const sync = (target: number) => {
@@ -47,8 +52,11 @@ export function createBackLayerManager(onCloseTop: () => boolean): BackLayerMana
       depth++;
     }
     while (depth > target) {
+      // 立即扣减 depth 以防重复 sync 时多弹；回响由 onPop 的 pendingBacks 吸收，
+      // 不再误关下层覆盖层。
+      pendingBacks++;
       history.back();
-      depth--; // back 异步，立即扣减以防重复调用 sync 时多弹；其回响由 onPop 的 depth===0 分支吸收。
+      depth--;
     }
   };
 

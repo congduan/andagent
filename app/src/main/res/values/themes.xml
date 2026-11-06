@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.AndAgent" parent="android:Theme.Material.NoActionBar">
+    <!-- 基础主题：真正的内容样式都放这里，values-v31 只负责去掉系统闪屏。 -->
+    <style name="ThemeAndAgentBase" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">#0B0D11</item>
         <item name="android:colorBackground">#0B0D11</item>
         <item name="android:statusBarColor">#0B0D11</item>
         <item name="android:navigationBarColor">#0B0D11</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
+        <!-- 不做启动预览窗口：直接交给 WebView 首帧，避免"闪一下启动图"。 -->
+        <item name="android:windowDisablePreview">true</item>
     </style>
+
+    <style name="Theme.AndAgent" parent="ThemeAndAgentBase" />
 </resources>

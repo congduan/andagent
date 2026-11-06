@@ -19,3 +19,8 @@
   dialog{width:94vw;max-height:75dvh;font-size:14px}
   pre{font-size:14px}
 }
+/* 子页统一：左上角「← 返回」，与 App 内设置子页一致 */
+header{justify-content:flex-start;gap:12px}
+header>div{min-width:0}
+#back{width:40px;min-width:40px;height:40px;padding:0;font-size:20px;line-height:1;display:grid;place-items:center;background:transparent;border-color:transparent}
+#back:hover{background:#26334a;border-color:#486081}

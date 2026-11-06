@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.Dialog
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Button
 import android.widget.FrameLayout
 import android.nfc.NfcAdapter
 import com.dc.andagent.tools.NfcSession
@@ -765,9 +764,23 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val dialog = Dialog(this)
-            val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(16, 12, 16, 12) }
+            // 子页统一：左上角「← 返回」（关闭浮层 = 出栈一层，与系统返回一致）。
+            val header = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(4, 4, 16, 4)
+            }
+            header.addView(TextView(this).apply {
+                text = "←"
+                contentDescription = "返回"
+                textSize = 22f
+                gravity = android.view.Gravity.CENTER
+                isClickable = true
+                isFocusable = true
+                setPadding(28, 16, 28, 16)
+                setOnClickListener { dialog.dismiss() }
+            })
             header.addView(TextView(this).apply { text = uri.host; textSize = 16f; setSingleLine(true) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            header.addView(Button(this).apply { text = "关闭"; setOnClickListener { dialog.dismiss() } })
             val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(header); addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)) }
             dialog.setContentView(container)
             dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)

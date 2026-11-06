@@ -69,9 +69,12 @@ export function ModelSetup({ settings, onboarding, onClose, onSave }: Props) {
 
   return <div className="settings-overlay model-setup-overlay" role="dialog" aria-modal="true" aria-labelledby="model-setup-title">
     <section className="settings-panel model-setup-panel">
-      <header className="settings-head">
-        <div><h2 id="model-setup-title">{t(onboarding ? "connectModel" : "modelSettings")}</h2><p>{t("modelSetupSubtitle")}</p></div>
-        <button type="button" className="btn-ghost" onClick={onClose}>{t(onboarding ? "modelLater" : "close")}</button>
+      <header className="settings-subpage-head model-setup-head">
+        <button type="button" className="icon-btn" onClick={onClose} aria-label={t(onboarding ? "modelLater" : "back")}>←</button>
+        <div className="model-setup-head-text">
+          <h2 id="model-setup-title">{t(onboarding ? "connectModel" : "modelSettings")}</h2>
+          <p>{t("modelSetupSubtitle")}</p>
+        </div>
       </header>
       <div className="settings-body">
         <div className="model-intro"><h3>{t(onboarding ? "modelSetupHeading" : "connectModel")}</h3><p>{t("modelSetupNote")}</p></div>

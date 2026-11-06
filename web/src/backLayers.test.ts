@@ -91,20 +91,47 @@ describe("createBackLayerManager", () => {
     expect(onCloseTop).toHaveBeenCalledTimes(0);
   });
 
-  it("程序化 back() 的回响不再二次出栈，depth 与 sync 收敛一致", () => {
+  it("程序化 back() 的回响被吸收，不误关下层覆盖层", () => {
     const { push, back, onCloseTop, mgr } = setup();
     mgr.attach();
     mgr.sync(2);
-    // UI 关闭抽屉（2→1）：sync 调一次 back，其 popstate 稍后才到。
+    // UI 关闭上层（2→1）：sync 调一次 back，其 popstate 稍后才到。
     mgr.sync(1);
     expect(back).toHaveBeenCalledTimes(1);
-    userBack(); // 该 back 的回响到达（无归因，depth 1→0 并尝试关层一次）。
-    expect(onCloseTop).toHaveBeenCalledTimes(1);
-    // depth 已为 0：sync(0) 无需再 back，sync(1) 需要一条新 push。
+    expect(mgr.layers()).toBe(1);
+    userBack(); // 该 back 的回响到达：只销账，不再出栈、不关下层。
+    expect(onCloseTop).toHaveBeenCalledTimes(0);
+    expect(mgr.layers()).toBe(1);
+    // 下方还压着一层：sync(0) 需要再 back 一次，sync(1) 无需 push。
     mgr.sync(0);
-    expect(back).toHaveBeenCalledTimes(1);
+    expect(back).toHaveBeenCalledTimes(2);
+    expect(mgr.layers()).toBe(0);
     mgr.sync(1);
     expect(push).toHaveBeenCalledTimes(3);
+    mgr.detach();
+  });
+
+  it("回归：关闭模型设置浮层不能连带关闭下面的设置页", () => {
+    const state = { settings: true, modelSetup: true };
+    const mgr = createBackLayerManager(() => {
+      if (state.modelSetup) { state.modelSetup = false; return true; }
+      if (state.settings) { state.settings = false; return true; }
+      return false;
+    });
+    vi.spyOn(window.history, "pushState").mockImplementation(() => {});
+    vi.spyOn(window.history, "back").mockImplementation(() => {});
+    mgr.attach();
+    mgr.sync(2); // 设置层 + 模型设置层
+    // 点「← 返回」/保存后关闭模型设置：state 直接收敛，sync(2→1)。
+    state.modelSetup = false;
+    mgr.sync(1);
+    userBack(); // back() 的回响
+    expect(state).toEqual({ settings: true, modelSetup: false });
+    expect(mgr.layers()).toBe(1);
+    // 再返回一次才关设置本身。
+    userBack();
+    expect(state).toEqual({ settings: false, modelSetup: false });
+    expect(mgr.layers()).toBe(0);
     mgr.detach();
   });
 

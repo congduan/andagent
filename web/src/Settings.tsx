@@ -32,7 +32,7 @@ type Props = {
 };
 
 export type SettingsPage =
-  | "home" | "model" | "appearance" | "memory" | "automation"
+  | "home" | "model" | "prompt" | "appearance" | "memory" | "automation"
   | "ssh" | "skills" | "extensions" | "data" | "about";
 
 type ShizukuStatus = ReturnType<typeof getShizukuStatus>;
@@ -76,8 +76,11 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     if (page === "skills") { try { setSkills(JSON.parse(skillManage("list"))); } catch { setSkills([]); } setSkillsLoaded(true); }
     if (page === "ssh") { setCreds(sshCredentialsList()); setCredsLoaded(true); }
     if (page === "memory") {
-      try { setMemories(memoryCall<MemoryEntry[]>("memory_get_all")); }
-      catch (e) { showError(String(e)); }
+      // 浏览器预览没有记忆桥：直接显示空列表，不弹「桥不可用」。
+      if (hasBridge()) {
+        try { setMemories(memoryCall<MemoryEntry[]>("memory_get_all")); }
+        catch (e) { showError(String(e)); }
+      }
       setMemoriesLoaded(true);
     }
     if (page === "data" && hasBridge()) { setShizuku(getShizukuStatus()); setTermuxStatus(getTermuxStatus()); setProjection(getProjectionStatus()); setDevtools(hasBridge() ? getDevToolsStatus() : null); }
@@ -118,7 +121,9 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   }, [page]);
 
   // 状态查询带回来的错误（Shizuku / DevTools / 投屏）同样走顶部 toast，不再各写一套红字。
+  // 浏览器预览下这些原生能力整体不可用（页面已有「浏览器预览模式」说明），不弹错误。
   useEffect(() => {
+    if (!hasBridge()) return;
     if (shizuku.lastRequestError) showError(`${t("authorizationFailed")}：${shizuku.lastRequestError}`);
     if (devtools?.error) showError(devtools.error);
     if (projection.error) showError(projection.error);
@@ -162,6 +167,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   // ===== 设置首页（宫格导航）=====
   const homeItems: Array<{ key: SettingsPage; icon: string; tint: string; title: string; sub: string; badge?: string; badgeTone?: "ok" | "warn" | "count" }> = [
     { key: "model", icon: "⚡", tint: "#3b82f6", title: t("modelSettings"), sub: draft.model || t("modelNotConfigured"), badge: draft.apiKey || settings.apiKey ? t("connected") : t("modelNotConfigured"), badgeTone: (draft.apiKey || settings.apiKey) ? "ok" : "warn" },
+    { key: "prompt", icon: "📝", tint: "#e11d48", title: t("promptGroup"), sub: t("promptSub") },
     { key: "appearance", icon: "🎨", tint: "#8b5cf6", title: t("appearanceLang"), sub: `${t(themeMode)} · ${language === "zh" ? t("chinese") : t("english")}` },
     { key: "memory", icon: "🧠", tint: "#a855f7", title: t("memory"), sub: t("memoryNote"), badge: memoriesLoaded ? `${memories.length}` : undefined, badgeTone: "count" },
     { key: "automation", icon: "⏱️", tint: "#f59e0b", title: t("cron"), sub: t("cronNote"), badge: cronLoaded ? `${cronTasks.length}` : undefined, badgeTone: "count" },
@@ -173,12 +179,11 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   ];
 
   // ===== 子页公共骨架 =====
-  const sub = (title: string, children: React.ReactNode, extraHead?: React.ReactNode) => (
+  const sub = (title: string, children: React.ReactNode) => (
     <div className="settings-subpage">
       <header className="settings-subpage-head">
         <button type="button" className="icon-btn" aria-label={t("back")} onClick={onBack}>←</button>
         <h2>{title}</h2>
-        {extraHead}
       </header>
       <div className="settings-body" ref={bodyRef}>{children}</div>
     </div>
@@ -194,13 +199,24 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   // 与首次启动向导共用同一份 ModelFields（服务商卡片 + Base URL / Key / 模型 + 拉取列表）。
   const modelPage = sub(t("modelSettings"), <>
     <ModelFields settings={draft} onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))} />
-    <label className="field"><span>{t("systemPrompt")}</span>
-      <textarea rows={5} value={draft.systemPrompt} onChange={(e) => setDraft({ ...draft, systemPrompt: e.target.value })} placeholder={t("systemPromptPlaceholder")} />
-    </label>
     <div className="settings-card-actions">
       <button type="button" className="btn-primary" onClick={save}>{t("save")}</button>
       {/* 需要"测试并保存"时走向导：设置页只做本地保存，不发网络请求。 */}
       <button type="button" className="btn-ghost" onClick={onModelSetup}>{t("modelTestSave")}</button>
+    </div>
+  </>);
+
+  const promptPage = sub(t("promptGroup"), <>
+    <p className="settings-card-note">{t("promptNote")}</p>
+    <label className="field"><span>{t("systemPrompt")}</span>
+      <textarea rows={14} value={draft.systemPrompt} onChange={(e) => setDraft({ ...draft, systemPrompt: e.target.value })} placeholder={t("systemPromptPlaceholder")} />
+    </label>
+    <div className="settings-card-actions">
+      <button type="button" className="btn-primary" onClick={save}>{t("save")}</button>
+      <button type="button" className="btn-ghost" onClick={async () => {
+        if (!(await appConfirm(t("promptResetConfirm")))) return;
+        setDraft((prev) => ({ ...prev, systemPrompt: defaultSystemPrompt() }));
+      }}>{t("promptReset")}</button>
     </div>
   </>);
 
@@ -389,7 +405,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
           </div>)}
       <p className="settings-card-note">{t("sshCredentialEditNote")}</p>
     </>)}
-  </>, <button type="button" className="icon-btn" style={{ marginLeft: "auto" }} onClick={onClose} aria-label={t("close")}>✕</button>);
+  </>);
 
   const dataPage = sub(t("dataGroup"), <>
     {section(t("projection"), <>
@@ -434,7 +450,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   </>);
 
   const subPages: Record<SettingsPage, React.ReactNode> = {
-    home: null, model: modelPage, appearance: appearancePage, memory: memoryPage,
+    home: null, model: modelPage, prompt: promptPage, appearance: appearancePage, memory: memoryPage,
     automation: automationPage, skills: skillsPage, ssh: sshPage, extensions: extensionsPage,
     data: dataPage, about: aboutPage,
   };
@@ -462,9 +478,6 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
               ))}
               <div className="settings-note">{hasBridge() ? t("bridgeConnected") : t("browserPreview")}</div>
             </div>
-            <footer className="settings-foot">
-              <button type="button" className="btn-ghost" onClick={onClose}>{t("cancel")}</button>
-            </footer>
           </>
         ) : subPages[page]}
       </div>

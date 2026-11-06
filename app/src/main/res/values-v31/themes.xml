@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Android 12+ 会强制绘制系统 SplashScreen（应用图标 + 背景）。
+      这里把背景改成应用底色、图标设为透明、动画时长归零，启动看起来就是
+      直接进主页，不再出现独立闪屏页。
+    -->
+    <style name="Theme.AndAgent" parent="ThemeAndAgentBase">
+        <item name="android:windowSplashScreenBackground">#0B0D11</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+    </style>
+</resources>
