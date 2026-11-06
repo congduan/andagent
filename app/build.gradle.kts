@@ -4,31 +4,29 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-/** Builds web/ (Vite + React + assistant-ui) into app/src/main/assets/web. */
+/**
+ * Builds web/ (Vite + React + assistant-ui) into app/src/main/assets/web.
+ * The bundles are no longer committed, so this task fails loudly instead of
+ * packaging a stale/missing WebView payload.
+ */
 val buildWeb by tasks.registering(Exec::class) {
     group = "build"
     description = "Build the assistant-ui WebView bundle with npm + Vite"
     workingDir = rootProject.file("web")
     environment("NODE_OPTIONS", "--max-old-space-size=4096")
-    // Keep the committed assets as a fallback when node/npm is unavailable.
     commandLine(
         "bash", "-c",
         """
+        set -e
         if ! command -v npm >/dev/null 2>&1; then
-          echo "[buildWeb] npm not found - packaging committed web assets"
-          exit 0
+          echo "[buildWeb] npm not found: install Node.js 20+, then run 'cd web && npm ci && npm run build'" >&2
+          exit 1
         fi
         if [ ! -d node_modules ]; then
           echo "[buildWeb] installing web dependencies (npm ci)"
-          if ! npm ci --no-audit --no-fund; then
-            echo "[buildWeb] npm ci failed - packaging committed web assets"
-            exit 0
-          fi
+          npm ci --no-audit --no-fund
         fi
-        if ! npm run build; then
-          echo "[buildWeb] web build failed - packaging committed web assets"
-        fi
-        exit 0
+        npm run build
         """.trimIndent(),
     )
 }

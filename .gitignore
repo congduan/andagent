@@ -12,3 +12,10 @@ captures/
 web/node_modules/
 web/public/pi-bundle.js
 .kotlin/
+
+# generated web bundles — :app:buildWeb rebuilds these on every build.
+# THIRD_PARTY_LICENSES.txt stays tracked.
+/app/src/main/assets/web/
+/app/src/main/assets/dbgui/index.html
+/app/src/main/assets/dbgui/assets/
+/app/src/main/assets/dbgui/sql-wasm.wasm
