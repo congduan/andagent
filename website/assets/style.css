@@ -330,8 +330,41 @@ pre { background: #090d12; color: #eee9df; border-color: var(--line); }
 .teaser-card small { color: var(--muted); font-size: .72rem; }
 .teaser-card b { margin-left: auto; color: var(--accent); font-size: 1.12rem; }
 .teaser-link { display: inline-block; margin-top: 23px; }
+.teaser-links { display: flex; flex-wrap: wrap; gap: 10px 26px; }
 @media (max-width: 900px) { .play-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 680px) { .play-grid, .teaser-grid { grid-template-columns: 1fr; } .play-card { min-height: 0; } .playbook-section { padding-bottom: 32px!important; } }
+
+/* Scenarios */
+.scenario-caution { margin: 22px 0 0; padding: 11px 14px; border: 1px dashed color-mix(in srgb,var(--accent) 34%,var(--line)); border-radius: 10px; color: var(--muted); font-size: .82rem; line-height: 1.6; max-width: 780px; }
+.page-hero p.scenario-caution { font-size: .82rem; line-height: 1.6; max-width: 780px; }
+.scenario-note { margin: 14px 0 0; padding-top: 12px; border-top: 1px dashed var(--line); color: var(--muted); font-size: .76rem; line-height: 1.6; }
+.idea-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.idea { display: flex; align-items: center; gap: 13px; min-width: 0; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); padding: 15px 17px; transition: transform .25s, border-color .25s, box-shadow .25s; }
+.idea:hover { transform: translateY(-3px); border-color: color-mix(in srgb,var(--accent) 42%,var(--line)); box-shadow: 0 14px 34px rgba(0,0,0,.14); }
+.idea > span { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 10px; background: var(--glow); font-size: 1.02rem; }
+.idea strong { display: block; font-size: .93rem; line-height: 1.35; }
+.idea small { display: block; margin-top: 3px; color: var(--muted); font-size: .71rem; font-family: ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap: anywhere; }
+@media (max-width: 900px) { .idea-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (min-width: 681px) and (max-width: 900px) { .nav-links { gap: 17px; } .nav-links a { font-size: .85rem; } }
+@media (max-width: 560px) { .idea-grid { grid-template-columns: 1fr; } .scenario-caution, .page-hero p.scenario-caution { font-size: .78rem; } }
+
+/* Mobile layout corrections: desktop rules added later must not beat the small-screen overrides */
+@media (max-width: 680px) {
+  .hero-grid { grid-template-columns: 1fr; }
+  .hero-art { min-height: auto; margin: 26px 0 0; }
+  .conversation-window { width: 100%; transform: none; }
+  .feature { min-height: 0; }
+  .architecture { padding: 16px; }
+  .nav-links { gap: 12px; }
+  .stats .stat:last-child { grid-column: 1 / -1; border-left: 0; }
+}
+@media (max-width: 480px) {
+  .stats { grid-template-columns: 1fr; }
+  .stats .stat + .stat,
+  .stats .stat:nth-child(2) { border-left: 0; border-top: 1px solid var(--line); }
+  .teaser-links { gap: 0; }
+  .teaser-links .teaser-link { margin-top: 16px; }
+}
 
 /* Mobile hardening (320/375 audit fixes) */
 .icon-button{white-space:nowrap}
@@ -354,3 +387,53 @@ pre { background: #090d12; color: #eee9df; border-color: var(--line); }
   .page-hero h1{overflow-wrap:anywhere}
   .hero h1{overflow-wrap:anywhere}
 }
+
+/* Typography system */
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+body, button, input, select, textarea { font-family: var(--font-sans); }
+body {
+  font-size: 16px;
+  line-height: 1.75;
+  letter-spacing: 0;
+}
+:root[data-theme=dark] body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+code, pre, kbd, samp, .arch-flow, .idea small, .play-chain code, .tool-chips code {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+}
+h1, h2, h3, h4, h5, .brand, .stat strong, .cta-panel h2, .tool-group h2, .panel h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-optical-sizing: auto;
+  letter-spacing: -.014em;
+}
+.hero h1, .page-hero h1 { letter-spacing: -.024em; line-height: 1.14; font-weight: 700; }
+.section-head h2, .cta-panel h2 { letter-spacing: -.018em; line-height: 1.2; }
+.brand { letter-spacing: -.035em; }
+.play-card h3, .feature h3, .arch-node h3, .teaser-card strong, .idea strong { letter-spacing: -.006em; font-weight: 650; }
+.eyebrow, .play-number, .play-label, .conversation-caption, .conversation-message small, .result-card small { font-family: var(--font-sans); }
+.lede, .page-hero p, .panel p, .panel li, .play-effect, .scenario-note, .feature p, .arch-node p {
+  letter-spacing: .004em;
+  line-height: 1.78;
+}
+.stat strong { font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
+.idea small, .play-chain code, .tool-chips code { letter-spacing: 0; }
+/* Chinese text needs looser tracking than Latin for headings */
+html[lang="zh-CN"] h1, html[lang="zh-CN"] h2, html[lang="zh-CN"] h3,
+html[lang="zh-CN"] .hero h1, html[lang="zh-CN"] .page-hero h1,
+html[lang="zh-CN"] .section-head h2, html[lang="zh-CN"] .cta-panel h2,
+html[lang="zh-CN"] .play-card h3, html[lang="zh-CN"] .idea strong, html[lang="zh-CN"] .teaser-card strong {
+  letter-spacing: .01em;
+  line-height: 1.34;
+}
+html[lang="zh-CN"] .hero h1, html[lang="zh-CN"] .page-hero h1 { line-height: 1.26; }
+html[lang="zh-CN"] .lede, html[lang="zh-CN"] .page-hero p, html[lang="zh-CN"] .panel p,
+html[lang="zh-CN"] .panel li, html[lang="zh-CN"] .play-effect { letter-spacing: .015em; }
+html[lang="zh-CN"] .brand { letter-spacing: -.02em; }

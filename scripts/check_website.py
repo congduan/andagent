@@ -66,7 +66,7 @@ class Check(HTMLParser):
         return self.errors
 
 errors = []
-PAGES = ('index.html', 'guide.html', 'tools.html', 'playbook.html', 'faq.html', '404.html')
+PAGES = ('index.html', 'guide.html', 'tools.html', 'playbook.html', 'scenarios.html', 'faq.html', '404.html')
 for name in PAGES:
     path = ROOT / name
     check = Check(path)
