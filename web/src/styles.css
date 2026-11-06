@@ -2056,3 +2056,44 @@ button:disabled {
 
 .settings-notices { max-height: 45vh; overflow: auto; margin-top: 12px; border: 1px solid var(--border, #555); border-radius: 8px; padding: 12px; }
 .settings-notices pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, monospace; margin: 0; }
+
+/* ===== R63 设置首页宫格 + 子页导航 ===== */
+.settings-home-item {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 12px 10px;
+  border: 0; border-radius: 12px; background: transparent;
+  color: var(--text); text-align: left; cursor: pointer; min-height: 56px;
+}
+.settings-home-item:hover { background: var(--wash-2); }
+.settings-home-item:active { background: var(--wash-3); }
+.settings-home-icon {
+  width: 38px; height: 38px; border-radius: 10px;
+  display: grid; place-items: center; font-size: 18px; flex: none;
+}
+.settings-home-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.settings-home-title { font-size: 14px; font-weight: 500; }
+.settings-home-sub {
+  font-size: 12px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.settings-home-badge {
+  flex: none; font-size: 11px; padding: 2px 8px; border-radius: 10px;
+}
+.badge-ok { background: rgba(16,185,129,.15); color: #10b981; }
+.badge-warn { background: rgba(245,158,11,.18); color: #f59e0b; }
+.badge-count { background: var(--wash-3); color: var(--muted); }
+.settings-home-chevron { flex: none; color: var(--muted); font-size: 18px; }
+
+.settings-subpage { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.settings-subpage-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 14px 8px; border-bottom: 1px solid var(--border);
+}
+.settings-subpage-head h2 { margin: 0; font-size: 16px; }
+.settings-subpage-head .icon-btn { font-size: 18px; }
+.settings-section-title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); margin: 14px 0 6px;
+}
+.settings-subpage .settings-body { overflow-y: auto; }
+.settings-subpage .settings-card:first-of-type { margin-top: 0; }
