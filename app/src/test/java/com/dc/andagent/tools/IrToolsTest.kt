@@ -38,7 +38,7 @@ class IrToolsTest {
     }
 
     @Test fun patternValidationBounds() {
-        assertTrue(validatePattern(intArrayOf(560, 1690, 560)).also { return@assertTrue true }.isNotEmpty())
+        val ok = validatePattern(intArrayOf(560, 1690, 560))
         assertThrows(IllegalArgumentException::class.java) { validatePattern(intArrayOf(0)) }       // 非正时长
         assertThrows(IllegalArgumentException::class.java) { validatePattern(intArrayOf(-5)) }      // 负值
         assertThrows(IllegalArgumentException::class.java) { validatePattern(IntArray(0)) }         // 空

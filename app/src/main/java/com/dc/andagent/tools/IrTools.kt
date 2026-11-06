@@ -43,7 +43,7 @@ internal object ProntoHex {
     }
 }
 
-private fun validatePattern(pattern: IntArray) {
+internal fun validatePattern(pattern: IntArray) {
     require(pattern.isNotEmpty() && pattern.size % 2 == 0 && pattern.size <= 2048) {
         "pattern 必须是非空的 on/off 微秒交替数组，且最多 2048 项"
     }
