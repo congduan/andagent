@@ -101,7 +101,7 @@ class SshTool(private val context: Context, override val name: String) : Tool {
         // TOFU: unknown host → probe, show fingerprint, do not keep a session.
         if (remembered == null) {
             val probe = try {
-                openSession(host, port, user, auth, password, keyPath, passphrase, strict = false)
+                openSession(host, port, user, auth, password, keyPath, passphrase, strict = false, probe = true)
             } catch (e: Exception) {
                 return@withContext connectError(e)
             }
@@ -164,18 +164,21 @@ class SshTool(private val context: Context, override val name: String) : Tool {
         keyPath: String,
         passphrase: String,
         strict: Boolean,
+        probe: Boolean = false,
     ): Session {
         val jsch = JSch()
         val knownHosts = knownHostsFile()
         if (knownHosts.isFile && knownHosts.length() > 0) jsch.setKnownHosts(knownHosts.absolutePath)
-        if (auth == "key") {
+        if (auth == "key" && !probe) {
             val key = File(keyPath)
             if (!key.isFile || !key.canRead()) throw IllegalArgumentException("私钥文件不存在或不可读：$keyPath")
             if (key.length() > MAX_KEY_BYTES) throw IllegalArgumentException("私钥文件异常大（>1MB）：$keyPath")
             jsch.addIdentity(key.absolutePath, passphrase.ifEmpty { null })
         }
         val session = jsch.getSession(user, host, port)
-        if (auth == "password") session.setPassword(password)
+        if (auth == "password" && !probe) session.setPassword(password)
+        // 探测阶段只做密钥交换：使用一次性假口令/无身份，绝不把真实凭据发给尚未信任的主机。
+        if (probe && auth == "password") session.setPassword("andagent-tofu-probe-" + System.nanoTime())
         session.setConfig("StrictHostKeyChecking", if (strict) "yes" else "no")
         session.setConfig(
             "PreferredAuthentications",
@@ -184,7 +187,13 @@ class SshTool(private val context: Context, override val name: String) : Tool {
         session.setConfig("ConnectTimeout", "10000")
         session.setConfig("ServerAliveInterval", "15000")
         session.setConfig("ServerAliveCountMax", "3")
-        session.connect(10_000)
+        try {
+            session.connect(10_000)
+        } catch (e: JSchException) {
+            // 探测时认证必然失败；主机密钥在认证前已完成交换，可继续读取 fingerprint。
+            val authOnly = probe && e.message.orEmpty().contains("auth", ignoreCase = true)
+            if (!authOnly) throw e
+        }
         return session
     }
 
