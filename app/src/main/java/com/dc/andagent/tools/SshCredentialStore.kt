@@ -111,6 +111,71 @@ class SshCredentialStore internal constructor(
             "密码/私钥已用 Android Keystore 加密写入 ssh/credentials.enc，不会进入对话，也无法从文件中读出明文。"
     }
 
+    /**
+     * 编辑已有凭据：更新元数据，可选替换 secret。
+     *
+     * - `secret` 为 null / 空白时**原样复用已有密文**（不解密、不回显明文），
+     *   编辑界面因此永远拿不到密码 / 私钥；
+     * - `secret` 非空时重新加密写入；
+     * - nickname 变化在同一次写入里原子迁移（删旧键 + 写新键），目标昵称已占用则拒绝；
+     * - 切换认证方式时必须提供新 secret（密码不能当私钥复用，反之亦然）。
+     *
+     * 返回确认信息，**不含明文**。
+     */
+    @Synchronized
+    fun update(
+        originalNickname: String,
+        nickname: String,
+        host: String,
+        port: Int,
+        user: String,
+        authType: String,
+        secret: String? = null,
+    ): String {
+        require(isValidNickname(originalNickname)) { "原 nickname 无效" }
+        require(isValidNickname(nickname)) { "nickname 不能包含空白且最长 32 字符" }
+        require(host.isNotBlank() && host.none { it.isWhitespace() }) { "host 格式无效" }
+        require(port in 1..65535) { "port 必须在 1..65535" }
+        require(user.isNotBlank() && user.none { it.isWhitespace() }) { "user 格式无效" }
+        require(authType == "password" || authType == "key") { "authType 只能是 password 或 key" }
+        val newSecret = secret?.takeIf { it.isNotBlank() }
+        if (newSecret != null) {
+            require(newSecret.length <= MAX_SECRET_CHARS) { "密码 / 私钥过长（上限 $MAX_SECRET_CHARS 字符）" }
+        }
+
+        val entries = readEntries()
+        val old = entries[originalNickname]
+            ?: throw IllegalArgumentException("凭据不存在：$originalNickname")
+        if (nickname != originalNickname && entries.containsKey(nickname)) {
+            throw IllegalArgumentException("昵称「$nickname」已被占用")
+        }
+        val oldAuth = metaOf(originalNickname, old)?.authType
+        if (newSecret == null && oldAuth != authType) {
+            throw IllegalArgumentException("切换认证方式时必须重新输入密码 / 私钥")
+        }
+        val (iv, cipherText) = if (newSecret != null) {
+            encryptSecret(newSecret)
+        } else {
+            val reused = old.string("secretCipher")
+                ?: throw IllegalArgumentException("原凭据密文损坏，请重新输入密码 / 私钥")
+            old.string("iv").orEmpty() to reused
+        }
+
+        if (nickname != originalNickname) entries.remove(originalNickname)
+        entries[nickname] = buildJsonObject {
+            put("host", host)
+            put("port", port)
+            put("user", user)
+            put("authType", authType)
+            put("secretCipher", cipherText)
+            put("iv", iv)
+        }
+        writeEntries(entries)
+        val secretNote = if (newSecret != null) "（密码 / 私钥已替换）" else "（密码 / 私钥保持不变）"
+        return "已更新 SSH 凭据「$nickname」：$user@$host:$port$secretNote。" +
+            "内容仍以 Android Keystore 加密保存，不会进入对话。"
+    }
+
     @Synchronized
     fun delete(nickname: String): Boolean {
         if (!isValidNickname(nickname)) return false

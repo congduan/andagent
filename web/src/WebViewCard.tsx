@@ -1,6 +1,7 @@
 import { useI18n } from "./i18n";
 import { useState } from "react";
 import { openEmbeddedWebview } from "./bridge";
+import { showError } from "./toast";
 
 /**
  * Web page card rendered inside the conversation flow (#8).
@@ -12,7 +13,6 @@ import { openEmbeddedWebview } from "./bridge";
  */
 export function WebViewCard({ uri }: { uri: string }) {
   const { t } = useI18n();
-  const [error, setError] = useState("");
   const [visible, setVisible] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [nonce, setNonce] = useState(0);
@@ -20,7 +20,7 @@ export function WebViewCard({ uri }: { uri: string }) {
 
   const openExternal = () => {
     const result = openEmbeddedWebview(uri);
-    setError(result.startsWith("ERROR:") ? result : "");
+    if (result.startsWith("ERROR:")) showError(result);
   };
 
   if (!allowed) return <div className="webview-card"><div className="webview-uri">🌐 {uri}</div><div className="webview-error">{t("httpsOnly")}</div></div>;
@@ -44,7 +44,6 @@ export function WebViewCard({ uri }: { uri: string }) {
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
         />
       )}
-      {error && <div className="webview-error">{error}</div>}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useI18n } from "./i18n";
 import { useEffect, useMemo, useState } from "react";
 import { execTool } from "./bridge";
 import { CanvasCard } from "./CanvasCard";
+import { showError } from "./toast";
 
 type LiveSpec = { name: string; code: string; interval_ms?: number; render?: string; width?: number; height?: number };
 type LiveState = { id: string; name: string; state: string; ticks: number; failures: number; error?: string; results: unknown[] };
@@ -24,7 +25,6 @@ export function LiveCard({ code }: { code: string }) {
   }, [code]);
   const [id, setId] = useState<string | null>(null);
   const [state, setState] = useState<LiveState | null>(null);
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -45,16 +45,22 @@ export function LiveCard({ code }: { code: string }) {
   }, [id, spec?.interval_ms]);
 
   const action = async (name: string, args: object) => {
-    setBusy(true); setError("");
+    setBusy(true);
     try {
       const result = await execTool(name, args);
       if (!result.ok || result.result.startsWith("ERROR:")) throw new Error(result.result);
       const next = JSON.parse(result.result) as LiveState;
       if (name === "live_start") setId(next.id);
       setState(next);
-    } catch (e) { setError(String(e)); }
+    } catch (e) { showError(String(e)); }
     finally { setBusy(false); }
   };
+
+  // 轮询到的循环错误也统一走顶部 toast（同一条只弹一次）。
+  const loopError = state?.error;
+  useEffect(() => {
+    if (loopError) showError(loopError);
+  }, [loopError]);
 
   if (!spec) return <div className="rich-error">{t("liveInvalid")}</div>;
   const data = state?.results?.at(-1);
@@ -72,8 +78,6 @@ export function LiveCard({ code }: { code: string }) {
         <button type="button" disabled={busy} onClick={() => void action("live_stop", { id })}>{t("stopAction")}</button>
       </>}
     </div>
-    {error && <div className="rich-error">{error}</div>}
-    {state?.error && <div className="rich-error">{state.error}</div>}
     <CanvasCard code={canvasCode} data={data} />
   </div>;
 }

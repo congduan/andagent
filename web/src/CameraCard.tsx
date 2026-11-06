@@ -1,6 +1,7 @@
 import { translate, useI18n } from "./i18n";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { execTool, openAppSettings } from "./bridge";
+import { showResult } from "./toast";
 
 type FacingMode = "environment" | "user";
 type Phase = "idle" | "live" | "captured";
@@ -59,7 +60,6 @@ export function CameraCard({ code }: { code: string }) {
   const [permDenied, setPermDenied] = useState(false);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [savePending, setSavePending] = useState(false);
-  const [saveResult, setSaveResult] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -103,7 +103,6 @@ export function CameraCard({ code }: { code: string }) {
   const start = async (want: FacingMode) => {
     setError(null);
     setPermDenied(false);
-    setSaveResult(null);
     setDataUrl(null);
     if (!navigator.mediaDevices?.getUserMedia) {
       setPhase("idle");
@@ -181,7 +180,6 @@ export function CameraCard({ code }: { code: string }) {
     setDataUrl(url);
     setPhase("captured");
     setSavePending(true);
-    setSaveResult(null);
     const name = `camera_${stamp()}`;
     const result = await execTool("image_save", {
       base64: url.slice(url.indexOf(",") + 1),
@@ -190,12 +188,11 @@ export function CameraCard({ code }: { code: string }) {
     });
     if (!mountedRef.current) return;
     setSavePending(false);
-    setSaveResult(result.result);
+    showResult(result.result);
   };
 
   const retake = () => {
     setDataUrl(null);
-    setSaveResult(null);
     void start(facing);
   };
 
@@ -260,11 +257,6 @@ export function CameraCard({ code }: { code: string }) {
         )}
       </div>
       {savePending && <div className="camera-save">{t("savingPhoto")}</div>}
-      {saveResult && (
-        <div className={saveResult.startsWith("ERROR:") ? "rich-error camera-result" : "camera-save"}>
-          {saveResult}
-        </div>
-      )}
       {error && (
         <div className="camera-error">
           <span>{error}</span>

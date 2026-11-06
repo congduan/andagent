@@ -5,7 +5,7 @@ import {
   getShizukuStatus, getTermuxStatus, grantTermuxViaShizuku, hasBridge,
   memoryCall, persistSettings, requestHealthPermission, requestProjectionConsent,
   setDevToolsEnabled, skillManage, stopProjection,
-  sshCredentialDelete, sshCredentialsList, sshCredentialsOpen,
+  sshCredentialDelete, sshCredentialEdit, sshCredentialsList, sshCredentialsOpen,
   defaultSystemPrompt, hasSavedSystemPrompt, isDefaultSystemPrompt,
   type Settings, type SshCredentialMeta,
 } from "./bridge";
@@ -14,17 +14,26 @@ import noticesText from "../../THIRD-PARTY-NOTICES.md?raw";
 import { loadThemeMode, setTheme, type ThemeMode } from "./theme";
 import { setLanguageMode, useI18n, type LanguageMode } from "./i18n";
 import { appConfirm } from "./ConfirmDialog";
+import { ModelFields } from "./ModelFields";
+import { showError, showResult, showSuccess } from "./toast";
 
 type Props = {
   settings: Settings;
+  /**
+   * 当前子页由 App 持有：子页层级要计入 history 层数，否则"返回"会退到设置
+   * 之外——popstate 被 App 的 backLayers 当成关闭设置层处理。
+   */
+  page: SettingsPage;
+  onNavigate: (page: SettingsPage) => void;
+  onBack: () => void;
   onClose: () => void;
   onSave: (next: Settings) => void;
   onModelSetup: () => void;
 };
 
-type Page =
+export type SettingsPage =
   | "home" | "model" | "appearance" | "memory" | "automation"
-  | "extensions" | "data" | "about";
+  | "ssh" | "skills" | "extensions" | "data" | "about";
 
 type ShizukuStatus = ReturnType<typeof getShizukuStatus>;
 type ProjectionStatus = ReturnType<typeof getProjectionStatus>;
@@ -35,83 +44,69 @@ type SkillEntry = { name: string; description: string; enabled: boolean; toolCou
 
 const THEME_OPTIONS: ThemeMode[] = ["system", "light", "dark"];
 
-export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props) {
+export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onSave, onModelSetup }: Props) {
   const { t, mode, language } = useI18n();
-  const [page, setPage] = useState<Page>("home");
   const [draft, setDraft] = useState<Settings>(settings);
   useEffect(() => { setDraft(prev => !hasSavedSystemPrompt() && isDefaultSystemPrompt(prev.systemPrompt) ? { ...prev, systemPrompt: defaultSystemPrompt() } : prev); }, [language]);
-  const [error, setError] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const [shizuku, setShizuku] = useState<ShizukuStatus>(() => getShizukuStatus());
-  const [shizukuMsg, setShizukuMsg] = useState<string | null>(null);
   const [termuxStatus, setTermuxStatus] = useState(() => getTermuxStatus());
-  const [termuxMsg, setTermuxMsg] = useState<string | null>(null);
   const [cronTasks, setCronTasks] = useState<CronTask[]>([]);
   const [cronLoaded, setCronLoaded] = useState(false);
-  const [cronMsg, setCronMsg] = useState("");
   const [cronDetail, setCronDetail] = useState("");
   const [exactAllowed, setExactAllowed] = useState(() => cronExactAllowed());
-  const [healthMsg, setHealthMsg] = useState<string | null>(null);
   const [projection, setProjection] = useState<ProjectionStatus>(() => getProjectionStatus());
-  const [projectionMsg, setProjectionMsg] = useState<string | null>(null);
   const [devtools, setDevtools] = useState<DevToolsStatus>(null);
-  const [devtoolsMsg, setDevtoolsMsg] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [skillsLoaded, setSkillsLoaded] = useState(false);
   const [skillSource, setSkillSource] = useState("");
   const [skillQuery, setSkillQuery] = useState("");
   const [skillIndex, setSkillIndex] = useState("");
-  const [skillMsg, setSkillMsg] = useState("");
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
   const [memoriesLoaded, setMemoriesLoaded] = useState(false);
   const [memoryEdits, setMemoryEdits] = useState<Record<string, string>>({});
-  const [memoryMsg, setMemoryMsg] = useState("");
   const [showNotices, setShowNotices] = useState(false);
   const [creds, setCreds] = useState<SshCredentialMeta[]>([]);
-  const [credMsg, setCredMsg] = useState("");
-  const [scrubMsg, setScrubMsg] = useState("");
+  const [credsLoaded, setCredsLoaded] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   // R63: 子页按需惰性加载（进入页面才拉数据，替代旧版全量 useState 平铺）。
   useEffect(() => {
     if (page === "automation") { setCronTasks(cronList()); setExactAllowed(cronExactAllowed()); setCronLoaded(true); }
-    if (page === "extensions") { try { setSkills(JSON.parse(skillManage("list"))); } catch { setSkills([]); } setSkillsLoaded(true); setCreds(sshCredentialsList()); }
+    if (page === "skills") { try { setSkills(JSON.parse(skillManage("list"))); } catch { setSkills([]); } setSkillsLoaded(true); }
+    if (page === "ssh") { setCreds(sshCredentialsList()); setCredsLoaded(true); }
     if (page === "memory") {
       try { setMemories(memoryCall<MemoryEntry[]>("memory_get_all")); }
-      catch (e) { setMemoryMsg(String(e)); }
+      catch (e) { showError(String(e)); }
       setMemoriesLoaded(true);
     }
     if (page === "data" && hasBridge()) { setShizuku(getShizukuStatus()); setTermuxStatus(getTermuxStatus()); setProjection(getProjectionStatus()); setDevtools(hasBridge() ? getDevToolsStatus() : null); }
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
   }, [page]);
 
-  // R63: 子页进 history 层级——返回手势/返回键回设置首页而不是退出 App。
+  // 原生录入 / 编辑界面返回后自动刷新元数据列表（两侧不共享状态）。
   useEffect(() => {
-    if (page === "home") return;
-    history.pushState({ settingsPage: page }, "");
-    const onPop = () => setPage("home");
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+    if (page !== "ssh") return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setCreds(sshCredentialsList());
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [page]);
-  const goHome = () => {
-    if (page === "home") return;
-    if (history.state && (history.state as { settingsPage?: string }).settingsPage) history.back();
-    else setPage("home");
-  };
 
   const refreshCron = () => { setCronTasks(cronList()); setExactAllowed(cronExactAllowed()); };
   const refreshSkills = () => { try { setSkills(JSON.parse(skillManage("list"))); } catch { setSkills([]); } };
   const refreshMemories = () => {
     try { setMemories(memoryCall<MemoryEntry[]>("memory_get_all")); }
-    catch (e) { setMemoryMsg(String(e)); }
+    catch (e) { showError(String(e)); }
   };
   const saveMemory = (id: string) => {
-    try { memoryCall("memory_update", { id, content: memoryEdits[id] ?? memories.find(m => m.id === id)?.content ?? "" }); setMemoryMsg(t("saved")); refreshMemories(); }
-    catch (e) { setMemoryMsg(String(e)); }
+    try { memoryCall("memory_update", { id, content: memoryEdits[id] ?? memories.find(m => m.id === id)?.content ?? "" }); showSuccess(t("saved")); refreshMemories(); }
+    catch (e) { showError(String(e)); }
   };
   const deleteMemory = (id: string) => {
     try { memoryCall("memory_delete", { id }); refreshMemories(); }
-    catch (e) { setMemoryMsg(String(e)); }
+    catch (e) { showError(String(e)); }
   };
 
   useEffect(() => {
@@ -122,24 +117,31 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
     return () => window.clearInterval(timer);
   }, [page]);
 
+  // 状态查询带回来的错误（Shizuku / DevTools / 投屏）同样走顶部 toast，不再各写一套红字。
+  useEffect(() => {
+    if (shizuku.lastRequestError) showError(`${t("authorizationFailed")}：${shizuku.lastRequestError}`);
+    if (devtools?.error) showError(devtools.error);
+    if (projection.error) showError(projection.error);
+  }, [shizuku.lastRequestError, devtools?.error, projection.error, t]);
+
   const askShizuku = () => {
     const ack = (() => {
       // 与旧版一致：走 bridge 的 shizuku 请求（getShizukuStatus 同族函数在 bridge 内）。
       const fn = (window as unknown as { AndroidBridge?: { shizukuRequest?: () => unknown } }).AndroidBridge?.shizukuRequest;
       return typeof fn === "function" ? { message: null } : { message: null };
     })();
-    setShizukuMsg(ack.message ?? null);
+    showResult(ack.message ?? "");
     window.setTimeout(() => setShizuku(getShizukuStatus()), 800);
   };
 
   const askHealth = () => {
     const ack = requestHealthPermission();
-    setHealthMsg(ack.message ?? null);
+    showResult(ack.message ?? "");
   };
 
   const askProjection = () => {
     const ack = requestProjectionConsent();
-    setProjectionMsg(ack.message ?? null);
+    showResult(ack.message ?? "");
     window.setTimeout(() => setProjection(getProjectionStatus()), 1500);
   };
 
@@ -154,16 +156,18 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
       persistSettings(next);
       onSave(next);
       onClose();
-    } catch { setError(t("modelSaveFailed")); }
+    } catch { showError(t("modelSaveFailed")); }
   };
 
   // ===== 设置首页（宫格导航）=====
-  const homeItems: Array<{ key: Page; icon: string; tint: string; title: string; sub: string; badge?: string; badgeTone?: "ok" | "warn" | "count" }> = [
+  const homeItems: Array<{ key: SettingsPage; icon: string; tint: string; title: string; sub: string; badge?: string; badgeTone?: "ok" | "warn" | "count" }> = [
     { key: "model", icon: "⚡", tint: "#3b82f6", title: t("modelSettings"), sub: draft.model || t("modelNotConfigured"), badge: draft.apiKey || settings.apiKey ? t("connected") : t("modelNotConfigured"), badgeTone: (draft.apiKey || settings.apiKey) ? "ok" : "warn" },
     { key: "appearance", icon: "🎨", tint: "#8b5cf6", title: t("appearanceLang"), sub: `${t(themeMode)} · ${language === "zh" ? t("chinese") : t("english")}` },
     { key: "memory", icon: "🧠", tint: "#a855f7", title: t("memory"), sub: t("memoryNote"), badge: memoriesLoaded ? `${memories.length}` : undefined, badgeTone: "count" },
     { key: "automation", icon: "⏱️", tint: "#f59e0b", title: t("cron"), sub: t("cronNote"), badge: cronLoaded ? `${cronTasks.length}` : undefined, badgeTone: "count" },
-    { key: "extensions", icon: "🧩", tint: "#10b981", title: t("extensionsGroup"), sub: `${t("skills")} · Shizuku · Termux · DevTools`, badge: skillsLoaded ? `${skills.length}` : undefined, badgeTone: "count" },
+    { key: "skills", icon: "🧩", tint: "#10b981", title: t("skills"), sub: `${t("install")} · ${t("enabled")} · ${t("search")}`, badge: skillsLoaded ? `${skills.length}` : undefined, badgeTone: "count" },
+    { key: "ssh", icon: "🔑", tint: "#f43f5e", title: t("sshCredentials"), sub: t("sshCredentialsGroupSub"), badge: credsLoaded ? `${creds.length}` : undefined, badgeTone: "count" },
+    { key: "extensions", icon: "🧰", tint: "#0ea5e9", title: t("extensionsGroup"), sub: "Shizuku · Termux · DevTools" },
     { key: "data", icon: "📊", tint: "#06b6d4", title: t("dataGroup"), sub: `${t("health")} · ${t("projection")}` },
     { key: "about", icon: "ℹ️", tint: "#64748b", title: t("about"), sub: `${t("version")} ${getAppVersion()}` },
   ];
@@ -172,7 +176,7 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
   const sub = (title: string, children: React.ReactNode, extraHead?: React.ReactNode) => (
     <div className="settings-subpage">
       <header className="settings-subpage-head">
-        <button type="button" className="icon-btn" onClick={goHome} aria-label={t("back")}>←</button>
+        <button type="button" className="icon-btn" aria-label={t("back")} onClick={onBack}>←</button>
         <h2>{title}</h2>
         {extraHead}
       </header>
@@ -187,24 +191,17 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
   );
 
   // ===== 各子页内容 =====
+  // 与首次启动向导共用同一份 ModelFields（服务商卡片 + Base URL / Key / 模型 + 拉取列表）。
   const modelPage = sub(t("modelSettings"), <>
-    <label className="field"><span>Base URL</span>
-      <input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-    </label>
-    <label className="field"><span>{t("apiKeyLabel")}</span>
-      <input value={draft.apiKey ?? ""} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} placeholder={t("apiKeyPlaceholder")} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-    </label>
-    <label className="field"><span>{t("modelId")}</span>
-      <input value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-    </label>
+    <ModelFields settings={draft} onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))} />
     <label className="field"><span>{t("systemPrompt")}</span>
       <textarea rows={5} value={draft.systemPrompt} onChange={(e) => setDraft({ ...draft, systemPrompt: e.target.value })} placeholder={t("systemPromptPlaceholder")} />
     </label>
     <div className="settings-card-actions">
       <button type="button" className="btn-primary" onClick={save}>{t("save")}</button>
-      <button type="button" className="btn-ghost" onClick={onModelSetup}>{t("modelConfigure")}</button>
+      {/* 需要"测试并保存"时走向导：设置页只做本地保存，不发网络请求。 */}
+      <button type="button" className="btn-ghost" onClick={onModelSetup}>{t("modelTestSave")}</button>
     </div>
-    {error && <div className="settings-error">{error}</div>}
   </>);
 
   const appearancePage = sub(t("appearanceLang"), <>
@@ -250,50 +247,35 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
     <div className="settings-card-actions">
       <button type="button" className="btn-ghost" onClick={async () => {
         if (!(await appConfirm(t("clearConfirm")))) return;
-        try { memoryCall("memory_delete_all", { confirm: true }); refreshMemories(); setMemoryMsg(t("cleared")); }
-        catch (e) { setMemoryMsg(String(e)); }
+        try { memoryCall("memory_delete_all", { confirm: true }); refreshMemories(); showSuccess(t("cleared")); }
+        catch (e) { showError(String(e)); }
       }}>{t("clearMemory")}</button>
     </div>
-    {memoryMsg && <p role="status">{memoryMsg}</p>}
   </>);
 
   const automationPage = sub(t("cron"), <>
     <p className="settings-card-note">{t("cronNote")}</p>
     {!exactAllowed && hasBridge() && <div className="settings-card-actions">
       <span>{t("exactAlarmMissing")}</span>
-      <button type="button" className="btn-ghost" onClick={() => { setCronMsg(cronOpenExactSettings()); window.setTimeout(refreshCron, 1000); }}>{t("exactAlarmSettings")}</button>
+      <button type="button" className="btn-ghost" onClick={() => { showResult(cronOpenExactSettings()); window.setTimeout(refreshCron, 1000); }}>{t("exactAlarmSettings")}</button>
     </div>}
     {cronTasks.map((task) => <div key={task.id}>
       <div className="settings-card-actions">
         <button type="button" className="btn-ghost" onClick={() => setCronDetail(cronDetail === task.id ? "" : task.id)}>{task.name} · {task.schedule} · {task.kind}</button>
-        <label><input type="checkbox" checked={task.enabled} onChange={(e) => { setCronMsg(cronToggle(task.id, e.target.checked)); refreshCron(); }} />{t("enabled")}</label>
-        <button type="button" className="btn-ghost" onClick={async () => { if (await appConfirm(t("deleteCronConfirm", { name: task.name }))) { setCronMsg(cronDelete(task.id)); refreshCron(); } }}>{t("delete")}</button>
+        <label><input type="checkbox" checked={task.enabled} onChange={(e) => { showResult(cronToggle(task.id, e.target.checked)); refreshCron(); }} />{t("enabled")}</label>
+        <button type="button" className="btn-ghost" onClick={async () => { if (await appConfirm(t("deleteCronConfirm", { name: task.name }))) { showResult(cronDelete(task.id)); refreshCron(); } }}>{t("delete")}</button>
       </div>
       {cronDetail === task.id && <p className="settings-card-note">{t("lastRun")}：{task.lastRun ? new Date(task.lastRun).toLocaleString() : t("neverRun")} · {t("nextRun")}：{task.nextRun ? new Date(task.nextRun).toLocaleString() : t("paused")}<br />{t("lastResult")}：{task.lastResult || t("none")}</p>}
     </div>)}
     <div className="settings-card-actions">
-      <button type="button" className="btn-ghost" onClick={() => { setCronMsg(cronPauseAll()); refreshCron(); }}>{t("pauseAll")}</button>
+      <button type="button" className="btn-ghost" onClick={() => { showResult(cronPauseAll()); refreshCron(); }}>{t("pauseAll")}</button>
       <button type="button" className="btn-ghost" onClick={refreshCron}>{t("refresh")}</button>
     </div>
-    {cronMsg && <p className={cronMsg.startsWith("ERROR:") ? "settings-error" : "settings-card-note"}>{cronMsg}</p>}
   </>);
 
   const extensionsPage = sub(t("extensionsGroup"), <>
-    {section(t("skills"), <>
-      {skills.map((skill) => <div key={skill.name} className="settings-card-actions">
-        <span title={skill.source}>{skill.name} · {skill.description} · {skill.toolCount} {t("toolsCount")}</span>
-        <label><input type="checkbox" checked={skill.enabled} onChange={(e) => { setSkillMsg(skillManage("enable", skill.name, String(e.target.checked))); refreshSkills(); }} />{t("enabled")}</label>
-        <button type="button" className="btn-ghost" onClick={async () => { if (await appConfirm(t("deleteSkillConfirm", { name: skill.name }))) { setSkillMsg(skillManage("delete", skill.name, "true")); refreshSkills(); } }}>{t("delete")}</button>
-      </div>)}
-      <div className="settings-card-actions"><input value={skillSource} onChange={(e) => setSkillSource(e.target.value)} placeholder={t("skillSource")} /><button type="button" className="btn-ghost" onClick={() => { setSkillMsg(skillManage("install", "", skillSource)); refreshSkills(); }}>{t("install")}</button></div>
-      <div className="settings-card-actions"><input value={skillQuery} onChange={(e) => setSkillQuery(e.target.value)} placeholder={t("skillSearch")} /><button type="button" className="btn-ghost" onClick={() => setSkillMsg(skillManage("search", "", skillQuery))}>{t("search")}</button><button type="button" className="btn-ghost" onClick={() => { setSkillMsg(skillManage("reload")); refreshSkills(); }}>{t("skillRefresh")}</button></div>
-      <div className="settings-card-actions"><input value={skillIndex} onChange={(e) => setSkillIndex(e.target.value)} placeholder={t("skillIndex")} /><button type="button" className="btn-ghost" onClick={() => setSkillMsg(skillManage("index", "", skillIndex))}>{t("saveIndex")}</button></div>
-      {skillMsg && <p className="settings-card-note">{skillMsg.slice(0, 1200)}</p>}
-    </>)}
     {section(t("shizuku"), <>
       <p className="settings-card-note">{shizuku.note ?? t("shizukuNote")}{shizuku.managerVersion ? ` · v${shizuku.managerVersion}` : ""}</p>
-      {shizukuMsg && <p className="settings-card-note">{shizukuMsg}</p>}
-      {shizuku.lastRequestError && <p className="settings-error">{t("authorizationFailed")}：{shizuku.lastRequestError}</p>}
       <div className="settings-card-actions">
         <button type="button" className="btn-primary" onClick={askShizuku}>{t("requestAccess")}</button>
         <a className="btn-ghost" href="market://details?id=moe.shizuku.privileged.api">{t("activateShizuku")}</a>
@@ -307,60 +289,119 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
     {section(t("scriptBackend"), <>
       <p className="settings-card-note">{t("termuxNote")}</p>
       <div className="settings-card-actions">
-        <button type="button" className="btn-primary" onClick={() => { setTermuxMsg(grantTermuxViaShizuku()); setTermuxStatus(getTermuxStatus()); }}>{t("shizukuGrant")}</button>
+        <button type="button" className="btn-primary" onClick={() => { showResult(grantTermuxViaShizuku()); setTermuxStatus(getTermuxStatus()); }}>{t("shizukuGrant")}</button>
       </div>
-      {termuxMsg && <p className={termuxMsg.startsWith("ERROR:") ? "settings-error" : "settings-card-note"}>{termuxMsg}</p>}
     </>)}
     {section(t("devtools"), <>
       <p className="settings-card-note">{t("devtoolsNote")}</p>
-      {devtools?.error && <p className="settings-error">{devtools.error}</p>}
       {devtools && devtools.pages.length > 0 && (
         <p className="settings-card-note">{t("debugPages")} {devtools.pages.length}：{devtools.pages.slice(0, 4).map((p) => p.title || p.url).join(" · ")}{devtools.pages.length > 4 ? " …" : ""}</p>
       )}
       <div className="settings-card-actions">
         <button type="button" className="btn-primary" onClick={() => {
           const ack = setDevToolsEnabled(!devtools?.enabled);
-          setDevtoolsMsg(ack.message ?? null);
+          showResult(ack.message ?? "");
           window.setTimeout(() => setDevtools(getDevToolsStatus()), 600);
         }}>{devtools?.enabled ? t("disableDebug") : t("enableDebug")}</button>
         <button type="button" className="btn-ghost" onClick={() => setDevtools(getDevToolsStatus())}>{t("refreshStatus")}</button>
       </div>
-      {devtoolsMsg && <p className={devtoolsMsg.startsWith("ERROR:") ? "settings-error" : "settings-card-note"}>{devtoolsMsg}</p>}
     </>)}
-    {section(t("sshCredentials"), <>
-      <p className="settings-card-note">{t("sshCredentialsNote")}</p>
+  </>);
+
+  // ===== 技能（独立分类）=====
+  const skillsPage = sub(t("skills"), <>
+    {section(`${t("skillsInstalled")} · ${skills.length}`, <>
       <div className="settings-card-actions">
-        <button type="button" className="btn-primary" onClick={() => { setCredMsg(sshCredentialsOpen()); }}>{t("sshCredentialAdd")}</button>
+        <button type="button" className="btn-ghost" onClick={refreshSkills}>{t("refreshStatus")}</button>
+        <button type="button" className="btn-ghost" onClick={() => { showResult(skillManage("reload")); refreshSkills(); }}>{t("skillRefresh")}</button>
+      </div>
+      {skills.length === 0
+        ? <p className="settings-card-note">{t("skillsEmpty")}</p>
+        : <div className="skill-list">{skills.map((skill) => (
+            <div key={skill.name} className={`skill-row${skill.enabled ? "" : " skill-row-off"}`}>
+              <div className="skill-row-main">
+                <span className="skill-name">{skill.name}</span>
+                <label className="skill-switch">
+                  <input type="checkbox" checked={skill.enabled}
+                    onChange={(e) => { showResult(skillManage("enable", skill.name, String(e.target.checked))); refreshSkills(); }} />
+                  <span>{t("enabled")}</span>
+                </label>
+              </div>
+              {skill.description && <p className="skill-desc">{skill.description}</p>}
+              <div className="skill-row-foot">
+                <span className="skill-badge">{skill.toolCount} {t("toolsCount")}</span>
+                <span className="skill-source" title={skill.source}>{skill.source}</span>
+                <button type="button" className="skill-remove" onClick={async () => {
+                  if (!(await appConfirm(t("deleteSkillConfirm", { name: skill.name })))) return;
+                  showResult(skillManage("delete", skill.name, "true"));
+                  refreshSkills();
+                }}>{t("delete")}</button>
+              </div>
+            </div>
+          ))}</div>}
+    </>)}
+    {section(t("skillInstallTitle"), <>
+      <label className="field"><span>{t("skillSource")}</span>
+        <input value={skillSource} onChange={(e) => setSkillSource(e.target.value)} placeholder="https://github.com/user/skill-repo"
+          autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+      </label>
+      <div className="settings-card-actions">
+        <button type="button" className="btn-primary" onClick={() => { showResult(skillManage("install", "", skillSource)); refreshSkills(); }}>{t("install")}</button>
+      </div>
+      <p className="settings-card-note">{t("skillInstallNote")}</p>
+    </>)}
+    {section(t("skillDiscoverTitle"), <>
+      <div className="skill-search">
+        <input value={skillQuery} onChange={(e) => setSkillQuery(e.target.value)} placeholder={t("skillSearch")} />
+        <button type="button" className="btn-ghost" onClick={() => showResult(skillManage("search", "", skillQuery))}>{t("search")}</button>
+      </div>
+      <details className="settings-details">
+        <summary>{t("skillIndexTitle")}</summary>
+        <div className="skill-search">
+          <input value={skillIndex} onChange={(e) => setSkillIndex(e.target.value)} placeholder={t("skillIndex")} />
+          <button type="button" className="btn-ghost" onClick={() => showResult(skillManage("index", "", skillIndex))}>{t("saveIndex")}</button>
+        </div>
+      </details>
+    </>)}
+  </>);
+
+  // ===== SSH 凭据（独立分类）=====
+  const sshPage = sub(t("sshCredentials"), <>
+    <p className="settings-card-note">{t("sshCredentialsNote")}</p>
+    {section(`${t("sshCredentialList")} (${creds.length})`, <>
+      <div className="settings-card-actions">
+        <button type="button" className="btn-primary" onClick={() => showResult(sshCredentialsOpen())}>{t("sshCredentialAdd")}</button>
         <button type="button" className="btn-ghost" onClick={() => setCreds(sshCredentialsList())}>{t("refreshStatus")}</button>
       </div>
       {creds.length === 0
         ? <p className="settings-card-note">{t("sshCredentialEmpty")}</p>
-        : creds.map((cred) => <div key={cred.nickname} className="settings-card-actions">
-            <span>{cred.nickname} · {cred.user}@{cred.host}:{cred.port} · {cred.authType}</span>
+        : creds.map((cred) => <div key={cred.nickname} className="settings-card-actions cred-row">
+            <span className="cred-row-info">
+              <b>{cred.nickname}</b>
+              <small>{cred.user}@{cred.host}:{cred.port} · {cred.authType}</small>
+            </span>
+            <button type="button" className="btn-ghost" onClick={() => showResult(sshCredentialEdit(cred.nickname))}>{t("sshCredentialEdit")}</button>
             <button type="button" className="btn-ghost" onClick={async () => {
               if (!(await appConfirm(t("sshCredentialDeleteConfirm", { name: cred.nickname })))) return;
-              setCredMsg(sshCredentialDelete(cred.nickname));
+              showResult(sshCredentialDelete(cred.nickname));
               setCreds(sshCredentialsList());
             }}>{t("delete")}</button>
           </div>)}
-      {credMsg && <p className={credMsg.startsWith("ERROR:") ? "settings-error" : "settings-card-note"}>{credMsg}</p>}
+      <p className="settings-card-note">{t("sshCredentialEditNote")}</p>
     </>)}
-  </>);
+  </>, <button type="button" className="icon-btn" style={{ marginLeft: "auto" }} onClick={onClose} aria-label={t("close")}>✕</button>);
 
   const dataPage = sub(t("dataGroup"), <>
     {section(t("projection"), <>
       <p className="settings-card-note">{t("projectionNote")}</p>
-      {projection.error && <p className="settings-error">{projection.error}</p>}
-      {projectionMsg && <p className="settings-card-note">{projectionMsg}</p>}
       <div className="settings-card-actions">
         <button type="button" className="btn-primary" onClick={askProjection}>{t("grantProjection")}</button>
-        <button type="button" className="btn-ghost" onClick={() => { setProjectionMsg(stopProjection()); window.setTimeout(() => setProjection(getProjectionStatus()), 600); }}>{t("stopAction")}</button>
+        <button type="button" className="btn-ghost" onClick={() => { showResult(stopProjection()); window.setTimeout(() => setProjection(getProjectionStatus()), 600); }}>{t("stopAction")}</button>
         <button type="button" className="btn-ghost" onClick={() => setProjection(getProjectionStatus())}>{t("refreshStatus")}</button>
       </div>
     </>)}
     {section(t("health"), <>
       <p className="settings-card-note">{t("healthNote")}</p>
-      {healthMsg && <p className="settings-card-note">{healthMsg}</p>}
       <div className="settings-card-actions">
         <button type="button" className="btn-ghost" onClick={askHealth}>{t("grantSteps")}</button>
       </div>
@@ -372,11 +413,10 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
           if (!(await appConfirm(t("sshScrubConfirm")))) return;
           try {
             const result = SessionStore.scrubSecrets();
-            setScrubMsg(result.replaced > 0 ? t("sshScrubDone", { count: result.replaced }) : t("sshScrubNone"));
-          } catch (e) { setScrubMsg(String(e)); }
+            showSuccess(result.replaced > 0 ? t("sshScrubDone", { count: result.replaced }) : t("sshScrubNone"));
+          } catch (e) { showError(String(e)); }
         }}>{t("sshScrub")}</button>
       </div>
-      {scrubMsg && <p role="status">{scrubMsg}</p>}
     </>)}
   </>);
 
@@ -393,9 +433,10 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
     </>)}
   </>);
 
-  const subPages: Record<Page, React.ReactNode> = {
+  const subPages: Record<SettingsPage, React.ReactNode> = {
     home: null, model: modelPage, appearance: appearancePage, memory: memoryPage,
-    automation: automationPage, extensions: extensionsPage, data: dataPage, about: aboutPage,
+    automation: automationPage, skills: skillsPage, ssh: sshPage, extensions: extensionsPage,
+    data: dataPage, about: aboutPage,
   };
 
   return (
@@ -409,7 +450,7 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
             </header>
             <div className="settings-body">
               {homeItems.map((item) => (
-                <button key={item.key} type="button" className="settings-home-item" onClick={() => setPage(item.key)}>
+                <button key={item.key} type="button" className="settings-home-item" onClick={() => onNavigate(item.key)}>
                   <span className="settings-home-icon" style={{ background: item.tint + "22", color: item.tint }}>{item.icon}</span>
                   <span className="settings-home-text">
                     <span className="settings-home-title">{item.title}</span>

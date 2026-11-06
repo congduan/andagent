@@ -159,8 +159,9 @@ interface AndroidBridge {
   consumeDeeplink(): string;
   openEmbeddedWebview(uri: string): string;
   dbGuiOpen(name: string): string;
-  /** R91.5: SSH 凭据——只开原生界面 / 读元数据 / 删除，没有任何 secret 出口。 */
+  /** R91.5: SSH 凭据——只开原生界面 / 编辑 / 读元数据 / 删除，没有任何 secret 出口。 */
   sshCredentialsOpen?(): string;
+  sshCredentialEdit?(nickname: string): string;
   sshCredentialsList?(): string;
   sshCredentialDelete?(nickname: string): string;
   saveSettings(json: string): void;
@@ -262,6 +263,12 @@ export interface SshCredentialMeta {
 /** 打开原生凭据录入界面（设置页按钮 / andagent://credentials 同源）。 */
 export function sshCredentialsOpen(): string {
   try { return bridge()?.sshCredentialsOpen?.() ?? "ERROR: SSH 凭据界面仅在 Android 应用内可用"; }
+  catch (e) { return `ERROR: ${String(e)}`; }
+}
+
+/** 打开原生编辑界面并预填元数据；只传 nickname，secret 不回传 WebView。 */
+export function sshCredentialEdit(nickname: string): string {
+  try { return bridge()?.sshCredentialEdit?.(nickname) ?? "ERROR: SSH 凭据界面仅在 Android 应用内可用"; }
   catch (e) { return `ERROR: ${String(e)}`; }
 }
 

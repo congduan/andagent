@@ -81,8 +81,9 @@ class AgentBridge(
     private val themeChange: (Boolean) -> Unit = {},
     private val embeddedWebviewOpen: (String) -> String = { "ERROR: 浏览器不可用" },
     private val dbGuiOpen: (String) -> String = { "ERROR: 数据库浏览器不可用" },
-    // R91.5: SSH 凭据只在原生界面录入；WebView 只能打开界面 / 看元数据 / 删除。
+    // R91.5: SSH 凭据只在原生界面录入/编辑；WebView 只能打开界面 / 看元数据 / 删除。
     private val sshCredentialOpen: () -> String = { "ERROR: SSH 凭据界面不可用" },
+    private val sshCredentialEditOpen: (String) -> String = { "ERROR: SSH 凭据界面不可用" },
     private val sshCredentialListJson: () -> String = { "[]" },
     private val sshCredentialRemove: (String) -> String = { "ERROR: SSH 凭据存储不可用" },
     // R20: 八域 UI 命令（Toast/震动/沉浸/方向/导航/分享/安全/输入法/状态）。
@@ -174,6 +175,11 @@ class AgentBridge(
     @JavascriptInterface
     fun sshCredentialsOpen(): String = runCatching { sshCredentialOpen() }
         .getOrElse { "ERROR: 打开 SSH 凭据界面失败：${it.message ?: it.javaClass.simpleName}" }
+
+    /** 只把 nickname 传给原生编辑界面；secret 不经 WebView，也不会回显。 */
+    @JavascriptInterface
+    fun sshCredentialEdit(nickname: String): String = runCatching { sshCredentialEditOpen(nickname) }
+        .getOrElse { "ERROR: 打开 SSH 凭据编辑界面失败：${it.message ?: it.javaClass.simpleName}" }
 
     /** 已保存凭据的元数据（nickname/host/port/user/authType），没有任何 secret。 */
     @JavascriptInterface

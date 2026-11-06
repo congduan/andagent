@@ -1,6 +1,7 @@
 import { currentLanguage, translate, useI18n } from "./i18n";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { execTool, hasBridge, widgetSave } from "./bridge";
+import { showError, showResult } from "./toast";
 
 /**
  * ```widget fence: an in-conversation WYSIWYG preview of a WidgetSpec v2.
@@ -537,7 +538,6 @@ export function WidgetPreviewCard({ code }: { code: string }) {
   const [sources, setSources] = useState<Record<string, Record<string, string>>>({});
   const [battery, setBattery] = useState<number | null>(null);
   const [busy, setBusy] = useState<"save" | "pin" | null>(null);
-  const [actionResult, setActionResult] = useState<string | null>(null);
 
   const spec = parsed.spec;
   const needsBattery = useMemo(() => {
@@ -620,15 +620,14 @@ export function WidgetPreviewCard({ code }: { code: string }) {
 
   const onSave = () => {
     setBusy("save");
-    setActionResult(null);
     try {
       // Same Kotlin WidgetApi.save channel the settings editor uses. (The
       // widget_generate execTool name is intercepted for the LLM flow, so it
       // cannot perform a real save from JS.)
       const out = widgetSave(parsed.canonical);
-      setActionResult(out.startsWith("ERROR:") ? out : `${t("savedWidget")} (id=${out})`);
+      showResult(out.startsWith("ERROR:") ? out : `${t("savedWidget")} (id=${out})`);
     } catch (e) {
-      setActionResult(`ERROR: ${e instanceof Error ? e.message : String(e)}`);
+      showError(`ERROR: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(null);
     }
@@ -636,9 +635,8 @@ export function WidgetPreviewCard({ code }: { code: string }) {
 
   const onPin = async () => {
     setBusy("pin");
-    setActionResult(null);
     const result = await execTool("widget_save_and_pin", { spec_json: parsed.canonical });
-    setActionResult(result.result);
+    showResult(result.result);
     setBusy(null);
   };
 
@@ -674,11 +672,6 @@ export function WidgetPreviewCard({ code }: { code: string }) {
           {busy === "pin" ? t("requesting") : t("saveAndPin")}
         </button>
       </div>
-      {actionResult && (
-        <div className={actionResult.startsWith("ERROR:") ? "rich-error wp-result" : "wp-result"}>
-          {actionResult}
-        </div>
-      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { translate, useI18n } from "./i18n";
 import { useMemo, useState } from "react";
 import { execTool } from "./bridge";
+import { showInfo, showResult } from "./toast";
 
 /**
  * ```svg fenced code blocks (R39): render a user/agent-provided SVG inline.
@@ -67,7 +68,6 @@ async function exportPng(svgText: string, filename: string): Promise<string> {
 export function SvgCard({ code }: { code: string }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
-  const [msg, setMsg] = useState("");
   const parsed = useMemo(() => parseSvg(code), [code]);
 
   if (parsed.error) {
@@ -83,8 +83,8 @@ export function SvgCard({ code }: { code: string }) {
     <div className="chart-head">
       <span className="chart-badge">SVG</span>
       <button type="button" className="code-copy" onClick={() => {
-        setMsg(t("exporting"));
-        void exportPng(code, name).then((result) => setMsg(result.startsWith("ERROR:") ? result : `${t("savedToPhotos")}：${result}`));
+        showInfo(t("exporting"));
+        void exportPng(code, name).then((result) => showResult(result.startsWith("ERROR:") ? result : `${t("savedToPhotos")}：${result}`));
       }}>{t("exportPng")}</button>
     </div>
     <div
@@ -96,7 +96,6 @@ export function SvgCard({ code }: { code: string }) {
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setExpanded(true); }}
       dangerouslySetInnerHTML={{ __html: code }}
     />
-    {msg && <div className="image-caption">{msg}</div>}
     {expanded && <div className="image-lightbox" role="dialog" aria-modal="true" aria-label={t("svgPreview")} onClick={() => setExpanded(false)}>
       <button type="button" onClick={() => setExpanded(false)} aria-label={t("closePreview")}>×</button>
       <div className="mermaid-lightbox-body" dangerouslySetInnerHTML={{ __html: code }} />

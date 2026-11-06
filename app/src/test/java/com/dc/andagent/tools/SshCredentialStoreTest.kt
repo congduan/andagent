@@ -106,6 +106,78 @@ class SshCredentialStoreTest {
     }
 
     @Test
+    fun updateMetadataKeepsSecretAndNeverLeaksIt() {
+        val s = store()
+        s.put("myvps", "10.0.0.5", 22, "root", "password", "hunter2")
+        val message = s.update("myvps", "myvps", "10.0.0.6", 2222, "deploy", "password", null)
+
+        assertTrue(message.startsWith("已更新"))
+        assertFalse("确认信息不得含明文", message.contains("hunter2"))
+        assertEquals("hunter2", s.get("myvps")?.secret)
+        val meta = s.list().single()
+        assertEquals("10.0.0.6", meta.host)
+        assertEquals(2222, meta.port)
+        assertEquals("deploy", meta.user)
+        assertEquals("password", meta.authType)
+        assertFalse("落盘文件仍不得含明文", file().readText().contains("hunter2"))
+    }
+
+    @Test
+    fun updateReplacesSecretWhenProvided() {
+        val s = store()
+        s.put("a", "h1", 22, "u", "password", "old")
+        s.update("a", "a", "h2", 2202, "u2", "password", "new")
+        assertEquals("new", s.get("a")?.secret)
+        assertEquals(1, s.list().size)
+        val raw = file().readText()
+        assertFalse(raw.contains("new"))
+        assertTrue(raw.contains("h2"))
+    }
+
+    @Test
+    fun updateRenamesCredentialAtomically() {
+        val s = store()
+        s.put("old", "h1", 22, "u", "password", "p1")
+        s.update("old", "renamed", "h1", 22, "u", "password", "")
+
+        assertNull(s.get("old"))
+        assertEquals("p1", s.get("renamed")?.secret)
+        assertEquals(1, s.list().size)
+        assertEquals("renamed", s.list().single().nickname)
+    }
+
+    @Test
+    fun updateRejectsDuplicateOrMissingNickname() {
+        val s = store()
+        s.put("a", "h1", 22, "u", "password", "p1")
+        s.put("b", "h2", 22, "u", "password", "p2")
+
+        assertThrows(IllegalArgumentException::class.java) {
+            s.update("a", "b", "h1", 22, "u", "password", null)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            s.update("missing", "c", "h1", 22, "u", "password", null)
+        }
+        assertEquals(2, s.list().size)
+        assertEquals("p1", s.get("a")?.secret)
+        assertEquals("p2", s.get("b")?.secret)
+    }
+
+    @Test
+    fun updateRequiresNewSecretWhenSwitchingAuthType() {
+        val s = store()
+        s.put("a", "h1", 22, "u", "password", "p1")
+
+        assertThrows(IllegalArgumentException::class.java) {
+            s.update("a", "a", "h1", 22, "u", "key", null)
+        }
+        val pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----"
+        s.update("a", "a", "h1", 22, "u", "key", pem)
+        assertEquals("key", s.list().single().authType)
+        assertEquals(pem, s.get("a")?.secret)
+    }
+
+    @Test
     fun corruptFileDegradesAndRecovers() {
         dir.mkdirs()
         file().writeText("not-json{{{{", Charsets.UTF_8)

@@ -20,12 +20,20 @@ describe("model setup flow", () => {
   it("clears credentials when selecting a different provider and saves keyless local models", () => {
     const save = vi.fn();
     render(<ModelSetup settings={configured} onClose={vi.fn()} onSave={save} />);
-    fireEvent.change(screen.getByLabelText("模型服务商"), { target: { value: "ollama" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Ollama" }));
     expect((screen.getByLabelText("API Key（可选）") as HTMLInputElement).value).toBe("");
     fireEvent.change(screen.getByLabelText("模型 ID"), { target: { value: "local-model" } });
     fireEvent.click(screen.getByRole("button", { name: "不测试，直接保存" }));
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: "local-model", apiKey: "", baseUrl: "http://localhost:11434/v1" }));
     expect(loadSettings().model).toBe("local-model");
+  });
+
+  it("fills the endpoint of token-plan providers such as Volcengine Ark and Tencent Hunyuan", () => {
+    render(<ModelSetup settings={configured} onClose={vi.fn()} onSave={vi.fn()} />);
+    fireEvent.click(screen.getByRole("radio", { name: "火山方舟" }));
+    expect((screen.getByLabelText("Base URL") as HTMLInputElement).value).toBe("https://ark.cn-beijing.volces.com/api/v3");
+    fireEvent.click(screen.getByRole("radio", { name: "腾讯混元" }));
+    expect((screen.getByLabelText("Base URL") as HTMLInputElement).value).toBe("https://api.hunyuan.cloud.tencent.com/v1");
   });
 
   it("keeps failed tests open, and supports manually saving after a listing failure", async () => {
@@ -50,6 +58,17 @@ describe("model setup flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "测试并保存" }));
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ model: "listed-model" })));
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders fetched models as chips and offers a manual-entry escape hatch", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "model-a" }, { id: "model-b" }] }))));
+    render(<ModelSetup settings={{ ...configured, model: "" }} onClose={vi.fn()} onSave={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "获取 / 刷新模型列表" }));
+    fireEvent.click(await screen.findByRole("button", { name: "model-b" }));
+    const modelInput = screen.getByLabelText("模型 ID") as HTMLInputElement;
+    expect(modelInput.value).toBe("model-b");
+    fireEvent.click(screen.getByRole("button", { name: /手动输入/ }));
+    expect(modelInput.value).toBe("");
   });
 
   it("aborts an in-flight test when the panel closes", async () => {

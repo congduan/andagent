@@ -29,13 +29,14 @@ import { Drawer } from "./Drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { conversationMarkdown } from "./exportConversation";
 import { MarkdownText } from "./Markdown";
-import { SettingsPanel } from "./Settings";
+import { SettingsPanel, type SettingsPage } from "./Settings";
 import { ModelSetup } from "./ModelSetup";
 import { dismissModelSetup, isModelConfigured, needsModelSetup } from "./modelConfig";
 import { TEMPLATE_GROUPS } from "./templates";
 import { ToolCard } from "./ToolCard";
 import { fmtTokens } from "./usage";
 import { useI18n } from "./i18n";
+import { showError, showSuccess } from "./toast";
 
 /** metadata.custom 透传的每条消息消耗（agent.ts toUiMessages 写入）。 */
 interface MessageUsageMeta {
@@ -268,19 +269,25 @@ function TemplateGrid() {
   );
 }
 
-function Composer({ hasKey }: { hasKey: boolean }) {
+function Composer({
+  hasKey,
+  model,
+  onOpenModel,
+}: {
+  hasKey: boolean;
+  model: string;
+  onOpenModel: () => void;
+}) {
   const { t } = useI18n();
   const aui = useAui();
   const running = useAuiState((state) => state.thread.isRunning);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
-  const [voiceError, setVoiceError] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const startTimeRef = useRef(0);
 
   const startRecording = async () => {
-    setVoiceError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
@@ -292,7 +299,7 @@ function Composer({ hasKey }: { hasKey: boolean }) {
         const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
         if (blob.size < 800) {
           setVoiceState("idle");
-          setVoiceError(t("voiceTooShort"));
+          showError(t("voiceTooShort"));
           return;
         }
         setVoiceState("transcribing");
@@ -315,11 +322,11 @@ function Composer({ hasKey }: { hasKey: boolean }) {
             setVoiceState("idle");
           } else {
             setVoiceState("idle");
-            setVoiceError(res.result);
+            showError(res.result);
           }
         } catch (e) {
           setVoiceState("idle");
-          setVoiceError(`${t("transcribeFailed")}：${String(e)}`);
+          showError(`${t("transcribeFailed")}：${String(e)}`);
         }
       };
       mr.start();
@@ -331,7 +338,7 @@ function Composer({ hasKey }: { hasKey: boolean }) {
         if (voiceStateRef.current === "recording") stopRecording();
       }, 60_000);
     } catch (e) {
-      setVoiceError(`${t("micFailed")}：${String(e)} (RECORD_AUDIO)`);
+      showError(`${t("micFailed")}：${String(e)} (RECORD_AUDIO)`);
     }
   };
 
@@ -370,78 +377,87 @@ function Composer({ hasKey }: { hasKey: boolean }) {
   return (
     <div className="composer-dock">
       <ComposerPrimitive.Root className="composer">
-        {hasKey && (
-          <button
-            type="button"
-            className={`mic-btn ${voiceState === "recording" ? "recording" : ""}`}
-            onClick={onMicClick}
-            disabled={voiceState === "transcribing"}
-            title={voiceState === "recording" ? t("stopRecording") : t("voiceInput")}
-            aria-label={voiceState === "recording" ? t("stopRecording") : t("voiceInput")}
-          >
-            {voiceState === "transcribing" ? (
-              <span className="mic-spinner" aria-hidden="true" />
-            ) : (
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <div className="composer-row">
+          {hasKey && (
+            <button
+              type="button"
+              className={`mic-btn ${voiceState === "recording" ? "recording" : ""}`}
+              onClick={onMicClick}
+              disabled={voiceState === "transcribing"}
+              title={voiceState === "recording" ? t("stopRecording") : t("voiceInput")}
+              aria-label={voiceState === "recording" ? t("stopRecording") : t("voiceInput")}
+            >
+              {voiceState === "transcribing" ? (
+                <span className="mic-spinner" aria-hidden="true" />
+              ) : (
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path
+                    d="M12 15a3.5 3.5 0 003.5-3.5V6a3.5 3.5 0 10-7 0v5.5A3.5 3.5 0 0012 15z"
+                    fill="currentColor"
+                  />
+                  <path
+                    d="M5.5 11.5a6.5 6.5 0 0013 0M12 18v3m-3.5 0h7"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    fill="none"
+                  />
+                </svg>
+              )}
+            </button>
+          )}
+          <ComposerPrimitive.Input
+            ref={inputRef as never}
+            className="composer-input"
+            placeholder={
+              voiceState === "recording"
+                ? t("inputRecording")
+                : voiceState === "transcribing"
+                  ? t("inputTranscribing")
+                  : hasKey
+                    ? t("inputPlaceholder")
+                    : t("modelInputUnconfigured")
+            }
+            minRows={1}
+            maxRows={6}
+            autoFocus
+            submitMode="enter"
+            // 触摸设备（手机输入法）按 Enter/换行键只换行，发送走发送按钮，
+            // 避免输入法组词时点换行被当成提交直接发出。
+            unstable_insertNewlineOnTouchEnter
+          />
+          {running ? (
+            <button
+              type="button"
+              className="send-btn stop"
+              onClick={() => aui.thread.cancelRun()}
+              aria-label={t("stop")}
+            >
+              <span className="stop-square" />
+            </button>
+          ) : (
+            <ComposerPrimitive.Send className="send-btn" aria-label={t("send")}>
+              {/* Upgraded send icon: 24-grid arrow (paper-plane) with gradient accent dot */}
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none">
                 <path
-                  d="M12 15a3.5 3.5 0 003.5-3.5V6a3.5 3.5 0 10-7 0v5.5A3.5 3.5 0 0012 15z"
+                  d="M3.9 20.6 21.2 12.9c.7-.3.7-1.4 0-1.7L3.9 3.4c-.7-.3-1.4.4-1.2 1.1l2.3 6.8c.1.4.5.7.9.7h6.6c.6 0 1 .4 1 1s-.4 1-1 1H5.9c-.4 0-.8.3-.9.7l-2.3 6.8c-.2.7.5 1.4 1.2 1.1z"
                   fill="currentColor"
                 />
-                <path
-                  d="M5.5 11.5a6.5 6.5 0 0013 0M12 18v3m-3.5 0h7"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  fill="none"
-                />
               </svg>
-            )}
-          </button>
-        )}
-        <ComposerPrimitive.Input
-          ref={inputRef as never}
-          className="composer-input"
-          placeholder={
-            voiceState === "recording"
-              ? t("inputRecording")
-              : voiceState === "transcribing"
-                ? t("inputTranscribing")
-                : hasKey
-                  ? t("inputPlaceholder")
-                  : t("modelInputUnconfigured")
-          }
-          minRows={1}
-          maxRows={6}
-          autoFocus
-          submitMode="enter"
-        />
-        {running ? (
+            </ComposerPrimitive.Send>
+          )}
+        </div>
+        <div className="composer-foot">
           <button
             type="button"
-            className="send-btn stop"
-            onClick={() => aui.thread.cancelRun()}
-            aria-label={t("stop")}
+            className="model-chip"
+            title={t("modelSettings")}
+            onClick={onOpenModel}
           >
-            <span className="stop-square" />
+            {model || t("connectModel")}
           </button>
-        ) : (
-          <ComposerPrimitive.Send className="send-btn" aria-label={t("send")}>
-            {/* Upgraded send icon: 24-grid arrow (paper-plane) with gradient accent dot */}
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none">
-              <path
-                d="M3.9 20.6 21.2 12.9c.7-.3.7-1.4 0-1.7L3.9 3.4c-.7-.3-1.4.4-1.2 1.1l2.3 6.8c.1.4.5.7.9.7h6.6c.6 0 1 .4 1 1s-.4 1-1 1H5.9c-.4 0-.8.3-.9.7l-2.3 6.8c-.2.7.5 1.4 1.2 1.1z"
-                fill="currentColor"
-              />
-            </svg>
-          </ComposerPrimitive.Send>
-        )}
-      </ComposerPrimitive.Root>
-      {voiceError && (
-        <div className="composer-hint voice-error" role="alert">
-          {voiceError}
-          <button type="button" onClick={() => setVoiceError(null)}>×</button>
         </div>
-      )}
+      </ComposerPrimitive.Root>
     </div>
   );
 }
@@ -460,34 +476,39 @@ export default function App() {
   const openModelSetup = () => { setModelOnboarding(false); setShowModelSetup(true); };
   const closeModelSetup = useCallback(() => { dismissModelSetup(); setShowModelSetup(false); setModelOnboarding(false); }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  // 设置内部的子页也由 App 记账：子页多占一条 history 记录，返回时先回设置列表。
+  const [settingsPage, setSettingsPage] = useState<SettingsPage>("home");
+  const settingsOnSubpage = showSettings && settingsPage !== "home";
+  const closeSettings = useCallback(() => { setShowSettings(false); setSettingsPage("home"); }, []);
   // 返回键层级：覆盖层（设置/抽屉）打开时各占一条 history 记录——Android 返回
   // 手势/按键先收起覆盖层，而不是退出 App。depth 由 backLayers 模块持久持有，
   // effect 重跑只做 attach + sync，不会把已压入的记录丢在栈里。
   const layerMgrRef = useRef<ReturnType<typeof createBackLayerManager> | null>(null);
-  const overlayRef = useRef({ showSettings, showModelSetup, drawerOpen });
-  overlayRef.current = { showSettings, showModelSetup, drawerOpen };
+  const overlayRef = useRef({ showSettings, settingsOnSubpage, showModelSetup, drawerOpen });
+  overlayRef.current = { showSettings, settingsOnSubpage, showModelSetup, drawerOpen };
   const closeTop = useCallback((): boolean => {
     if (overlayRef.current.showModelSetup) { closeModelSetup(); return true; }
-    if (overlayRef.current.showSettings) { setShowSettings(false); return true; }
+    // 设置子页优先于设置本身出栈，避免"一次返回关掉整个设置"。
+    if (overlayRef.current.settingsOnSubpage) { setSettingsPage("home"); return true; }
+    if (overlayRef.current.showSettings) { closeSettings(); return true; }
     if (overlayRef.current.drawerOpen) { setDrawerOpen(false); return true; }
     return false;
-  }, [closeModelSetup]);
+  }, [closeModelSetup, closeSettings]);
   const getLayerMgr = () =>
     layerMgrRef.current ?? (layerMgrRef.current = createBackLayerManager(closeTop));
   useEffect(() => {
     const mgr = getLayerMgr();
     mgr.attach();
-    mgr.sync((showModelSetup ? 1 : 0) + (showSettings ? 1 : 0) + (drawerOpen ? 1 : 0));
+    mgr.sync((showModelSetup ? 1 : 0) + (showSettings ? 1 : 0) + (settingsOnSubpage ? 1 : 0) + (drawerOpen ? 1 : 0));
     return () => mgr.detach();
-  }, [showSettings, showModelSetup, drawerOpen]);
+  }, [showSettings, settingsOnSubpage, showModelSetup, drawerOpen]);
   // 卸载（页面销毁 / StrictMode 双挂载）时清空 history 栈，避免残留记录。
   useEffect(() => {
     getLayerMgr().attach();
     return () => getLayerMgr().destroy();
   }, []);
   useEffect(() => {
-    const onExported = (event: Event) => setExportNotice(t("exportedTo", { path: (event as CustomEvent<string>).detail }));
+    const onExported = (event: Event) => showSuccess(t("exportedTo", { path: (event as CustomEvent<string>).detail }));
     window.addEventListener("andagent:conversation-exported", onExported);
     return () => window.removeEventListener("andagent:conversation-exported", onExported);
   }, [t]);
@@ -501,6 +522,19 @@ export default function App() {
   useEffect(() => {
     setAppVersion(getAppVersion());
   }, []);
+
+  // 请求失败统一走顶部 toast（同一条错误只弹一次，换语言不重复弹）。
+  const shownErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    const error = snapshot.error;
+    if (!error) {
+      shownErrorRef.current = null;
+      return;
+    }
+    if (shownErrorRef.current === error) return;
+    shownErrorRef.current = error;
+    showError(`${t("requestFailed")}：${error}`);
+  }, [snapshot.error, t]);
 
   useEffect(() => {
     installLLMFetch(settings.baseUrl);
@@ -551,7 +585,6 @@ export default function App() {
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="app">
-        {exportNotice && <div className="banner" role="status">{exportNotice}<button type="button" onClick={() => setExportNotice(null)}>{t("close")}</button></div>}
         <header className="app-head">
           <div className="head-left">
             <button
@@ -578,9 +611,6 @@ export default function App() {
             </div>
           </div>
           <div className="head-actions">
-            <button type="button" className="model-chip" title={t("modelSettings")} onClick={openModelSetup}>
-              {settings.model || t("connectModel")}
-            </button>
             <button
               type="button"
               className="icon-btn"
@@ -633,19 +663,11 @@ export default function App() {
           </div>
         )}
 
-        {snapshot.error && (
-          <div className="error-bar" role="alert">
-            <strong>{t("requestFailed")}</strong>
-            <span>{snapshot.error}</span>
-          </div>
-        )}
-
         <ThreadPrimitive.Root className="thread">
           <ThreadPrimitive.Viewport className="viewport" autoScroll>
             <div className="thread-inner">
               <ThreadPrimitive.Empty>
                 <div className="empty">
-                  <div className="empty-mark">A</div>
                   <h1>{t("emptyTitle")}</h1>
                   <p>{t("emptyBody")}</p>
                   <TemplateGrid />
@@ -661,12 +683,24 @@ export default function App() {
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
 
-        <Composer hasKey={isModelConfigured(settings)} />
+        <Composer
+          hasKey={isModelConfigured(settings)}
+          model={settings.model}
+          onOpenModel={openModelSetup}
+        />
 
         {showSettings && (
           <SettingsPanel
             settings={settings}
-            onClose={() => setShowSettings(false)}
+            page={settingsPage}
+            onNavigate={setSettingsPage}
+            onBack={() => {
+              // 子页有自己的 history 层：走 back() 让 popstate 统一出栈，
+              // 直接改 state 会触发 sync 的程序化 back，其回响又会多关一层。
+              if (getLayerMgr().layers() > 1) history.back();
+              else setSettingsPage("home");
+            }}
+            onClose={closeSettings}
             onSave={saveSettings}
             onModelSetup={openModelSetup}
           />
@@ -693,7 +727,7 @@ export default function App() {
             const session = snapshot.sessions.find((s) => s.id === id);
             if (!session) return;
             const result = exportConversation(session.title, conversationMarkdown(id, session.title));
-            if (result.startsWith("ERROR:")) setExportNotice(result);
+            if (result.startsWith("ERROR:")) showError(result);
           }}
         />
       </div>

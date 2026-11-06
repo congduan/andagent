@@ -22,6 +22,8 @@ export interface BackLayerManager {
   detach(): void;
   /** 卸载时清栈（页面销毁 / StrictMode 双挂载）。 */
   destroy(): void;
+  /** 当前已压入的 history 层数，供 UI 判断能否安全地 history.back()。 */
+  layers(): number;
 }
 
 export function createBackLayerManager(onCloseTop: () => boolean): BackLayerManager {
@@ -70,5 +72,5 @@ export function createBackLayerManager(onCloseTop: () => boolean): BackLayerMana
     }
   };
 
-  return { sync, attach, detach, destroy };
+  return { sync, attach, detach, destroy, layers: () => depth };
 }

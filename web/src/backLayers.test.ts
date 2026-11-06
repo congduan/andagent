@@ -121,6 +121,29 @@ describe("createBackLayerManager", () => {
     mgr.detach();
   });
 
+  it("回归：设置子页返回只回设置列表，不连带关闭设置", () => {
+    const state = { settings: true, subpage: true };
+    const mgr = createBackLayerManager(() => {
+      if (state.subpage) { state.subpage = false; return true; }
+      if (state.settings) { state.settings = false; return true; }
+      return false;
+    });
+    const push = vi.spyOn(window.history, "pushState").mockImplementation(() => {});
+    mgr.attach();
+    mgr.sync(2); // 设置层 + 子页层
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(mgr.layers()).toBe(2);
+
+    userBack();
+    expect(state).toEqual({ settings: true, subpage: false });
+    mgr.sync(1); // effect 收敛：层级已对齐，不应再 back()
+    expect(mgr.layers()).toBe(1);
+
+    userBack();
+    expect(state).toEqual({ settings: false, subpage: false });
+    mgr.detach();
+  });
+
   it("重复 attach 只挂一个监听", () => {
     const { onCloseTop, mgr } = setup();
     mgr.attach();

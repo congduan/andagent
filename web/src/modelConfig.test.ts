@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, modelFetch } from "./bridge";
-import { dismissModelSetup, isModelConfigured, isValidModelUrl, listModels, needsModelSetup, normalizeModelUrl, testModel } from "./modelConfig";
+import { PROVIDERS, PROVIDER_GROUPS, dismissModelSetup, isModelConfigured, isValidModelUrl, listModels, needsModelSetup, normalizeModelUrl, providerForUrl, testModel } from "./modelConfig";
 
 const settings = { ...DEFAULT_SETTINGS, baseUrl: " https://models.example/v1/chat/completions/ ", apiKey: " test-key ", model: "agent-model" };
 afterEach(() => { localStorage.clear(); delete window.AndroidBridge; vi.unstubAllGlobals(); });
@@ -24,6 +24,18 @@ describe("model onboarding", () => {
     expect(normalizeModelUrl(settings.baseUrl)).toBe("https://models.example/v1");
     for (const url of ["", "file:///tmp/model", "https://u:secret@example.com/v1", "https://example.com/v1?key=secret", "https://example.com/#fragment"])
       expect(isValidModelUrl(url)).toBe(false);
+  });
+});
+
+describe("provider presets", () => {
+  it("buckets every preset once, keeps custom last, and stores base endpoints only", () => {
+    const grouped = PROVIDER_GROUPS.flatMap(group => PROVIDERS.filter(p => p.group === group.id));
+    expect(grouped).toHaveLength(PROVIDERS.length);
+    expect(PROVIDERS[PROVIDERS.length - 1].id).toBe("custom");
+    for (const preset of PROVIDERS) expect(preset.baseUrl).not.toMatch(/\/chat\/completions$/);
+    expect(providerForUrl("https://ark.cn-beijing.volces.com/api/v3").id).toBe("ark");
+    expect(providerForUrl("https://api.hunyuan.cloud.tencent.com/v1/chat/completions").id).toBe("hunyuan");
+    expect(providerForUrl("https://my-gateway.example/v1").id).toBe("custom");
   });
 });
 

@@ -1,6 +1,7 @@
 import { translate } from "./i18n";
 import { useState } from "react";
 import { execTool } from "./bridge";
+import { showError, showSuccess } from "./toast";
 
 type Photo = { id?: string; uri?: string; name?: string; thumbnailBase64?: string; thumb?: string };
 
@@ -107,16 +108,15 @@ export function ImageCard({ code }: { code: string }) {
 }
 
 export function PhotosCard({ code }: { code: string }) {
-  const [error, setError] = useState("");
   let photos: Photo[] = [];
   try { const data = JSON.parse(code); photos = Array.isArray(data) ? data : data.photos ?? []; } catch { return <div className="rich-error">{translate("photosInvalid")}</div>; }
   return <div className="photos-grid">{photos.map((photo, i) => {
     const src = photo.thumbnailBase64 ? `data:image/jpeg;base64,${photo.thumbnailBase64}` : photo.thumb;
     return <button type="button" key={photo.id ?? photo.uri ?? i} onClick={async () => {
       const result = await execTool("album_open", { id: photo.id, uri: photo.uri });
-      if (!result.ok) setError(result.result);
+      if (result.ok) showSuccess(result.result); else showError(result.result);
     }}><img src={src} alt={photo.name ?? `${translate("photo")} ${i + 1}`} loading="lazy" /><span>{photo.name ?? `${translate("photo")} ${i + 1}`}</span></button>;
-  })}{error && <div className="rich-error">{error}</div>}</div>;
+  })}</div>;
 }
 
 /** Key-value view is the same unified table renderer in its two-column form. */
@@ -125,7 +125,6 @@ export function KvCard({ code }: { code: string }) {
 }
 
 export function GeoCard({ code }: { code: string }) {
-  const [error, setError] = useState("");
   let data: { lat: number; lng: number; label?: string };
   try { data = JSON.parse(code); } catch { return <div className="rich-error">{translate("mapInvalid")}</div>; }
   const { lat, lng, label } = data;
@@ -134,6 +133,6 @@ export function GeoCard({ code }: { code: string }) {
   const src = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&marker=${lat}%2C${lng}`;
   return <div className="geo-card"><div>{label ?? `${lat}, ${lng}`}</div><iframe title={label ?? translate("map")} src={src} loading="lazy" /><button type="button" onClick={async () => {
     const result = await execTool("open_uri", { uri: `geo:${lat},${lng}` });
-    if (!result.ok) setError(result.result);
-  }}>{translate("openMapApp")}</button>{error && <div className="rich-error">{error}</div>}</div>;
+    if (!result.ok) showError(result.result);
+  }}>{translate("openMapApp")}</button></div>;
 }

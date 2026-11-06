@@ -532,6 +532,13 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread { startActivity(Intent(this, SshCredentialActivity::class.java)) }
                 "已打开 SSH 凭据界面：请在原生页面输入密码/私钥，内容不会进入对话。"
             },
+            sshCredentialEditOpen = { nickname ->
+                runOnUiThread {
+                    startActivity(Intent(this, SshCredentialActivity::class.java)
+                        .putExtra(SshCredentialActivity.EXTRA_EDIT_NICKNAME, nickname))
+                }
+                "已打开「$nickname」的编辑界面：只预填元数据，密码/私钥不回显，留空即保留原凭据。"
+            },
             sshCredentialListJson = {
                 runCatching { SshCredentialStore(appContext).listJson() }.getOrDefault("[]")
             },
