@@ -613,6 +613,9 @@ const TOOL_DEFS = [
   { name: "airpods_monitor_start", description: "开启前台服务持续监听 AirPods 广播；最新值和历史写入 airpods KV 命名空间。", parameters: { type: "object", properties: { interval_ms: { type: "integer", description: "KV 保存间隔毫秒，默认 5000" } } } },
   { name: "airpods_monitor_stop", description: "停止 AirPods 前台监听。", parameters: { type: "object", properties: {} } },
   { name: "airpods_history", description: "读取监听期间最近一段时间的 AirPods 电量与佩戴历史。", parameters: { type: "object", properties: { duration_min: { type: "integer", description: "历史分钟数，默认 30，范围 1-30" } } } },
+  { name: "ir_available", description: "检测手机是否有红外发射器，返回支持的载波范围。", parameters: { type: "object", properties: {} } },
+  { name: "ir_send_raw", description: "按 carrier_hz 载波发送交替 on/off 微秒数组 pattern。真实发射红外信号。", parameters: { type: "object", properties: { carrier_hz: { type: "integer" }, pattern: { type: "array", items: { type: "integer" } } }, required: ["carrier_hz", "pattern"] } },
+  { name: "ir_send_pronto", description: "发送 Pronto Hex 0000 原始调制码。真实发射红外信号；压缩 RC5/RC6 码需先转为 0000 原始码。", parameters: { type: "object", properties: { hex: { type: "string" } }, required: ["hex"] } },
 ] satisfies PiTool[];
 
 /**
@@ -668,12 +671,14 @@ const LIVE_GUIDE_EN = [
 ].join("\n");
 
 const HARDWARE_GUIDE = [
+  "红外遥控：先用 ir_available 检测发射器；从网上或遥控器数据库查到目标品牌/型号的 Pronto Hex 0000 码后，用 ir_send_pronto 发送；自定义协议用 ir_send_raw 发送交替 on/off 微秒数组。空调等多状态设备应使用包含温度、模式、风速等完整状态的品牌码。手机无红外硬件时如实告知，不能声称已发送。电视、机顶盒、音响、红外灯具也可按匹配码遥控。",
   "AirPods：airpods_scan 扫描附近广播；airpods_status / airpods_battery 查询近期状态和电量。",
   "airpods_monitor_start 开启可从通知停止的后台监听；airpods_monitor_stop 停止；airpods_history 取电量与佩戴历史，可用 ```chart 画续航趋势。",
   "监听值写入 KV 的 airpods/latest 和 airpods/history。```live 循环可用 andagent.kv.get('airpods','latest') 读取，绘制电量曲线；检测 isLeftInEar / isRightInEar 从 true 变 false 时，如有可用的媒体控制工具可暂停播放，低于 20% 可调用 notify_send。仅在用户要求自动化时启动循环，避免每 tick 重复通知。",
 ].join("\n");
 
 const HARDWARE_GUIDE_EN = [
+  "Infrared remote: check ir_available first. Find a matching brand/model Pronto Hex 0000 code via web search or a remote-code database, then send it with ir_send_pronto. Use ir_send_raw for custom on/off microsecond patterns. For stateful air conditioners, use a complete brand code encoding temperature, mode and fan speed. If the phone lacks an IR emitter, report that accurately. TVs, set-top boxes, audio systems and IR lights also work with matching codes.",
   "AirPods: use airpods_scan to discover nearby broadcasts; airpods_status / airpods_battery for recent status and charge.",
   "airpods_monitor_start enables background monitoring with a notification stop action; airpods_monitor_stop stops it. airpods_history supplies battery and in-ear history for a ```chart trend.",
   "Monitor data is available in KV at airpods/latest and airpods/history. A ```live loop can read andagent.kv.get('airpods','latest') to draw battery curves. On an in-ear true-to-false transition, pause playback if a media control tool is available; below 20%, call notify_send. Start automation only when requested and deduplicate alerts across ticks.",

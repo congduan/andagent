@@ -62,7 +62,7 @@ android {
         minSdk = 26
         targetSdk = 28
         versionCode = 45
-        versionName = "0.28.8"
+        versionName = "0.28.9"
     }
 
     buildFeatures {
