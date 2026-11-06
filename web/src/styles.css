@@ -199,10 +199,6 @@ button:disabled {
   min-width: 0;
 }
 
-.head-actions .icon-btn {
-  flex: none;
-}
-
 .model-chip {
   /* 内容多宽就占多宽（受右侧可用空间约束），挤不下才降级省略号。 */
   flex: 0 1 auto;
@@ -223,6 +219,33 @@ button:disabled {
 
 .model-chip:active {
   background: var(--wash-3);
+}
+
+/* 顶栏胶囊按钮（对话记录 / 新对话）：与模型 chip 同高、同边框、同底色，
+   顶栏右侧不再出现「透明图标按钮 + 胶囊」两种风格。 */
+.head-chip {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--wash-2);
+  color: var(--muted);
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+
+.head-chip:hover:not(:disabled),
+.head-chip.open {
+  background: var(--wash-3);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.head-chip:disabled {
+  opacity: 0.35;
 }
 
 /* 320px 级窄屏：版本号让位，模型按钮靠 flex 收缩自然省略，不再硬砍宽度。 */
@@ -1374,21 +1397,8 @@ button:disabled {
 }
 
 .msg-nav-btn {
-  /* 与模型 chip 同高的胶囊按钮，避免顶栏出现两种高度。 */
+  /* 胶囊外观由 .head-chip 统一提供，这里只管徽标定位。 */
   position: relative;
-  width: 32px;
-  height: 24px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--wash-2);
-  color: var(--muted);
-}
-
-.msg-nav-btn:hover:not(:disabled),
-.msg-nav-btn.open {
-  color: var(--text);
-  border-color: var(--border);
-  background: var(--wash-3);
 }
 
 .msg-nav-badge {

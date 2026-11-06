@@ -686,13 +686,13 @@ export default function App() {
             <MessageNav key={snapshot.sessionId} items={userInputs} />
             <button
               type="button"
-              className="icon-btn"
+              className="head-chip"
               title={t("newChat")}
               aria-label={t("newChat")}
               disabled={!hasMessages || snapshot.running}
               onClick={() => engine.newSession()}
             >
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
                 <path
                   d="M12 5v14M5 12h14"
                   stroke="currentColor"

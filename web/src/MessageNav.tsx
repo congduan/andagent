@@ -145,7 +145,7 @@ export function MessageNav({ items }: { items: MessageNavItem[] }) {
       )}
       <button
         type="button"
-        className={`icon-btn msg-nav-btn ${open ? "open" : ""}`}
+        className={`head-chip msg-nav-btn ${open ? "open" : ""}`}
         aria-expanded={open}
         aria-label={t("msgNavOpen")}
         title={t("msgNavOpen")}
