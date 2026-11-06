@@ -19,25 +19,12 @@ import { EXTRA_TOOL_DEFS } from "./extraTools";
 import { extensionTools, skillPrompt, memoryPrompt } from "./bridge";
 import apiTools from "../../app/src/main/assets/api_tools.json";
 import { addUsage, emptyUsage, sumMessageUsage, type UsageSum } from "./usage";
-
-type PiModule = typeof import("@mariozechner/pi-ai");
+import { loadPi } from "./pi";
+import type { PiModule } from "./piTypes";
 
 const MAX_TOOL_ROUNDS = 200;
 
-let piPromise: Promise<PiModule> | null = null;
-
-/** Load the esbuild-produced pi bundle from the app's asset root. */
-export function loadPi(): Promise<PiModule> {
-  if (!piPromise) {
-    piPromise = (async () => {
-      const url = new URL("pi-bundle.js", document.baseURI).href;
-      const mod = (await import(/* @vite-ignore */ url)) as PiModule;
-      mod.registerBuiltInApiProviders();
-      return mod;
-    })();
-  }
-  return piPromise;
-}
+export type { PiModule };
 
 const TOOL_DEFS = [
   {
@@ -1168,6 +1155,10 @@ export class AgentEngine {
     this.draft = null;
     const controller = new AbortController();
     this.abort = controller;
+    // R93 必修项：本轮绑定发起时的会话。期间用户删除/切换会话时，
+    // 旧轮次在各写回点自作废，绝不把回复写进切换后的新会话。
+    const turnSessionId = this.sessionId;
+    const sessionChanged = (): boolean => this.sessionId !== turnSessionId;
     const userMessage: UserMessage = { role: "user", content, timestamp: Date.now() };
     this.messages = [...this.messages, userMessage];
     this.persist();
@@ -1274,6 +1265,7 @@ export class AgentEngine {
         // 耗时（本轮流开始→final 到手）挂在消息对象上随会话持久化。
         addUsage(this.sessionUsage, final.usage);
         (final as { durationMs?: number }).durationMs = Date.now() - roundStart;
+        if (sessionChanged()) return; // 会话已删除/切换：本轮作废
         this.messages = [...this.messages, final];
         this.persist();
         this.emit();
@@ -1287,6 +1279,7 @@ export class AgentEngine {
         for (const call of toolCalls) {
           const result = await execTool(call.name, call.arguments ?? {}, call.id);
           if (controller.signal.aborted) return;
+          if (sessionChanged()) return; // 会话已删除/切换：本轮作废
           const toolResult: ToolResultMessage = {
             role: "toolResult",
             toolCallId: call.id,
@@ -1317,7 +1310,7 @@ export class AgentEngine {
       this.draft = null;
       this.abort = null;
       setStreamingFlag(false);
-      this.persist();
+      if (!sessionChanged()) this.persist(); // 会话已切换：不把旧轮内容写进新会话
       this.emit();
     }
   }

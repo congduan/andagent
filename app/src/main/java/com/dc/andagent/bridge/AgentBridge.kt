@@ -471,8 +471,23 @@ class AgentBridge(
                 file.absolutePath
             } else {
                 val resolver = context.contentResolver
+                // R93 review 必修项：MediaStore 允许同名文件共存，固定 DISPLAY_NAME 会让
+                // 重复导出悄悄叠加成 多份同名文件且返回路径不可信。先查重生成唯一名，
+                // 并以 IS_PENDING 查询到的真实 DISPLAY_NAME 报告路径。
+                val finalName = run {
+                    var candidate = filename
+                    var n = 2
+                    while (mediaStoreNameExists(resolver, candidate)) {
+                        val dot = filename.lastIndexOf('.')
+                        val stem = if (dot > 0) filename.substring(0, dot) else filename
+                        val ext = if (dot > 0) filename.substring(dot) else ".md"
+                        candidate = "$stem-$n$ext"
+                        n++
+                    }
+                    candidate
+                }
                 val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, finalName)
                     put(MediaStore.MediaColumns.MIME_TYPE, "text/markdown")
                     put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/andagent/")
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
@@ -485,7 +500,9 @@ class AgentBridge(
                     values.clear()
                     values.put(MediaStore.MediaColumns.IS_PENDING, 0)
                     resolver.update(uri, values, null, null)
-                    "/sdcard/${Environment.DIRECTORY_DOWNLOADS}/andagent/$filename"
+                    // 以 MediaStore 落库后的实际名称为准（insert 可能对非法字符做改写）
+                    val actualName = queryMediaStoreDisplayName(resolver, uri) ?: finalName
+                    "/sdcard/${Environment.DIRECTORY_DOWNLOADS}/andagent/$actualName"
                 } catch (e: Exception) {
                     resolver.delete(uri, null, null)
                     throw e
@@ -494,6 +511,25 @@ class AgentBridge(
         }.onSuccess { path -> emit(buildJsonObject { put("type", "conversation.exported"); put("path", path) }) }
             .getOrElse { "ERROR: 导出失败：${it.message ?: it.javaClass.simpleName}" }
     }
+
+    /** R93: 查询 MediaStore Downloads/andagent/ 下是否已存在同名文件（排除 IS_PENDING 项）。 */
+    private fun mediaStoreNameExists(resolver: android.content.ContentResolver, name: String): Boolean =
+        runCatching {
+            resolver.query(
+                MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.RELATIVE_PATH}=? AND ${MediaStore.MediaColumns.IS_PENDING}=0",
+                arrayOf(name, "${Environment.DIRECTORY_DOWNLOADS}/andagent/"),
+                null,
+            )?.use { it.count > 0 } ?: false
+        }.getOrDefault(false)
+
+    /** R93: 读取 MediaStore 条目落库后的实际 DISPLAY_NAME，失败返回 null。 */
+    private fun queryMediaStoreDisplayName(resolver: android.content.ContentResolver, uri: android.net.Uri): String? =
+        runCatching {
+            resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
+                ?.use { if (it.moveToFirst()) it.getString(0) else null }
+        }.getOrNull()
 
     @JavascriptInterface
     fun widgetList(): String = runCatching { WidgetApi.list(requireNotNull(appContext)) }.getOrDefault("[]")
