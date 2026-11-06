@@ -107,6 +107,7 @@ import com.dc.andagent.tools.MicListTool
 import com.dc.andagent.tools.OrientationTool
 import com.dc.andagent.tools.OtgTool
 import com.dc.andagent.tools.MicRecordTool
+import com.dc.andagent.tools.SpeechRecognizeTool
 import com.dc.andagent.tools.CameraInfoTool
 import com.dc.andagent.tools.SensorInfoTool
 import com.dc.andagent.tools.CameraOverlayTool
@@ -405,6 +406,7 @@ class MainActivity : ComponentActivity() {
             "widget_generate" to WidgetGenerateTool(appContext),
             "widget_save_and_pin" to WidgetSaveAndPinTool(appContext),
             "mic_record" to MicRecordTool(appContext, permissionBroker),
+            "speech_recognize" to SpeechRecognizeTool(appContext, permissionBroker),
             "camera_overlay_show" to CameraOverlayTool(appContext, permissionBroker, "camera_overlay_show", activityProvider = { this.takeIf { !it.isFinishing } }),
             "camera_overlay_update" to CameraOverlayTool(appContext, permissionBroker, "camera_overlay_update", activityProvider = { this.takeIf { !it.isFinishing } }),
             "camera_overlay_hide" to CameraOverlayTool(appContext, permissionBroker, "camera_overlay_hide"),
@@ -550,19 +552,35 @@ class MainActivity : ComponentActivity() {
             // so JS getUserMedia() fails even with RECORD_AUDIO granted.
             webChromeClient = object : WebChromeClient() {
                 override fun onPermissionRequest(request: PermissionRequest) {
-                    val audio = PermissionRequest.RESOURCE_AUDIO_CAPTURE
                     val shellOrigin = request.origin?.host == "appassets.androidplatform.net"
-                    if (!shellOrigin || audio !in request.resources) {
+                    val wanted = request.resources.toList().filter {
+                        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE || it == PermissionRequest.RESOURCE_VIDEO_CAPTURE
+                    }
+                    if (!shellOrigin || wanted.isEmpty()) {
                         runCatching { request.deny() }
                         return
                     }
                     // Chromium asks the host app before checking Android's own
                     // grant: obtain it on demand, then answer the pending
                     // getUserMedia() promise on the main thread.
-                    permissionBroker.request(listOf(Manifest.permission.RECORD_AUDIO)) { result ->
+                    val androidPerms = wanted.mapNotNull {
+                        when (it) {
+                            PermissionRequest.RESOURCE_AUDIO_CAPTURE -> Manifest.permission.RECORD_AUDIO
+                            PermissionRequest.RESOURCE_VIDEO_CAPTURE -> Manifest.permission.CAMERA
+                            else -> null
+                        }
+                    }
+                    permissionBroker.request(androidPerms) { result ->
                         runCatching {
-                            if (result[Manifest.permission.RECORD_AUDIO] == true && !isFinishing && !isDestroyed) {
-                                request.grant(arrayOf(audio))
+                            val granted = wanted.filter { webResource ->
+                                val androidPerm = when (webResource) {
+                                    PermissionRequest.RESOURCE_AUDIO_CAPTURE -> Manifest.permission.RECORD_AUDIO
+                                    else -> Manifest.permission.CAMERA
+                                }
+                                result[androidPerm] == true
+                            }.toTypedArray()
+                            if (granted.isNotEmpty() && !isFinishing && !isDestroyed) {
+                                request.grant(granted)
                             } else {
                                 request.deny()
                             }
