@@ -21,8 +21,8 @@ An on-device AI assistant for Android. It calls device capabilities directly fro
 | *NFC read in progress* | *NFC read result (MIFARE Classic)* | *Clipboard tool* |
 | ![Embedded Termux: Python 3.14](screenshots/Screenshot_2026-11-07-00-56-45-14_4125a5ea215eda4541496596fa5ea51d.jpg) | ![Python script test results](screenshots/Screenshot_2026-11-07-00-56-58-10_4125a5ea215eda4541496596fa5ea51d.jpg) | ![shell_exec](screenshots/Screenshot_2026-11-07-00-57-33-45_4125a5ea215eda4541496596fa5ea51d.jpg) |
 | *Embedded Termux: Python 3.14* | *Python script test results* | *shell_exec* |
-| ![Vibration tool with destructive badge](screenshots/Screenshot_2026-11-07-00-58-11-83_4125a5ea215eda4541496596fa5ea51d.jpg) | ![Live sensor chart card](screenshots/Screenshot_2026-11-07-01-01-34-82_4125a5ea215eda4541496596fa5ea51d.jpg) | |
-| *Vibration tool with destructive badge* | *Live sensor chart card* | |
+| ![Vibration tool with destructive badge](screenshots/Screenshot_2026-11-07-00-58-11-83_4125a5ea215eda4541496596fa5ea51d.jpg) | ![Live sensor chart card](screenshots/Screenshot_2026-11-07-01-01-34-82_4125a5ea215eda4541496596fa5ea51d.jpg) | ![SSH execution on a remote server](screenshots/Screenshot_2026-11-07-01-10-02-68_4125a5ea215eda4541496596fa5ea51d.jpg) |
+| *Vibration tool with destructive badge* | *Live sensor chart card* | *SSH execution on a remote server* |
 
 ## How it works
 

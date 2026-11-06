@@ -16,8 +16,8 @@ AndAgent 是运行在 Android 设备上的开源 AI 助手。对话可直接调�
 | *NFC 读卡进行中* | *NFC 读卡结果（MIFARE Classic）* | *剪贴板工具* |
 | ![内嵌 Termux：Python 3.14](screenshots/Screenshot_2026-11-07-00-56-45-14_4125a5ea215eda4541496596fa5ea51d.jpg) | ![Python 脚本测试结果](screenshots/Screenshot_2026-11-07-00-56-58-10_4125a5ea215eda4541496596fa5ea51d.jpg) | ![shell_exec](screenshots/Screenshot_2026-11-07-00-57-33-45_4125a5ea215eda4541496596fa5ea51d.jpg) |
 | *内嵌 Termux：Python 3.14* | *Python 脚本测试结果* | *shell_exec* |
-| ![振动工具与写入标记](screenshots/Screenshot_2026-11-07-00-58-11-83_4125a5ea215eda4541496596fa5ea51d.jpg) | ![实时传感器曲线卡片](screenshots/Screenshot_2026-11-07-01-01-34-82_4125a5ea215eda4541496596fa5ea51d.jpg) | |
-| *振动工具与写入标记* | *实时传感器曲线卡片* | |
+| ![振动工具与写入标记](screenshots/Screenshot_2026-11-07-00-58-11-83_4125a5ea215eda4541496596fa5ea51d.jpg) | ![实时传感器曲线卡片](screenshots/Screenshot_2026-11-07-01-01-34-82_4125a5ea215eda4541496596fa5ea51d.jpg) | ![SSH 远程执行](screenshots/Screenshot_2026-11-07-01-10-02-68_4125a5ea215eda4541496596fa5ea51d.jpg) |
+| *振动工具与写入标记* | *实时传感器曲线卡片* | *SSH 远程执行* |
 
 ## 主要能力
 
