@@ -606,6 +606,13 @@ const TOOL_DEFS = [
       description: p.description,
     }])), required: params.map(p => p.name) },
   })),
+  // R65: AirPods BLE 监听（pods/PODS_TOOLS，Kotlin 侧 PodsTool 注册）
+  { name: "airpods_scan", description: "扫描附近 AirPods/Beats 的公开 BLE 广播，返回型号、电量、佩戴、盒盖和连接态。", parameters: { type: "object", properties: { duration_ms: { type: "integer", description: "扫描毫秒，默认 3000，范围 1000-30000" } } } },
+  { name: "airpods_status", description: "查询最近 30 秒内主用耳机广播快照（型号/佩戴/盒盖/电量/连接态）。", parameters: { type: "object", properties: {} } },
+  { name: "airpods_battery", description: "查询主用耳机左、右、盒电量与充电状态。", parameters: { type: "object", properties: {} } },
+  { name: "airpods_monitor_start", description: "开启前台服务持续监听 AirPods 广播；最新值和历史写入 airpods KV 命名空间。", parameters: { type: "object", properties: { interval_ms: { type: "integer", description: "KV 保存间隔毫秒，默认 5000" } } } },
+  { name: "airpods_monitor_stop", description: "停止 AirPods 前台监听。", parameters: { type: "object", properties: {} } },
+  { name: "airpods_history", description: "读取监听期间最近一段时间的 AirPods 电量与佩戴历史。", parameters: { type: "object", properties: { duration_min: { type: "integer", description: "历史分钟数，默认 30，范围 1-30" } } } },
 ] satisfies PiTool[];
 
 /**
