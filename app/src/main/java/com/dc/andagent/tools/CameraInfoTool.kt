@@ -4,6 +4,7 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CameraManager
 import android.content.Context
+import android.graphics.ImageFormat
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -81,20 +82,57 @@ class CameraInfoTool(private val context: Context, override val name: String) : 
         }.toString()
     }
 
-    private fun decodeFormat(fmt: Int): String = when (fmt) {
-        0x11 -> "YUV_420_888"; 0x21 -> "PRIVATE"; 0x22 -> "JPEG"; 0x23 -> "RAW_SENSOR"
-        0x20 -> "RAW10"; 0x3A -> "RAW12"; 0x25 -> "HEIC"; 0x100 -> "Y8"; 0x27 -> "Y16"
-        else -> "format_$fmt"
-    }
+    internal companion object {
+        /** HAL 输出格式：android-34 未将其公开为 ImageFormat 常量，值取自 HAL_PIXEL_FORMAT_*。 */
+        private const val FORMAT_BLOB = 33 // HAL_PIXEL_FORMAT_BLOB
+        /** Y16 同样未公开为 ImageFormat 常量（Y8 有），取值与 Y8 同一 fourcc 编码规则。 */
+        private const val FORMAT_Y16 = 540422489 // HAL_PIXEL_FORMAT_Y16（fourcc " 61Y"，同 Y8 编码规则）
 
-    private fun decodeCapability(cap: Int): String = when (cap) {
-        0 -> "BACKWARD_COMPATIBLE"; 1 -> "MANUAL_SENSOR"; 2 -> "MANUAL_POST_PROCESSING"
-        3 -> "RAW"; 4 -> "PRIVATE_REPROCESSING"; 5 -> "READ_SENSOR_SETTINGS"
-        6 -> "BURST_CAPTURE"; 7 -> "YUV_REPROCESSING"; 8 -> "DEPTH_OUTPUT"
-        9 -> "CONSTRAINED_HIGH_SPEED_VIDEO"; 10 -> "FACE_PRIORITY"
-        12 -> "LOGICAL_MULTI_CAMERA"; 13 -> "MONOCHROME"; 14 -> "SECURE_IMAGE_DATA"
-        15 -> "SYSTEM_CAMERA"; 16 -> "OFFLINE_PROCESSING"; 17 -> "ULTRA_WIDE_BANDSENSOR"
-        18 -> "REMOTE_REPROCESSING"; 19 -> "DYNAMIC_DEPTH_TEN_BIT"; 20 -> "COLOR_SPACE_PROFILES"
-        else -> "capability_$cap"
+        /**
+         * R69: 输出格式解码。全部引用 SDK 常量，避免 R68 手写魔数与 SDK 实际值错位。
+         * 未知格式保留 `format_<数值>`，便于日志/模型侧识别而不是猜。
+         */
+        fun decodeFormat(fmt: Int): String = when (fmt) {
+            ImageFormat.YUV_420_888 -> "YUV_420_888"
+            ImageFormat.PRIVATE -> "PRIVATE"
+            ImageFormat.JPEG -> "JPEG"
+            ImageFormat.JPEG_R -> "JPEG_R"
+            ImageFormat.RAW_SENSOR -> "RAW_SENSOR"
+            ImageFormat.RAW10 -> "RAW10"
+            ImageFormat.RAW12 -> "RAW12"
+            ImageFormat.HEIC -> "HEIC"
+            ImageFormat.Y8 -> "Y8"
+            ImageFormat.DEPTH16 -> "DEPTH16"
+            ImageFormat.DEPTH_JPEG -> "DEPTH_JPEG"
+            FORMAT_BLOB -> "BLOB"
+            FORMAT_Y16 -> "Y16"
+            else -> "format_$fmt"
+        }
+
+        /** R69: REQUEST_AVAILABLE_CAPABILITIES_* 解码，值全部来自 CameraMetadata 常量。 */
+        fun decodeCapability(cap: Int): String = when (cap) {
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE -> "BACKWARD_COMPATIBLE"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR -> "MANUAL_SENSOR"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING -> "MANUAL_POST_PROCESSING"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_RAW -> "RAW"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_PRIVATE_REPROCESSING -> "PRIVATE_REPROCESSING"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_READ_SENSOR_SETTINGS -> "READ_SENSOR_SETTINGS"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_BURST_CAPTURE -> "BURST_CAPTURE"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_YUV_REPROCESSING -> "YUV_REPROCESSING"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_DEPTH_OUTPUT -> "DEPTH_OUTPUT"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_CONSTRAINED_HIGH_SPEED_VIDEO -> "CONSTRAINED_HIGH_SPEED_VIDEO"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MOTION_TRACKING -> "MOTION_TRACKING"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA -> "LOGICAL_MULTI_CAMERA"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MONOCHROME -> "MONOCHROME"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_SECURE_IMAGE_DATA -> "SECURE_IMAGE_DATA"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_SYSTEM_CAMERA -> "SYSTEM_CAMERA"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_OFFLINE_PROCESSING -> "OFFLINE_PROCESSING"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_ULTRA_HIGH_RESOLUTION_SENSOR -> "ULTRA_HIGH_RESOLUTION_SENSOR"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_REMOSAIC_REPROCESSING -> "REMOSAIC_REPROCESSING"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT -> "DYNAMIC_RANGE_TEN_BIT"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_STREAM_USE_CASE -> "STREAM_USE_CASE"
+            CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_COLOR_SPACE_PROFILES -> "COLOR_SPACE_PROFILES"
+            else -> "capability_$cap"
+        }
     }
 }
