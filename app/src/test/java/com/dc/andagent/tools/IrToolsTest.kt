@@ -10,17 +10,16 @@ import org.junit.Test
 class IrToolsTest {
 
     @Test fun prontoParsesCarrierAndPairs() {
-        // 经典 NEC 38kHz 例子：0000 006D 0000 000D…（carrier = 4145106/0x006D Hz ≈ 38.4k）
-        val signal = parse("0000 006D 0000 000D 0012 002A 0012 002A 0012 0014 0012 002A")
-        assertEquals(4145106, signal.carrierHz)
-        // pairs(6) * 2 = pattern 12 项，微秒换算（unit = 0x006D us 的 21.33 倍规则）
-        assertTrue(signal.pattern.size == 12)
+        // 合法样例：0000 006D 0000 0004 + 4 对脉冲 = 12 tokens；载波 ≈ 38.0kHz
+        val signal = parse("0000 006D 0000 0004 0012 002A 0012 0014 0012 002A 0012 0014")
+        assertEquals(38029, signal.carrierHz)
+        assertEquals(8, signal.pattern.size)
         assertTrue(signal.pattern.all { it > 0 })
     }
 
     @Test fun prontoAcceptsWhitespaceAndHex() {
-        val a = parse("0000 006D 0000 000D 0012 002A")
-        val b = parse("0000  006d  0000  000d  0012  002a")
+        val a = parse("0000 006D 0000 0004 0012 002A 0012 0014")
+        val b = parse("0000  006d  0000  0004  0012  002a  0012  0014")
         assertEquals(a.carrierHz, b.carrierHz)
         assertEquals(a.pattern.toList(), b.pattern.toList())
     }
@@ -33,7 +32,7 @@ class IrToolsTest {
 
     @Test fun prontoRejectsShortHeader() {
         assertThrows(IllegalArgumentException::class.java) {
-            parse("0000 006D") // 缺少 repeat/pair 数据
+            parse("0000 006D 0000") // 缺少 repeat/pair 数据
         }
     }
 
