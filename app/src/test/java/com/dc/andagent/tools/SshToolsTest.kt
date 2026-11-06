@@ -65,6 +65,38 @@ class SshToolsTest {
         assertNotNull(SshCommandGuard.dangerOf("cat x | sudo tee /dev/sda"))
     }
 
+    @Test fun systemctlOptionsBeforeVerbAreFlagged() {
+        // Codex review 必修项③：选项插在动作前不构成绕过。
+        assertNotNull(SshCommandGuard.dangerOf("systemctl --no-block restart nginx"))
+        assertNotNull(SshCommandGuard.dangerOf("systemctl --now disable sshd"))
+        assertNotNull(SshCommandGuard.dangerOf("sudo systemctl -f restart docker"))
+    }
+
+    @Test fun clipBoundaryTruncationStaysValidUtf8() {
+        // Codex review 必修项②：limit 恰好切在多字节字符内部，不得产生 U+FFFD。
+        // "日志" 每个 3 字节：buffer 停在第 4 字节（第二个字符内部）。
+        val text = "日志正常"
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        val clipped = SshCommandGuard.clipUtf8(bytes, 4)
+        assertFalse("不得产生替换字符", clipped.contains("\uFFFD"))
+        assertTrue(clipped.contains("已截断"))
+        // limit 恰好等于完整字节数但 totalBytes 更大：整个 buffer 是合法 UTF-8。
+        val clipped2 = SshCommandGuard.clipUtf8(bytes, bytes.size, totalBytes = bytes.size + 10L)
+        assertFalse(clipped2.contains("\uFFFD"))
+        assertTrue(clipped2.contains("日志正常"))
+    }
+
+    @Test fun tofuPendingFingerprintAtomicConsume() {
+        // Codex review 必修项①：核对+消费原子化；不匹配不消费旧值。
+        val keyId = "[test.invalid]:2222"
+        SshSessionPool.setPendingFingerprint(keyId, "SHA256:aaaa")
+        assertFalse(SshSessionPool.consumePendingFingerprintIfMatches(keyId, "SHA256:bbbb"))
+        // 不匹配时旧值保留，仍可被正确指纹消费。
+        assertTrue(SshSessionPool.consumePendingFingerprintIfMatches(keyId, "SHA256:aaaa"))
+        // 消费后不可二次使用（一次性令牌语义）。
+        assertFalse(SshSessionPool.consumePendingFingerprintIfMatches(keyId, "SHA256:aaaa"))
+    }
+
     @Test fun clipKeepsUtf8Intact() {
         val text = "日志正常\n".repeat(2000)
         val clipped = SshCommandGuard.clipUtf8(text.toByteArray(Charsets.UTF_8), 64)

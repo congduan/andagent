@@ -136,8 +136,7 @@ class SshTool(
         val knownKeys = readKnownHosts()
         val remembered = knownKeys[keyId]
         val confirm = args.boolArg("confirm") == true
-
-        // TOFU: unknown host → probe, show fingerprint, do not keep a session.
+        // pending 指纹由 consumePendingFingerprintIfMatches 原子核对+消费，避免并发串扰。
         if (remembered == null) {
             val probe = try {
                 openSession(host, port, user, auth, secret, keyPath, strict = false, probe = true)
@@ -154,6 +153,7 @@ class SshTool(
             val fingerprint = fingerprintOf(keyBase64)
             probe.disconnect()
 
+            // TOFU: unknown host → probe, show fingerprint, do not keep a session.
             if (!confirm) {
                 SshSessionPool.setPendingFingerprint(keyId, fingerprint)
                 return@withContext buildString {
@@ -163,12 +163,10 @@ class SshTool(
                     append("若指纹与服务器管理员提供的不一致，请拒绝连接。")
                 }
             }
-            val pending = SshSessionPool.pendingFingerprint(keyId)
-            if (pending == null || pending != fingerprint) {
+            if (!SshSessionPool.consumePendingFingerprintIfMatches(keyId, fingerprint)) {
                 return@withContext "ERROR: 本次探测到的指纹与确认提示不一致（可能中间人攻击或服务端刚刚更换密钥），已拒绝连接。请重新发起 ssh_connect 获取新指纹。"
             }
             appendKnownHost(keyId, keyType, keyBase64)
-            SshSessionPool.clearPendingFingerprint(keyId)
         }
 
         val session = try {
@@ -516,6 +514,20 @@ object SshSessionPool {
         pending[keyId] = fingerprint
     }
 
+    /**
+     * 原子核对并消费 TOFU 待确认指纹：仅当 pending 与本次探测指纹一致时
+     * 清除 pending 并返回 true。一致即消费（写库成功后无需重复确认），
+     * 不一致保留待确认值，避免并发探测相互覆盖后拿陈旧指纹通过核对。
+     */
+    @Synchronized
+    fun consumePendingFingerprintIfMatches(keyId: String, fingerprint: String): Boolean {
+        if (pending[keyId] == fingerprint) {
+            pending.remove(keyId)
+            return true
+        }
+        return false
+    }
+
     @Synchronized fun clearPendingFingerprint(keyId: String) {
         pending.remove(keyId)
     }
@@ -545,7 +557,7 @@ object SshCommandGuard {
         Rule("格式化文件系统（mkfs）", Regex("""\bmkfs(?:\.[A-Za-z0-9]+)?\b""")),
         Rule("裸设备写入（dd/tee/重定向）", Regex("""\bdd\s+[^\n;&|]*\bif\s*=|\bdd\s+[^\n;&|]*\bof\s*=\s*/dev/|\btee\s+(?:-a\s+)?/dev/(?:sd|hd|vd|nvme|mmcblk|xvd)|>\s*/dev/(?:sd|hd|vd|nvme|mmcblk|xvd)""")),
         Rule("擦除设备签名（wipefs）", Regex("""\bwipefs\b""")),
-        Rule("停止/重启系统服务（systemctl stop|restart|disable）", Regex("""\bsystemctl\s+(?:stop|restart|disable|mask|kill|isolate)\b""")),
+        Rule("停止/重启系统服务（systemctl stop|restart|disable）", Regex("""\bsystemctl\s+(?:--[A-Za-z-]+\s+)*(?:stop|restart|disable|mask|kill|isolate)\b""")),
         Rule("重启/关机（reboot|shutdown|poweroff|halt）", Regex("""\b(?:reboot|shutdown|poweroff|halt|init\s+[06])\b""")),
         Rule("全局可写权限（chmod -R 777）", Regex("""\bchmod\s+(?:-[A-Za-z]*R[A-Za-z]*\s+)?777\b""")),
         Rule("删除数据库（DROP DATABASE）", Regex("""\bdrop\s+(?:database|schema)\b""", RegexOption.IGNORE_CASE)),
@@ -560,13 +572,28 @@ object SshCommandGuard {
     /** 命中返回危险摘要，未命中返回 null。 */
     fun dangerOf(cmd: String): String? = RULES.firstOrNull { it.pattern.containsMatchIn(cmd) }?.label
 
-    /** 按 UTF-8 字节截断，避免切断多字节字符；totalBytes 是未截断前的原始字节数。 */
+    /**
+     * 按 UTF-8 字节截断，避免切断多字节字符；totalBytes 是未截断前的原始字节数。
+     * 正向扫描字符边界：只保留完整落在 limit 内的字符，任何情况下输出都是
+     * 合法 UTF-8（不产生 U+FFFD），包括 buffer 恰好停在字符中间的边界情形。
+     */
     fun clipUtf8(bytes: ByteArray, limit: Int, totalBytes: Long = bytes.size.toLong()): String {
         if (bytes.isEmpty() && totalBytes == 0L) return "(空)"
         val truncated = totalBytes > limit || bytes.size > limit
         if (!truncated) return String(bytes, Charsets.UTF_8)
-        var end = minOf(limit, bytes.size)
-        while (end > 0 && end < bytes.size && (bytes[end].toInt() and 0xC0) == 0x80) end--
+        var end = 0
+        while (end < bytes.size) {
+            val b = bytes[end].toInt() and 0xFF
+            val len = when {
+                b and 0x80 == 0 -> 1          // 0xxxxxxx
+                b and 0xE0 == 0xC0 -> 2       // 110xxxxx
+                b and 0xF0 == 0xE0 -> 3       // 1110xxxx
+                b and 0xF8 == 0xF0 -> 4       // 11110xxx
+                else -> -1                    // 非法首字节/孤立续字节：停在有效前缀
+            }
+            if (len <= 0 || end + len > limit || end + len > bytes.size) break
+            end += len
+        }
         val text = String(bytes, 0, end, Charsets.UTF_8)
         return "$text\n[已截断：原始 $totalBytes 字节，仅显示前 $end 字节]"
     }
