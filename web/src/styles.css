@@ -182,7 +182,7 @@ button:disabled {
 }
 
 .model-chip {
-  max-width: 60%;
+  max-width: 132px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1167,14 +1167,6 @@ button:disabled {
   gap: 8px;
 }
 
-.composer-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-left: 1px;
-  min-height: 22px;
-}
-
 .composer:focus-within {
   border-color: rgba(127, 155, 255, 0.45);
   box-shadow: 0 10px 34px rgba(80, 100, 255, 0.14);
@@ -1809,10 +1801,6 @@ button:disabled {
   .app-head {
     padding-left: 14px;
     padding-right: 14px;
-  }
-
-  .model-chip {
-    max-width: 70%;
   }
 
   .empty {

@@ -269,15 +269,7 @@ function TemplateGrid() {
   );
 }
 
-function Composer({
-  hasKey,
-  model,
-  onOpenModel,
-}: {
-  hasKey: boolean;
-  model: string;
-  onOpenModel: () => void;
-}) {
+function Composer({ hasKey }: { hasKey: boolean }) {
   const { t } = useI18n();
   const aui = useAui();
   const running = useAuiState((state) => state.thread.isRunning);
@@ -447,16 +439,6 @@ function Composer({
             </ComposerPrimitive.Send>
           )}
         </div>
-        <div className="composer-foot">
-          <button
-            type="button"
-            className="model-chip"
-            title={t("modelSettings")}
-            onClick={onOpenModel}
-          >
-            {model || t("connectModel")}
-          </button>
-        </div>
       </ComposerPrimitive.Root>
     </div>
   );
@@ -613,6 +595,14 @@ export default function App() {
           <div className="head-actions">
             <button
               type="button"
+              className="model-chip"
+              title={t("modelSettings")}
+              onClick={openModelSetup}
+            >
+              {settings.model || t("connectModel")}
+            </button>
+            <button
+              type="button"
               className="icon-btn"
               title={t("newChat")}
               aria-label={t("newChat")}
@@ -683,11 +673,7 @@ export default function App() {
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
 
-        <Composer
-          hasKey={isModelConfigured(settings)}
-          model={settings.model}
-          onOpenModel={openModelSetup}
-        />
+        <Composer hasKey={isModelConfigured(settings)} />
 
         {showSettings && (
           <SettingsPanel
