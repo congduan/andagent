@@ -32,6 +32,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <!-- Silent alarm/timer writes via AlarmClock intents (SKIP_UI=true) -->
@@ -138,6 +140,8 @@
             android:name=".tools.CameraOverlayService"
             android:exported="false"
             android:foregroundServiceType="camera" />
+        <service android:name=".tools.SshKeepAliveService" android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <service android:name=".events.EventMonitorService" android:exported="false"
             android:foregroundServiceType="connectedDevice" />
         <service android:name=".events.EventNotificationListener"

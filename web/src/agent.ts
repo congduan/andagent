@@ -710,6 +710,16 @@ const NETWORK_GUIDE_EN = [
   "http_request returns JSON with status/ok/url/headers/body/truncated/elapsedMs. Bound long bodies with max_chars; on non-2xx inspect status and the body prefix before deciding whether to retry, and do not blindly repeat the same request.",
 ].join("\n");
 
+const SSH_TRANSFER_GUIDE = [
+  "SSH 文件传输：用户要服务器文件时，先用 ssh_remote_ls 查看远程目录，再用 ssh_download 下载单文件；返回 savedPath 后可交给 file_read 分析。目录可先用 ssh_exec 打包为 tar，再下载单文件。",
+  "上传用 ssh_upload，先说明目标路径和覆盖风险。已存在的远程文件只有用户确认后才传 overwrite=true、confirm=true；默认不覆盖。SSH 会话退后台由前台服务保活，断线后需用户重新连接。",
+].join("\n");
+
+const SSH_TRANSFER_GUIDE_EN = [
+  "SSH file transfer: for a server file, inspect the remote directory with ssh_remote_ls, then download one file with ssh_download. Pass the returned savedPath to file_read for analysis. For a directory, first create a tar archive with ssh_exec and download that file.",
+  "For ssh_upload, explain the destination and overwrite risk first. Set overwrite=true and confirm=true for an existing remote file only after the user confirms. Background SSH sessions use a foreground keep-alive service; reconnect manually after a disconnect.",
+].join("\n");
+
 const HARDWARE_GUIDE = [
   "红外遥控：先用 ir_available 检测发射器；从网上或遥控器数据库查到目标品牌/型号的 Pronto Hex 0000 码后，用 ir_send_pronto 发送；自定义协议用 ir_send_raw 发送交替 on/off 微秒数组。空调等多状态设备应使用包含温度、模式、风速等完整状态的品牌码。手机无红外硬件时如实告知，不能声称已发送。电视、机顶盒、音响、红外灯具也可按匹配码遥控。",
   "AirPods：airpods_scan 扫描附近广播；airpods_status / airpods_battery 查询近期状态和电量。",
@@ -1119,6 +1129,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? LIVE_GUIDE_EN : LIVE_GUIDE,
               currentLanguage() === "en" ? HARDWARE_GUIDE_EN : HARDWARE_GUIDE,
               currentLanguage() === "en" ? NETWORK_GUIDE_EN : NETWORK_GUIDE,
+              currentLanguage() === "en" ? SSH_TRANSFER_GUIDE_EN : SSH_TRANSFER_GUIDE,
               currentLanguage() === "en" ? SHORTCUT_GUIDE_EN : SHORTCUT_GUIDE,
               currentLanguage() === "en" ? STORAGE_MEDIA_GUIDE_EN : STORAGE_MEDIA_GUIDE,
               currentLanguage() === "en" ? MEDIA_CONTEXT_GUIDE_EN : MEDIA_CONTEXT_GUIDE,

@@ -183,11 +183,18 @@ class SshTool(
             session.disconnect()
             return@withContext "ERROR: ${e.message}"
         }
-        SshSessionPool.put(info.id, SshSessionPool.Live(session))
+        try {
+            SshSessionPool.put(info.id, SshSessionPool.Live(session), appContext)
+        } catch (e: Exception) {
+            SshSessionPool.registry.remove(info.id)
+            session.disconnect()
+            return@withContext "ERROR: 无法启动 SSH 后台保活：${e.message ?: e.javaClass.simpleName}"
+        }
         buildString {
             appendLine("已连接 $user@$host:$port${nickname?.let { "（$it）" } ?: ""}")
             appendLine("session_id=${info.id}")
             appendLine("host_key=$keyType $fingerprint")
+            appendLine("已开启后台保活")
             credentialName?.let { appendLine("credential=$it（密码/私钥未进入对话）") }
             if (credential == null && keyPath.isNotEmpty()) {
                 appendLine("注意：本次使用旧的 key_path 文件路径认证（兼容模式）；路径已出现在对话中，建议改为在「设置 → SSH 凭据」保存后以 credential 引用。")
@@ -320,7 +327,10 @@ class SshTool(
         var timedOut = false
         try {
             synchronized(session) {
-                if (!session.isConnected) return@withContext "ERROR: 会话已断开：$ref"
+                if (!session.isConnected) {
+                    SshSessionPool.removeByRef(ref)
+                    return@withContext "ERROR: 会话已断开：$ref"
+                }
                 val channel = session.openChannel("exec") as ChannelExec
                 channel.setCommand(cmd)
                 channel.setInputStream(null)
@@ -336,6 +346,7 @@ class SshTool(
                 channel.disconnect()
             }
         } catch (e: Exception) {
+            if (!session.isConnected) SshSessionPool.removeByRef(ref)
             return@withContext "ERROR: 命令执行失败：${e.message ?: e.javaClass.simpleName}"
         }
         buildString {
@@ -491,15 +502,27 @@ object SshSessionPool {
     val registry = SshSessionRegistry()
     private val live = LinkedHashMap<String, Live>()
     private val pending = HashMap<String, String>()
+    private var appContext: Context? = null
+    private val presence = SshSessionPresence()
 
-    @Synchronized fun put(id: String, session: Live) {
+    @Synchronized fun put(id: String, session: Live, context: Context) {
+        appContext = context.applicationContext
+        if (presence.put(id)) {
+            try { SshKeepAliveService.ensureStarted(context.applicationContext) }
+            catch (e: Exception) { presence.remove(id); throw e }
+        }
         live[id] = session
     }
 
     @Synchronized fun remove(id: String): Live? {
         registry.remove(id)
-        return live.remove(id)
+        val removed = live.remove(id)
+        removed?.let { SshTransferTool.forgetHome(it.session) }
+        if (presence.remove(id)) appContext?.let(SshKeepAliveService::stop)
+        return removed
     }
+
+    @Synchronized fun removeByRef(ref: String): Live? = registry.resolve(ref)?.let { remove(it.id) }
 
     @Synchronized fun resolve(ref: String): Live? {
         val info = registry.resolve(ref) ?: return null
@@ -535,12 +558,17 @@ object SshSessionPool {
     /** 剔除 JSch 已判定断开的会话，返回剩余数量。 */
     @Synchronized fun pruneDisconnected(): Int {
         val dead = live.filterValues { !it.session.isConnected }.keys.toList()
-        dead.forEach { id ->
-            live.remove(id)?.session?.disconnect()
-            registry.remove(id)
-        }
+        dead.forEach { id -> remove(id)?.session?.disconnect() }
         return registry.size()
     }
+}
+
+/** Pure transition logic for the foreground service's reference count. */
+class SshSessionPresence {
+    private val ids = HashSet<String>()
+    fun put(id: String): Boolean { val wasEmpty = ids.isEmpty(); ids.add(id); return wasEmpty && ids.isNotEmpty() }
+    fun remove(id: String): Boolean { val existed = ids.remove(id); return existed && ids.isEmpty() }
+    fun size(): Int = ids.size
 }
 
 /* --------------------------- command guard --------------------------- */
@@ -557,7 +585,7 @@ object SshCommandGuard {
         Rule("格式化文件系统（mkfs）", Regex("""\bmkfs(?:\.[A-Za-z0-9]+)?\b""")),
         Rule("裸设备写入（dd/tee/重定向）", Regex("""\bdd\s+[^\n;&|]*\bif\s*=|\bdd\s+[^\n;&|]*\bof\s*=\s*/dev/|\btee\s+(?:-a\s+)?/dev/(?:sd|hd|vd|nvme|mmcblk|xvd)|>\s*/dev/(?:sd|hd|vd|nvme|mmcblk|xvd)""")),
         Rule("擦除设备签名（wipefs）", Regex("""\bwipefs\b""")),
-        Rule("停止/重启系统服务（systemctl stop|restart|disable）", Regex("""\bsystemctl\s+(?:--[A-Za-z-]+\s+)*(?:stop|restart|disable|mask|kill|isolate)\b""")),
+        Rule("停止/重启系统服务（systemctl stop|restart|disable）", Regex("""\bsystemctl\s+(?:-{1,2}[A-Za-z-]+\s+)*(?:stop|restart|disable|mask|kill|isolate)\b""")),
         Rule("重启/关机（reboot|shutdown|poweroff|halt）", Regex("""\b(?:reboot|shutdown|poweroff|halt|init\s+[06])\b""")),
         Rule("全局可写权限（chmod -R 777）", Regex("""\bchmod\s+(?:-[A-Za-z]*R[A-Za-z]*\s+)?777\b""")),
         Rule("删除数据库（DROP DATABASE）", Regex("""\bdrop\s+(?:database|schema)\b""", RegexOption.IGNORE_CASE)),
