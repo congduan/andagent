@@ -64,7 +64,11 @@ import com.dc.andagent.tools.ShortcutTool
 import com.dc.andagent.tools.DbGuiTool
 import com.dc.andagent.tools.TermuxTool
 import com.dc.andagent.tools.SSH_TOOLS
+import com.dc.andagent.tools.SSH_CREDENTIAL_TOOLS
 import com.dc.andagent.tools.SshTool
+import com.dc.andagent.tools.SshCredentialActivity
+import com.dc.andagent.tools.SshCredentialStore
+import com.dc.andagent.tools.SshCredentialTool
 import com.dc.andagent.tools.ScreenCaptureTool
 import com.dc.andagent.tools.ProjectionConsentActivity
 import com.dc.andagent.tools.ProjectionConsentBridge
@@ -477,6 +481,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(HTTP_TOOLS.associateWith { HttpTool(it, appContext) })
         // R91: SSH 远程运维（JSch 会话池，TOFU known_hosts，破坏性命令分级）。
         tools.putAll(SSH_TOOLS.associateWith { SshTool(appContext, it) })
+        // R91.5: 凭据元数据（nickname/host/user），secret 只留在 Keystore 加密文件里。
+        tools.putAll(SSH_CREDENTIAL_TOOLS.associateWith { SshCredentialTool(appContext, it) })
         // R35: 联系人新建/通话记录/应用卸载/APK 提取/二维码/传感器录制/文件加密。
         tools.putAll(R35_TOOLS.associateWith { R35Tool(appContext, permissionBroker, shizuku, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.
@@ -518,6 +524,20 @@ class MainActivity : ComponentActivity() {
             },
             embeddedWebviewOpen = { uri -> openEmbeddedWebview(uri) },
             dbGuiOpen = { name -> dbGuiOpen(name) },
+            // R91.5: 凭据录入只走原生界面；WebView 拿到的永远只是元数据。
+            sshCredentialOpen = {
+                runOnUiThread { startActivity(Intent(this, SshCredentialActivity::class.java)) }
+                "已打开 SSH 凭据界面：请在原生页面输入密码/私钥，内容不会进入对话。"
+            },
+            sshCredentialListJson = {
+                runCatching { SshCredentialStore(appContext).listJson() }.getOrDefault("[]")
+            },
+            sshCredentialRemove = { nickname ->
+                runCatching {
+                    if (!SshCredentialStore(appContext).delete(nickname)) "ERROR: 凭据不存在：$nickname"
+                    else "已删除 SSH 凭据「$nickname」"
+                }.getOrElse { "ERROR: 删除失败：${it.message ?: it.javaClass.simpleName}" }
+            },
             uiCommands = UiCommands(this) { if (::webView.isInitialized) webView else null },
             themeChange = { dark -> runOnUiThread { applyUiTheme(dark) } },
             termuxGrant = {
@@ -679,10 +699,15 @@ class MainActivity : ComponentActivity() {
         handleDeeplink(intent)
     }
 
-    /** andagent://send?prompt=...&auto=1, plus widget refresh links (#14). */
+    /** andagent://send?prompt=...&auto=1, plus widget refresh / credentials links (#14, R91.5). */
     private fun handleDeeplink(intent: Intent?) {
         val data = intent?.data ?: return
         if (!data.scheme.equals("andagent", true)) return
+        // R91.5: andagent://credentials 直接打开原生凭据界面（不携带任何凭据内容）。
+        if (data.host.equals("credentials", true)) {
+            startActivity(Intent(this, SshCredentialActivity::class.java))
+            return
+        }
         if (::bridge.isInitialized) bridge.queueDeeplink(data)
         if (data.host == "refresh") {
             val id = data.pathSegments.firstOrNull() ?: return

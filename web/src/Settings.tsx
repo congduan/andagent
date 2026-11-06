@@ -5,9 +5,11 @@ import {
   getShizukuStatus, getTermuxStatus, grantTermuxViaShizuku, hasBridge,
   memoryCall, persistSettings, requestHealthPermission, requestProjectionConsent,
   setDevToolsEnabled, skillManage, stopProjection,
+  sshCredentialDelete, sshCredentialsList, sshCredentialsOpen,
   defaultSystemPrompt, hasSavedSystemPrompt, isDefaultSystemPrompt,
-  type Settings,
+  type Settings, type SshCredentialMeta,
 } from "./bridge";
+import { SessionStore } from "./sessions";
 import noticesText from "../../THIRD-PARTY-NOTICES.md?raw";
 import { loadThemeMode, setTheme, type ThemeMode } from "./theme";
 import { setLanguageMode, useI18n, type LanguageMode } from "./i18n";
@@ -64,12 +66,15 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
   const [memoryEdits, setMemoryEdits] = useState<Record<string, string>>({});
   const [memoryMsg, setMemoryMsg] = useState("");
   const [showNotices, setShowNotices] = useState(false);
+  const [creds, setCreds] = useState<SshCredentialMeta[]>([]);
+  const [credMsg, setCredMsg] = useState("");
+  const [scrubMsg, setScrubMsg] = useState("");
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   // R63: 子页按需惰性加载（进入页面才拉数据，替代旧版全量 useState 平铺）。
   useEffect(() => {
     if (page === "automation") { setCronTasks(cronList()); setExactAllowed(cronExactAllowed()); setCronLoaded(true); }
-    if (page === "extensions") { try { setSkills(JSON.parse(skillManage("list"))); } catch { setSkills([]); } setSkillsLoaded(true); }
+    if (page === "extensions") { try { setSkills(JSON.parse(skillManage("list"))); } catch { setSkills([]); } setSkillsLoaded(true); setCreds(sshCredentialsList()); }
     if (page === "memory") {
       try { setMemories(memoryCall<MemoryEntry[]>("memory_get_all")); }
       catch (e) { setMemoryMsg(String(e)); }
@@ -321,6 +326,24 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
       </div>
       {devtoolsMsg && <p className={devtoolsMsg.startsWith("ERROR:") ? "settings-error" : "settings-card-note"}>{devtoolsMsg}</p>}
     </>)}
+    {section(t("sshCredentials"), <>
+      <p className="settings-card-note">{t("sshCredentialsNote")}</p>
+      <div className="settings-card-actions">
+        <button type="button" className="btn-primary" onClick={() => { setCredMsg(sshCredentialsOpen()); }}>{t("sshCredentialAdd")}</button>
+        <button type="button" className="btn-ghost" onClick={() => setCreds(sshCredentialsList())}>{t("refreshStatus")}</button>
+      </div>
+      {creds.length === 0
+        ? <p className="settings-card-note">{t("sshCredentialEmpty")}</p>
+        : creds.map((cred) => <div key={cred.nickname} className="settings-card-actions">
+            <span>{cred.nickname} · {cred.user}@{cred.host}:{cred.port} · {cred.authType}</span>
+            <button type="button" className="btn-ghost" onClick={() => {
+              if (!window.confirm(t("sshCredentialDeleteConfirm", { name: cred.nickname }))) return;
+              setCredMsg(sshCredentialDelete(cred.nickname));
+              setCreds(sshCredentialsList());
+            }}>{t("delete")}</button>
+          </div>)}
+      {credMsg && <p className={credMsg.startsWith("ERROR:") ? "settings-error" : "settings-card-note"}>{credMsg}</p>}
+    </>)}
   </>);
 
   const dataPage = sub(t("dataGroup"), <>
@@ -340,6 +363,19 @@ export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props
       <div className="settings-card-actions">
         <button type="button" className="btn-ghost" onClick={askHealth}>{t("grantSteps")}</button>
       </div>
+    </>)}
+    {section(t("sshScrub"), <>
+      <p className="settings-card-note">{t("sshScrubNote")}</p>
+      <div className="settings-card-actions">
+        <button type="button" className="btn-ghost" onClick={() => {
+          if (!window.confirm(t("sshScrubConfirm"))) return;
+          try {
+            const result = SessionStore.scrubSecrets();
+            setScrubMsg(result.replaced > 0 ? t("sshScrubDone", { count: result.replaced }) : t("sshScrubNone"));
+          } catch (e) { setScrubMsg(String(e)); }
+        }}>{t("sshScrub")}</button>
+      </div>
+      {scrubMsg && <p role="status">{scrubMsg}</p>}
     </>)}
   </>);
 

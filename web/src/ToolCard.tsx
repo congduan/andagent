@@ -87,6 +87,8 @@ const META: Record<string, ToolMeta> = {
   ssh_exec: { label: "SSH 执行", labelEn: "SSH exec", icon: "🖥️" },
   ssh_list: { label: "SSH 会话", labelEn: "SSH sessions", icon: "🖥️" },
   ssh_close: { label: "SSH 断开", labelEn: "SSH close", icon: "🔌" },
+  credential_list: { label: "SSH 凭据", labelEn: "SSH credentials", icon: "🗝️" },
+  credential_delete: { label: "删除 SSH 凭据", labelEn: "Delete SSH credential", icon: "🗝️", destructive: true },
   screen_capture: { label: "屏幕截图", labelEn: "Screenshot", icon: "🖼️" },
   image_edit: { label: "图片编辑", labelEn: "Edit image", icon: "🎨" },
   image_preview: { label: "图片预览", labelEn: "Preview image", icon: "🖼️" },

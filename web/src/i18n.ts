@@ -346,6 +346,16 @@ const zh = {
   imageOmittedNote: "结果中的图片/base64 已省略，界面已自动展示；只用文字概括结果，不要输出 image/photos 围栏，也不要粘贴图片数据。",
   truncatedResult: "结果已截断：原 {count} 字符；需要更多细节请用工具缩小范围重新查询",
   olderResultOmitted: "较早的 {name} 结果已省略以控制上下文长度；如需请重新调用该工具",
+  sshCredentials: "SSH 凭据",
+  sshCredentialsNote: "密码与私钥只在原生界面输入，用 Android Keystore 加密保存在本机；对话只用 nickname 引用。",
+  sshCredentialAdd: "录入 / 管理凭据",
+  sshCredentialEmpty: "尚未保存凭据。",
+  sshCredentialDeleteConfirm: "删除凭据「{name}」？",
+  sshScrub: "清除历史中的明文密码",
+  sshScrubNote: "扫描本机会话记录，把 password=… 之类片段替换为 [REDACTED]。已经发送给云端模型的历史无法撤回，清理后请考虑更换密码。",
+  sshScrubConfirm: "扫描全部会话并替换疑似明文密码？此操作不可撤销。",
+  sshScrubDone: "已清理 {count} 处",
+  sshScrubNone: "没有发现需要清理的明文密码",
 } as const;
 type Key = keyof typeof zh;
 const en: Record<Key, string> = {
@@ -692,6 +702,16 @@ const en: Record<Key, string> = {
   imageOmittedNote: "Image/base64 data was omitted from the result and shown in the UI. Summarize in text; do not output image/photos fences or paste image bytes.",
   truncatedResult: "Result truncated from {count} characters. Narrow the tool query for more detail.",
   olderResultOmitted: "An older {name} result was omitted to limit context size. Call the tool again if needed.",
+  sshCredentials: "SSH credentials",
+  sshCredentialsNote: "Passwords and private keys are entered in a native screen and encrypted on this device with Android Keystore. Chats reference them by nickname only.",
+  sshCredentialAdd: "Add / manage credentials",
+  sshCredentialEmpty: "No credentials saved yet.",
+  sshCredentialDeleteConfirm: "Delete credential \"{name}\"?",
+  sshScrub: "Scrub plaintext passwords from history",
+  sshScrubNote: "Scans local session records and replaces fragments like password=… with [REDACTED]. Anything already sent to a cloud model cannot be recalled; consider changing the password.",
+  sshScrubConfirm: "Scan every session and redact suspected plaintext secrets? This cannot be undone.",
+  sshScrubDone: "Scrubbed {count} occurrence(s)",
+  sshScrubNone: "No plaintext passwords found",
 };
 
 export function getLanguageMode(): LanguageMode {

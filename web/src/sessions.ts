@@ -186,6 +186,89 @@ function newId(): string {
   return `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/* ------------------------- R91.5: secret scrub ------------------------- */
+
+/**
+ * 旧版本可能把 `password=…` / `"password":"…"` 写进对话文本。这里在本地
+ * 持久化层做一次性除密：命中密码/口令键值就替换成 [REDACTED]，其余内容不动。
+ *
+ * 注意：已经发送给云端模型的历史无法撤回；设置页会同时提示用户换密码。
+ */
+type ScrubRule = { re: RegExp; build: (prefix: string) => string };
+
+/**
+ * 写成「前缀 + [REDACTED]」而不是 `$1` 模板：前缀只保留键名与分隔符，
+ * 值（含引号包裹）整段丢弃。每类值前都有 `(?!\[REDACTED\])` 负向断言，
+ * 保证重复执行是幂等的。
+ */
+const SECRET_PATTERNS: ScrubRule[] = [
+  {
+    re: /(["']?(?:password|passwd|pwd|passphrase|key_passphrase)\b["']?\s*[:=]\s*)(?:"(?!\[REDACTED\])[^"\n]*"|'(?!\[REDACTED\])[^'\n]*'|(?!\[REDACTED\])[^\s"'`,;，。、）)]+)/gi,
+    build: (prefix) => `${prefix}[REDACTED]`,
+  },
+];
+
+/** 结构化键名（工具参数对象）：命中即整值替换，不解析值内容。 */
+const SECRET_KEYS = /^(?:password|passwd|pwd|passphrase|key_passphrase|secret)$/i;
+
+/** 纯函数：返回脱敏后的文本与替换处数。 */
+export function scrubSecretsInText(input: string): { text: string; replaced: number } {
+  let replaced = 0;
+  let text = input;
+  for (const { re, build } of SECRET_PATTERNS) {
+    text = text.replace(re, (_match: string, prefix: string) => {
+      replaced += 1;
+      return build(prefix);
+    });
+  }
+  return { text, replaced };
+}
+
+interface ScrubCounter { replaced: number }
+
+/** 递归脱敏：字符串走正则，对象里 secret 键名直接整值替换。 */
+function scrubValue(value: unknown, counter: ScrubCounter): unknown {
+  if (typeof value === "string") {
+    const scrubbed = scrubSecretsInText(value);
+    counter.replaced += scrubbed.replaced;
+    return scrubbed.text;
+  }
+  if (Array.isArray(value)) return value.map((item) => scrubValue(item, counter));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (SECRET_KEYS.test(key) && typeof nested === "string" && nested !== "[REDACTED]") {
+        out[key] = "[REDACTED]";
+        counter.replaced += 1;
+      } else {
+        out[key] = scrubValue(nested, counter);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * 扫描全部会话并就地除密。解析后按消息树脱敏再写回，避免正则跨越 JSON
+ * 转义序列导致漏网；解析失败则跳过该会话（宁可不改也不写坏历史）。
+ */
+function scrubAll(): { sessions: number; replaced: number } {
+  let sessions = 0;
+  let replaced = 0;
+  for (const meta of loadIndex()) {
+    const messages = loadSession(meta.id);
+    if (!messages.length) continue;
+    const counter: ScrubCounter = { replaced: 0 };
+    const cleaned = scrubValue(messages, counter);
+    if (counter.replaced === 0) continue;
+    persist([[kvSessionKey(meta.id), SESSION_KEY(meta.id), JSON.stringify(cleaned)]]);
+    sessions += 1;
+    replaced += counter.replaced;
+  }
+  return { sessions, replaced };
+}
+
 export const SessionStore = {
   list(): SessionMeta[] {
     return loadIndex();
@@ -229,5 +312,10 @@ export const SessionStore = {
     forget(kvSessionKey(id), SESSION_KEY(id));
     persist([[KV_INDEX_KEY, INDEX_KEY, JSON.stringify(index)]]);
     return index;
+  },
+
+  /** R91.5: 对全部会话做一次明文密码除密（设置页按钮）。 */
+  scrubSecrets(): { sessions: number; replaced: number } {
+    return scrubAll();
   },
 };
