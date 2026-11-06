@@ -660,6 +660,18 @@ const LIVE_GUIDE_EN = [
   "- For static 2D drawing, output a ```canvas fence with JS or JSON {\"code\":\"...\",\"animate\":true}. It runs in a sandbox iframe with ctx,t,w,h; animate:true redraws with requestAnimationFrame.",
 ].join("\n");
 
+const HARDWARE_GUIDE = [
+  "AirPods：airpods_scan 扫描附近广播；airpods_status / airpods_battery 查询近期状态和电量。",
+  "airpods_monitor_start 开启可从通知停止的后台监听；airpods_monitor_stop 停止；airpods_history 取电量与佩戴历史，可用 ```chart 画续航趋势。",
+  "监听值写入 KV 的 airpods/latest 和 airpods/history。```live 循环可用 andagent.kv.get('airpods','latest') 读取，绘制电量曲线；检测 isLeftInEar / isRightInEar 从 true 变 false 时，如有可用的媒体控制工具可暂停播放，低于 20% 可调用 notify_send。仅在用户要求自动化时启动循环，避免每 tick 重复通知。",
+].join("\n");
+
+const HARDWARE_GUIDE_EN = [
+  "AirPods: use airpods_scan to discover nearby broadcasts; airpods_status / airpods_battery for recent status and charge.",
+  "airpods_monitor_start enables background monitoring with a notification stop action; airpods_monitor_stop stops it. airpods_history supplies battery and in-ear history for a ```chart trend.",
+  "Monitor data is available in KV at airpods/latest and airpods/history. A ```live loop can read andagent.kv.get('airpods','latest') to draw battery curves. On an in-ear true-to-false transition, pause playback if a media control tool is available; below 20%, call notify_send. Start automation only when requested and deduplicate alerts across ticks.",
+].join("\n");
+
 const STORAGE_MEDIA_GUIDE = [
   "文本转音频文件用 tts_to_file；返回 path 后，用 ```audio 围栏展示，内容为 JSON：{\"uri\":\"返回的 path\",\"title\":\"音频\"}。用户可点播放器播放；文件保存在应用 exports 目录。",
   "结构化存储：用户要记账、清单或笔记库时，先用 db_create 建库，再用 db_exec 建表，后续用参数化 INSERT 和 db_query SELECT。",
@@ -1039,6 +1051,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? "Reflection: android_reflect can call only allowlisted methods of AudioManager, MediaRouter, CameraManager/CameraCharacteristics, SensorManager, PowerManager, ActivityManager, ConnectivityManager, Build/SystemClock, Settings.System/Global/Secure, TelephonyManager, DisplayManager, and PackageManager. See declared api_* tools; prefer dedicated tools." : "反射桥：android_reflect 仅能调用 AudioManager、MediaRouter、CameraManager/CameraCharacteristics、SensorManager、PowerManager、ActivityManager、ConnectivityManager、Build/SystemClock、Settings.System/Global/Secure、TelephonyManager、DisplayManager、PackageManager 的白名单方法。批量 api_* 工具见工具列表；优先用专门工具，反射用于长尾查询。",
               currentLanguage() === "en" ? CHART_GUIDE_EN : CHART_GUIDE,
               currentLanguage() === "en" ? LIVE_GUIDE_EN : LIVE_GUIDE,
+              currentLanguage() === "en" ? HARDWARE_GUIDE_EN : HARDWARE_GUIDE,
               currentLanguage() === "en" ? STORAGE_MEDIA_GUIDE_EN : STORAGE_MEDIA_GUIDE,
               currentLanguage() === "en" ? MEDIA_CONTEXT_GUIDE_EN : MEDIA_CONTEXT_GUIDE,
               currentLanguage() === "en" ? PERMISSION_GUIDE_EN : PERMISSION_GUIDE,
