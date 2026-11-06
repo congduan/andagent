@@ -16,6 +16,9 @@ import java.util.Base64
 
 val SSH_TOOLS = listOf("ssh_connect", "ssh_exec", "ssh_list", "ssh_close")
 
+/** R91.5: 凭据元数据工具（只出元数据，永不回 secret）。 */
+val SSH_CREDENTIAL_TOOLS = listOf("credential_list", "credential_delete")
+
 /**
  * R91: SSH 远程运维（JSch，方案 B）。
  *
@@ -25,10 +28,15 @@ val SSH_TOOLS = listOf("ssh_connect", "ssh_exec", "ssh_list", "ssh_close")
  * SHA256 指纹，用户确认后写入 known_hosts；之后 StrictHostKeyChecking=yes，
  * 指纹不匹配立即拒连。
  */
-class SshTool(private val context: Context, override val name: String) : Tool {
+class SshTool(
+    private val context: Context,
+    override val name: String,
+    credentialStore: SshCredentialStore? = null,
+) : Tool {
+    private val injectedCredentials = credentialStore
     override val description = when (name) {
         "ssh_connect" ->
-            "连接远程服务器（SSH，密码或私钥认证）。首次连接会返回主机密钥 SHA256 指纹并要求确认，确认后以 confirm=true 重试；成功后返回 session_id，供 ssh_exec 使用。"
+            "连接远程服务器。凭据用 credential=nickname 引用本机加密保存的密码/私钥（密码与私钥永不进入对话）。首次连接会返回主机密钥 SHA256 指纹并要求确认，确认后以 confirm=true 重试；成功后返回 session_id，供 ssh_exec 使用。"
         "ssh_exec" ->
             "在已连接的 SSH 会话执行命令，返回退出码与截断后的 stdout/stderr。rm -rf、mkfs、dd、systemctl restart、reboot 等破坏性命令需要 confirm=true，必须先向用户说明影响并取得确认。"
         "ssh_list" -> "列出当前活跃的 SSH 会话：session_id、主机、用户、连接时长。"
@@ -39,16 +47,14 @@ class SshTool(private val context: Context, override val name: String) : Tool {
 
     override val parameters = when (name) {
         "ssh_connect" -> schemaOf(
-            "host" to strParam("主机名或 IP"),
+            "credential" to strParam("已保存凭据的 nickname（推荐）：主机、端口、用户名、认证方式与密码/私钥都从本机加密存储读取，密码永不进入对话"),
+            "host" to strParam("主机名或 IP（使用 credential 时可省略；两者都无则返回录入引导）"),
             "port" to intParam("端口，默认 22"),
-            "user" to strParam("登录用户名"),
-            "auth" to strParam("认证方式：password（密码）或 key（私钥）"),
-            "password" to strParam("密码认证时的密码"),
-            "key_path" to strParam("私钥认证时私钥文件的绝对路径"),
-            "key_passphrase" to strParam("私钥口令（私钥加密时需要）"),
+            "user" to strParam("登录用户名（使用 credential 时可省略）"),
+            "auth" to strParam("兼容旧 key_path 模式：key"),
+            "key_path" to strParam("兼容旧模式：私钥文件绝对路径（不推荐，路径会进入对话；建议改用 credential）"),
             "nickname" to strParam("可选：会话别名，之后可代替 session_id 引用"),
             "confirm" to boolParam("首次连接确认指纹后传 true"),
-            required = listOf("host", "user", "auth"),
         )
         "ssh_exec" -> schemaOf(
             "session_id" to strParam("ssh_connect 返回的 session_id，或连接时的 nickname"),
@@ -63,6 +69,11 @@ class SshTool(private val context: Context, override val name: String) : Tool {
 
     private val appContext = context.applicationContext
 
+    /** 生产用真实 Keystore 存储；单测可注入假 cipher 的实例。 */
+    private val credentials: SshCredentialStore by lazy {
+        injectedCredentials ?: SshCredentialStore(appContext)
+    }
+
     override suspend fun execute(args: JsonObject): String = when (name) {
         "ssh_connect" -> connect(args)
         "ssh_exec" -> exec(args)
@@ -74,23 +85,51 @@ class SshTool(private val context: Context, override val name: String) : Tool {
     /* ----------------------------- connect ----------------------------- */
 
     private suspend fun connect(args: JsonObject): String = withContext(Dispatchers.IO) {
-        val host = args.strArg("host") ?: return@withContext "ERROR: 缺少 host"
-        if (host.length > 253 || !host.matches(Regex("[^\\s/\\\\]+"))) return@withContext "ERROR: host 格式无效"
-        val port = args.intArg("port") ?: 22
-        if (port !in 1..65535) return@withContext "ERROR: port 必须在 1..65535"
-        val user = args.strArg("user") ?: return@withContext "ERROR: 缺少 user"
-        if (user.length > 64 || !user.matches(Regex("[^\\s]+"))) return@withContext "ERROR: user 格式无效"
-        val auth = (args.strArg("auth") ?: "password").lowercase()
-        if (auth != "password" && auth != "key") return@withContext "ERROR: auth 只能是 password 或 key"
-        val password = args.strArg("password").orEmpty()
-        val keyPath = args.strArg("key_path").orEmpty()
-        val passphrase = args.strArg("key_passphrase").orEmpty()
+        // R91.5 铁律：凭据永不过模型。旧习惯带 password/key_passphrase 一律拒绝，
+        // 且不回显参数值——拒绝文案是固定字符串。
+        if (args.strArg("password") != null || args.strArg("key_passphrase") != null) {
+            return@withContext PLAINTEXT_SECRET_REFUSAL
+        }
+        val credentialName = args.strArg("credential")
+        val credential = credentialName?.let { nick ->
+            credentials.get(nick) ?: return@withContext missingCredentialMessage(nick)
+        }
         val nickname = args.strArg("nickname")
         if (nickname != null && (nickname.length > 32 || !nickname.matches(Regex("[^\\s]+")))) {
             return@withContext "ERROR: nickname 不能包含空白且最长 32 字符"
         }
-        if (auth == "password" && password.isEmpty()) return@withContext "ERROR: password 认证需要 password"
-        if (auth == "key" && keyPath.isEmpty()) return@withContext "ERROR: key 认证需要 key_path"
+
+        val host: String
+        val port: Int
+        val user: String
+        val auth: String
+        val secret: String
+        val keyPath: String
+        if (credential != null) {
+            // 参数显式给了与凭据不同的目标时必须拒绝：不能把一份已存凭据发到另一台主机。
+            credentialConflict(args, credential)?.let { return@withContext it }
+            host = credential.meta.host
+            port = credential.meta.port
+            user = credential.meta.user
+            auth = credential.meta.authType
+            secret = credential.secret
+            keyPath = ""
+        } else {
+            host = args.strArg("host") ?: return@withContext missingCredentialMessage(null)
+            port = args.intArg("port") ?: 22
+            user = args.strArg("user") ?: return@withContext missingCredentialMessage(null)
+            // 兼容旧 key_path 模式：路径敏感度低于密码，保留但战报登记残留风险。
+            keyPath = args.strArg("key_path").orEmpty()
+            if (keyPath.isEmpty()) return@withContext missingCredentialMessage(null)
+            auth = "key"
+            secret = ""
+        }
+        if (host.length > 253 || !host.matches(Regex("[^\\s/\\\\]+"))) return@withContext "ERROR: host 格式无效"
+        if (port !in 1..65535) return@withContext "ERROR: port 必须在 1..65535"
+        if (user.length > 64 || !user.matches(Regex("[^\\s]+"))) return@withContext "ERROR: user 格式无效"
+        if (auth != "password" && auth != "key") return@withContext "ERROR: 认证方式只能是 password 或 key"
+        if (auth == "password" && secret.isEmpty()) return@withContext missingCredentialMessage(credentialName)
+        if (auth == "key" && keyPath.isEmpty() && secret.isEmpty()) return@withContext missingCredentialMessage(credentialName)
         if (SshSessionPool.size() >= MAX_SESSIONS) return@withContext "ERROR: 活跃会话已达上限 $MAX_SESSIONS，请先 ssh_close 释放"
 
         val keyId = knownHostId(host, port)
@@ -101,7 +140,7 @@ class SshTool(private val context: Context, override val name: String) : Tool {
         // TOFU: unknown host → probe, show fingerprint, do not keep a session.
         if (remembered == null) {
             val probe = try {
-                openSession(host, port, user, auth, password, keyPath, passphrase, strict = false, probe = true)
+                openSession(host, port, user, auth, secret, keyPath, strict = false, probe = true)
             } catch (e: Exception) {
                 return@withContext connectError(e)
             }
@@ -115,7 +154,6 @@ class SshTool(private val context: Context, override val name: String) : Tool {
             val fingerprint = fingerprintOf(keyBase64)
             probe.disconnect()
 
-            val pending = SshSessionPool.pendingFingerprint(keyId)
             if (!confirm) {
                 SshSessionPool.setPendingFingerprint(keyId, fingerprint)
                 return@withContext buildString {
@@ -125,6 +163,7 @@ class SshTool(private val context: Context, override val name: String) : Tool {
                     append("若指纹与服务器管理员提供的不一致，请拒绝连接。")
                 }
             }
+            val pending = SshSessionPool.pendingFingerprint(keyId)
             if (pending == null || pending != fingerprint) {
                 return@withContext "ERROR: 本次探测到的指纹与确认提示不一致（可能中间人攻击或服务端刚刚更换密钥），已拒绝连接。请重新发起 ssh_connect 获取新指纹。"
             }
@@ -133,7 +172,7 @@ class SshTool(private val context: Context, override val name: String) : Tool {
         }
 
         val session = try {
-            openSession(host, port, user, auth, password, keyPath, passphrase, strict = true)
+            openSession(host, port, user, auth, secret, keyPath, strict = true)
         } catch (e: Exception) {
             return@withContext connectError(e, knownHost = remembered != null)
         }
@@ -151,8 +190,42 @@ class SshTool(private val context: Context, override val name: String) : Tool {
             appendLine("已连接 $user@$host:$port${nickname?.let { "（$it）" } ?: ""}")
             appendLine("session_id=${info.id}")
             appendLine("host_key=$keyType $fingerprint")
+            credentialName?.let { appendLine("credential=$it（密码/私钥未进入对话）") }
+            if (credential == null && keyPath.isNotEmpty()) {
+                appendLine("注意：本次使用旧的 key_path 文件路径认证（兼容模式）；路径已出现在对话中，建议改为在「设置 → SSH 凭据」保存后以 credential 引用。")
+            }
             append("下一步：ssh_exec 执行命令；ssh_list 查看会话；ssh_close 断开。")
         }
+    }
+
+    /** credential 与显式参数冲突时返回错误（避免把凭据发到另一台主机）。 */
+    private fun credentialConflict(args: JsonObject, credential: SshCredential): String? {
+        val name = credential.meta.nickname
+        val explicitHost = args.strArg("host")
+        if (explicitHost != null && !explicitHost.equals(credential.meta.host, ignoreCase = true)) {
+            return "ERROR: 凭据「$name」绑定 host=${credential.meta.host}，与参数 host=$explicitHost 不一致。为避免把已保存凭据发往其他主机，已取消连接。"
+        }
+        val explicitUser = args.strArg("user")
+        if (explicitUser != null && explicitUser != credential.meta.user) {
+            return "ERROR: 凭据「$name」绑定 user=${credential.meta.user}，与参数 user=$explicitUser 不一致。请只传 credential，或使用对应凭据。"
+        }
+        val explicitPort = args.intArg("port")
+        if (explicitPort != null && explicitPort != credential.meta.port) {
+            return "ERROR: 凭据「$name」绑定 port=${credential.meta.port}，与参数 port=$explicitPort 不一致。"
+        }
+        val explicitAuth = args.strArg("auth")?.lowercase()
+        if (explicitAuth != null && explicitAuth != credential.meta.authType) {
+            return "ERROR: 凭据「$name」的认证方式是 ${credential.meta.authType}，与参数 auth=$explicitAuth 不一致。"
+        }
+        return null
+    }
+
+    /** 没有可用凭据时的引导：告诉 agent 让用户在原生界面录入，别索要密码。 */
+    private fun missingCredentialMessage(nickname: String?): String = buildString {
+        if (nickname != null) appendLine("ERROR: 凭据「$nickname」不存在或无法解密（文件损坏 / Keystore 密钥已失效）。")
+        appendLine("需要用户提供凭据，但密码不能通过对话传递。")
+        appendLine("请在手机上打开「设置 → SSH 凭据」（或浏览器访问 andagent://credentials）录入 nickname / 主机 / 端口 / 用户名 / 密码或私钥；录入内容只在原生界面与加密存储里。")
+        append("也可以直接对用户说「请设置 ${nickname ?: "myvps"} 的凭据」，等用户在原生界面保存后再重试 ssh_connect（credential=${nickname ?: "<nickname>"}）。")
     }
 
     private fun openSession(
@@ -160,9 +233,8 @@ class SshTool(private val context: Context, override val name: String) : Tool {
         port: Int,
         user: String,
         auth: String,
-        password: String,
+        secret: String,
         keyPath: String,
-        passphrase: String,
         strict: Boolean,
         probe: Boolean = false,
     ): Session {
@@ -170,13 +242,23 @@ class SshTool(private val context: Context, override val name: String) : Tool {
         val knownHosts = knownHostsFile()
         if (knownHosts.isFile && knownHosts.length() > 0) jsch.setKnownHosts(knownHosts.absolutePath)
         if (auth == "key" && !probe) {
-            val key = File(keyPath)
-            if (!key.isFile || !key.canRead()) throw IllegalArgumentException("私钥文件不存在或不可读：$keyPath")
-            if (key.length() > MAX_KEY_BYTES) throw IllegalArgumentException("私钥文件异常大（>1MB）：$keyPath")
-            jsch.addIdentity(key.absolutePath, passphrase.ifEmpty { null })
+            if (keyPath.isNotEmpty()) {
+                val key = File(keyPath)
+                if (!key.isFile || !key.canRead()) throw IllegalArgumentException("私钥文件不存在或不可读：$keyPath")
+                if (key.length() > MAX_KEY_BYTES) throw IllegalArgumentException("私钥文件异常大（>1MB）：$keyPath")
+                jsch.addIdentity(key.absolutePath, null as ByteArray?)
+            } else {
+                if (secret.isEmpty()) throw IllegalArgumentException("缺少私钥内容")
+                if (secret.toByteArray(Charsets.UTF_8).size > MAX_KEY_BYTES) throw IllegalArgumentException("私钥内容异常大（>1MB）")
+                // 内存中的私钥直接交给 JSch，不落盘、不打印。
+                jsch.addIdentity("andagent-credential", secret.toByteArray(Charsets.UTF_8), null, null)
+            }
         }
         val session = jsch.getSession(user, host, port)
-        if (auth == "password" && !probe) session.setPassword(password)
+        if (auth == "password" && !probe) {
+            if (secret.isEmpty()) throw IllegalArgumentException("缺少密码")
+            session.setPassword(secret)
+        }
         // 探测阶段只做密钥交换：使用一次性假口令/无身份，绝不把真实凭据发给尚未信任的主机。
         if (probe && auth == "password") session.setPassword("andagent-tofu-probe-" + System.nanoTime())
         session.setConfig("StrictHostKeyChecking", if (strict) "yes" else "no")
@@ -343,6 +425,10 @@ class SshTool(private val context: Context, override val name: String) : Tool {
         private const val MAX_COMMAND_CHARS = 8_000
         private const val STDOUT_LIMIT = 8 * 1024
         private const val STDERR_LIMIT = 4 * 1024
+
+        /** 旧习惯带着 password / key_passphrase 调用时的固定拒绝文案。 */
+        const val PLAINTEXT_SECRET_REFUSAL =
+            "出于安全，密码不再通过对话传递。请用 nickname 引用已保存的凭据，或在设置 → SSH 凭据 中录入。"
     }
 }
 
