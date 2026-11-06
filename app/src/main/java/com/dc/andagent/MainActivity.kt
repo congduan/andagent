@@ -150,6 +150,8 @@ import com.dc.andagent.tools.StoreTool
 import com.dc.andagent.tools.STORE_TOOLS
 import com.dc.andagent.tools.DevToolsTool
 import com.dc.andagent.tools.WebSearchTool
+import com.dc.andagent.tools.HttpTool
+import com.dc.andagent.tools.HTTP_TOOLS
 import com.dc.andagent.tools.DEVTOOLS_TOOLS
 import com.dc.andagent.tools.WifiInfoTool
 import com.dc.andagent.tools.R35Tool
@@ -467,6 +469,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(DEVTOOLS_TOOLS.associateWith { DevToolsTool(appContext, it) })
         tools.putAll(INTENT_TOOLS.associateWith { IntentTool(appContext, it) })
         tools.putAll(listOf("web_search", "web_read").associateWith { WebSearchTool(it) })
+        // R73: http_request (generic client, http:// allowed for LAN devices) + lan_scan (LAN probe).
+        tools.putAll(HTTP_TOOLS.associateWith { HttpTool(it, appContext) })
         // R35: 联系人新建/通话记录/应用卸载/APK 提取/二维码/传感器录制/文件加密。
         tools.putAll(R35_TOOLS.associateWith { R35Tool(appContext, permissionBroker, shizuku, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.

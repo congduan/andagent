@@ -685,6 +685,18 @@ const LIVE_GUIDE_EN = [
   "- For static 2D drawing, output a ```canvas fence with JS or JSON {\"code\":\"...\",\"animate\":true}. It runs in a sandbox iframe with ctx,t,w,h; animate:true redraws with requestAnimationFrame.",
 ].join("\n");
 
+const NETWORK_GUIDE = [
+  "网络访问：http_request 是通用 HTTP 客户端，支持 GET/POST/PUT/DELETE/PATCH/HEAD，可用 headers_json 传 Authorization 等请求头、body 传请求体；它允许 http:// 与 https://，局域网设备（Home Assistant 的 http://192.168.x.x:8123/api/、ESPHome、路由器 API）优先用它，网页正文仍用 web_read（仅 HTTPS）。",
+  "调用局域网 API 前先用 lan_scan 找设备：mode=ping 默认扫当前 Wi-Fi 的 /24，返回存活 IP 与反查主机名；已知端口（如 8123、80、1883）用 mode=port。仅扫描自己所在的网络，不要扫描他人网段；不要用 http_request 对同一地址高频轮询。",
+  "http_request 返回 JSON：status/ok/url/headers/body/truncated/elapsedMs。长正文用 max_chars 控制；非 2xx 时先看 status 与 body 前段再决定是否重试，不要盲目重复同一请求。",
+].join("\n");
+
+const NETWORK_GUIDE_EN = [
+  "Network access: http_request is a generic HTTP client supporting GET/POST/PUT/DELETE/PATCH/HEAD, with headers_json for Authorization-style headers and body for payloads. It allows both http:// and https://, so use it first for LAN devices (Home Assistant at http://192.168.x.x:8123/api/, ESPHome, router APIs); keep web_read (HTTPS only) for web page text.",
+  "Find devices with lan_scan before calling a LAN API: mode=ping scans the current Wi-Fi /24 by default and returns live IPs with reverse-DNS hostnames; use mode=port for a known port (8123, 80, 1883). Scan only the network you are on, never someone else's range, and do not hammer one address through http_request.",
+  "http_request returns JSON with status/ok/url/headers/body/truncated/elapsedMs. Bound long bodies with max_chars; on non-2xx inspect status and the body prefix before deciding whether to retry, and do not blindly repeat the same request.",
+].join("\n");
+
 const HARDWARE_GUIDE = [
   "红外遥控：先用 ir_available 检测发射器；从网上或遥控器数据库查到目标品牌/型号的 Pronto Hex 0000 码后，用 ir_send_pronto 发送；自定义协议用 ir_send_raw 发送交替 on/off 微秒数组。空调等多状态设备应使用包含温度、模式、风速等完整状态的品牌码。手机无红外硬件时如实告知，不能声称已发送。电视、机顶盒、音响、红外灯具也可按匹配码遥控。",
   "AirPods：airpods_scan 扫描附近广播；airpods_status / airpods_battery 查询近期状态和电量。",
@@ -1091,6 +1103,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? CHART_GUIDE_EN : CHART_GUIDE,
               currentLanguage() === "en" ? LIVE_GUIDE_EN : LIVE_GUIDE,
               currentLanguage() === "en" ? HARDWARE_GUIDE_EN : HARDWARE_GUIDE,
+              currentLanguage() === "en" ? NETWORK_GUIDE_EN : NETWORK_GUIDE,
               currentLanguage() === "en" ? SHORTCUT_GUIDE_EN : SHORTCUT_GUIDE,
               currentLanguage() === "en" ? STORAGE_MEDIA_GUIDE_EN : STORAGE_MEDIA_GUIDE,
               currentLanguage() === "en" ? MEDIA_CONTEXT_GUIDE_EN : MEDIA_CONTEXT_GUIDE,
