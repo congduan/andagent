@@ -176,6 +176,9 @@ const TOOL_DEFS = [
   { name: "shell_exec", description: "在 Termux 用户空间执行 shell 命令。", parameters: { type: "object", properties: { cmd: { type: "string", description: "命令" }, timeout_s: { type: "integer", description: "超时秒数，默认 60" } }, required: ["cmd"] } },
   { name: "pkg_install", description: "安装 Termux 包；白名单外须 confirm=true。", parameters: { type: "object", properties: { pkg: { type: "string", description: "包名" }, confirm: { type: "boolean", description: "确认白名单外安装" } }, required: ["pkg"] } },
   { name: "widget_generate", description: "根据 spec_description 编写 WidgetSpec v2 JSON。schemaVersion=2，name，background=#RRGGBB，padding=0..32，root 为 COLUMN/ROW，children 节点为 COLUMN/ROW/TEXT/SPACER/PROGRESS；TEXT 可用 binding=DATA + source + field。data.sources 为名称到数据源的对象；类型 STATIC(value 对象)、HTTP(https url)、SYSTEM(system=BATTERY/CLOCK/NETWORK/LOCALE/STORAGE/DEVICE_INFO/BATTERY_DETAIL/STEPS_TODAY)、SCRIPT(script 字符串，定义 refresh(ctx) 返回扁平对象；可调用 andagent.tool('steps_today','{}') 并 JSON.parse)。支持 dependsOn、ttlSeconds、fallback、sample。最多 40 节点、6 层、8 数据源。调用后据此输出完整 spec，再调用 widget_save_and_pin。", parameters: { type: "object", properties: { spec_description: { type: "string", description: "用户希望的小组件内容与样式" } }, required: ["spec_description"] } },
+  { name: "shortcut_create", description: "请求在桌面添加一键任务图标；点击后打开 AndAgent 并自动发送预置 prompt。启动器会弹出确认框。", parameters: { type: "object", properties: { name: { type: "string", description: "桌面显示名" }, prompt: { type: "string", description: "点击图标后自动发送的指令" }, emoji: { type: "string", description: "可选：图标上的单个 emoji 字符" } }, required: ["name", "prompt"] } },
+  { name: "shortcut_list", description: "列出本应用请求创建的桌面一键任务图标及 ID。", parameters: { type: "object", properties: {} } },
+  { name: "shortcut_delete", description: "停用指定桌面快捷方式并移除本地记录；Android 不允许应用直接移除已 pin 图标，用户需长按图标拖到卸载才能彻底移除。", parameters: { type: "object", properties: { id: { type: "string", description: "shortcut_list 返回的 ID" } }, required: ["id"] } },
   { name: "widget_save_and_pin", description: "验证并保存 WidgetSpec v2 JSON，然后请求添加到桌面。编辑时可在设置页改 JSON。", parameters: { type: "object", properties: { spec_json: { type: "string", description: "完整 WidgetSpec v2 JSON 字符串" } }, required: ["spec_json"] } },
   { name: "docx_create", description: "创建 Word 文档到 Downloads/andagent/。content_spec_json 是 JSON 字符串：{\"title\":\"季度报告\",\"paragraphs\":[{\"type\":\"heading\",\"text\":\"概览\",\"level\":2},{\"type\":\"p\",\"text\":\"正文\",\"bold\":true,\"italic\":false,\"size\":12,\"color\":\"#336699\",\"align\":\"left\"},{\"type\":\"bullet\",\"text\":\"要点\"},{\"type\":\"numbered\",\"text\":\"第一项\"},{\"type\":\"table\",\"headers\":[\"项目\",\"值\"],\"rows\":[[\"A\",\"1\"]]},{\"type\":\"pageBreak\"}]}。", parameters: { type: "object", properties: { filename: { type: "string" }, content_spec_json: { type: "string" } }, required: ["filename", "content_spec_json"] } },
   { name: "pptx_create", description: "创建 16:9 PowerPoint 到 Downloads/andagent/。slides_json 是 JSON 数组字符串：[{\"title\":\"季度报告\",\"bullets\":[\"要点一\",\"要点二\"],\"notes\":\"说明\"}]。也支持 texts:[{x,y,width,height,text,size,bold}]，坐标为英寸。", parameters: { type: "object", properties: { filename: { type: "string" }, slides_json: { type: "string" } }, required: ["filename", "slides_json"] } },
@@ -698,6 +701,16 @@ const HARDWARE_GUIDE_EN = [
   "System events: media sessions and notifications require notification access via notif_permission before media_events_on / notif_events_on. Audio devices use audio_events_on. Poll latest or history in media_events, notif_events and audio_events KV namespaces from live, deduplicating by timestamp. Use the matching off tool or foreground notification to stop. Audio callbacks report device additions/removals, not guaranteed route changes.",
 ].join("\n");
 
+const SHORTCUT_GUIDE = [
+  "桌面一键任务：用户说‘帮我做个一键打卡的桌面图标’等需求时，调用 shortcut_create，提供显示名和点击后自动发送的完整 prompt，可选单个 emoji 图标。启动器会要求用户确认 pin。",
+  "小组件 widget_generate 是桌面常驻信息卡；快捷方式 shortcut_create 是点击后执行预置任务。列出已有图标用 shortcut_list；shortcut_delete 只能停用，彻底移除需用户长按桌面图标拖到卸载。",
+].join("\n");
+
+const SHORTCUT_GUIDE_EN = [
+  "Desktop one-tap tasks: when the user asks for a desktop icon that runs a task, call shortcut_create with a label and the full prompt to send automatically on tap; an emoji icon is optional. The launcher asks the user to confirm pinning.",
+  "widget_generate creates a persistent desktop information card; shortcut_create creates a one-tap task. Use shortcut_list to find IDs. shortcut_delete only disables a pinned icon; the user must long-press and drag it to Remove to remove it completely.",
+].join("\n");
+
 const STORAGE_MEDIA_GUIDE = [
   "文本转音频文件用 tts_to_file；返回 path 后，用 ```audio 围栏展示，内容为 JSON：{\"uri\":\"返回的 path\",\"title\":\"音频\"}。用户可点播放器播放；文件保存在应用 exports 目录。",
   "结构化存储：用户要记账、清单或笔记库时，先用 db_create 建库，再用 db_exec 建表，后续用参数化 INSERT 和 db_query SELECT。",
@@ -1078,6 +1091,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? CHART_GUIDE_EN : CHART_GUIDE,
               currentLanguage() === "en" ? LIVE_GUIDE_EN : LIVE_GUIDE,
               currentLanguage() === "en" ? HARDWARE_GUIDE_EN : HARDWARE_GUIDE,
+              currentLanguage() === "en" ? SHORTCUT_GUIDE_EN : SHORTCUT_GUIDE,
               currentLanguage() === "en" ? STORAGE_MEDIA_GUIDE_EN : STORAGE_MEDIA_GUIDE,
               currentLanguage() === "en" ? MEDIA_CONTEXT_GUIDE_EN : MEDIA_CONTEXT_GUIDE,
               currentLanguage() === "en" ? PERMISSION_GUIDE_EN : PERMISSION_GUIDE,
