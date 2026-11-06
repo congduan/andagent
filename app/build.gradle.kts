@@ -125,6 +125,10 @@ dependencies {
     implementation(files("libs/quickjs-wrapper-android-3.2.0.jar"))
     implementation("wang.harlon.quickjs:wrapper-java:3.2.0")
 
+    // R91: SSH remote ops. mwiede/jsch is the maintained fork of the discontinued
+    // com.jcraft:jsch (same com.jcraft.jsch API), BSD-style license, pure Java.
+    implementation("com.github.mwiede:jsch:0.2.17")
+
     // R35: pure-Java QR encode/decode (ZXing core, Apache-2.0, vendored jar).
     // Chosen over ML Kit barcode scanning: no GMS, no Play Services model
     // download, zero permissions, fully offline. See app/libs/README.md.

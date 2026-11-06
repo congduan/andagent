@@ -63,6 +63,8 @@ import com.dc.andagent.tools.SHORTCUT_TOOLS
 import com.dc.andagent.tools.ShortcutTool
 import com.dc.andagent.tools.DbGuiTool
 import com.dc.andagent.tools.TermuxTool
+import com.dc.andagent.tools.SSH_TOOLS
+import com.dc.andagent.tools.SshTool
 import com.dc.andagent.tools.ScreenCaptureTool
 import com.dc.andagent.tools.ProjectionConsentActivity
 import com.dc.andagent.tools.ProjectionConsentBridge
@@ -473,6 +475,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(listOf("web_search", "web_read").associateWith { WebSearchTool(it) })
         // R73: http_request (generic client, http:// allowed for LAN devices) + lan_scan (LAN probe).
         tools.putAll(HTTP_TOOLS.associateWith { HttpTool(it, appContext) })
+        // R91: SSH 远程运维（JSch 会话池，TOFU known_hosts，破坏性命令分级）。
+        tools.putAll(SSH_TOOLS.associateWith { SshTool(appContext, it) })
         // R35: 联系人新建/通话记录/应用卸载/APK 提取/二维码/传感器录制/文件加密。
         tools.putAll(R35_TOOLS.associateWith { R35Tool(appContext, permissionBroker, shizuku, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.

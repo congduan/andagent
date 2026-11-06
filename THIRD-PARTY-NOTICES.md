@@ -116,6 +116,11 @@ AndAgent is licensed under Apache-2.0 (see [LICENSE](LICENSE)). The entries belo
 - Source: https://github.com/square/okhttp
 - Copyright: Copyright Square, Inc. and contributors
 
+### JSch (mwiede fork) 0.2.17
+- License: BSD-style (see upstream LICENSE)
+- Source: https://github.com/mwiede/jsch
+- Copyright: Copyright JCraft, Inc., Atsuhiko Yamanaka, and mwiede/jsch contributors
+
 ### Kotlinx Serialization JSON 1.7.3
 - License: Apache-2.0
 - Source: https://github.com/Kotlin/kotlinx.serialization
