@@ -106,4 +106,31 @@ describe("SessionStore KV 适配", () => {
     expect(kv.has(kvKey("s_del"))).toBe(false);
     expect(localStorage.getItem(sessionKey("s_del"))).toBeNull();
   });
+
+  it("removeMany 双清会话体，并只持久化一次剩余索引", () => {
+    const kv = installKvBridge();
+    SessionStore.save("s_a", msgs("A"));
+    SessionStore.save("s_b", msgs("B"));
+    SessionStore.save("s_c", msgs("C"));
+    localStorage.setItem(sessionKey("s_a"), JSON.stringify(msgs("A")));
+    localStorage.setItem(sessionKey("s_b"), JSON.stringify(msgs("B")));
+    let indexWrites = 0;
+    const originalCall = window.AndroidBridge!.kvCall!;
+    window.AndroidBridge!.kvCall = (name, raw) => {
+      if (name === "kv_set" && JSON.parse(raw).key === "index") indexWrites++;
+      return originalCall(name, raw);
+    };
+
+    const left = SessionStore.removeMany(["s_a", "s_b", "s_a"]);
+
+    expect(left.map((s) => s.id)).toEqual(["s_c"]);
+    expect(SessionStore.list().map((s) => s.id)).toEqual(["s_c"]);
+    expect(JSON.parse(JSON.parse(kv.get("sessions/index")!)).map((s: { id: string }) => s.id)).toEqual(["s_c"]);
+    expect(indexWrites).toBe(1);
+    for (const id of ["s_a", "s_b"]) {
+      expect(kv.has(kvKey(id))).toBe(false);
+      expect(localStorage.getItem(sessionKey(id))).toBeNull();
+    }
+    expect(kv.has(kvKey("s_c"))).toBe(true);
+  });
 });

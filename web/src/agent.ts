@@ -1099,6 +1099,21 @@ export class AgentEngine {
     this.emit();
   }
 
+  deleteSessions(ids: string[]): void {
+    if (ids.length === 0) return;
+    const wasCurrent = ids.includes(this.sessionId);
+    this.sessions = SessionStore.removeMany(ids);
+    if (wasCurrent) {
+      const next = this.sessions[0];
+      this.sessionId = next?.id ?? newId();
+      this.messages = next ? SessionStore.load(next.id) : [];
+      this.draft = null;
+      this.error = null;
+      this.sessionUsage = sumMessageUsage(this.messages);
+    }
+    this.emit();
+  }
+
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

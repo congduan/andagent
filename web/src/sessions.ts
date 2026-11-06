@@ -308,8 +308,14 @@ export const SessionStore = {
   },
 
   remove(id: string): SessionMeta[] {
-    const index = loadIndex().filter((s) => s.id !== id);
-    forget(kvSessionKey(id), SESSION_KEY(id));
+    return this.removeMany([id]);
+  },
+
+  removeMany(ids: string[]): SessionMeta[] {
+    const removing = new Set(ids);
+    if (removing.size === 0) return loadIndex();
+    const index = loadIndex().filter((s) => !removing.has(s.id));
+    for (const id of removing) forget(kvSessionKey(id), SESSION_KEY(id));
     persist([[KV_INDEX_KEY, INDEX_KEY, JSON.stringify(index)]]);
     return index;
   },

@@ -27,7 +27,7 @@ import {
 import { CopyMenu, selectedText, useLongPress } from "./CopyMenu";
 import { Drawer } from "./Drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { conversationMarkdown } from "./exportConversation";
+import { batchConversationMarkdown, conversationMarkdown } from "./exportConversation";
 import { MarkdownText } from "./Markdown";
 import { MessageNav, type MessageNavItem } from "./MessageNav";
 import { SettingsPanel, type SettingsPage } from "./Settings";
@@ -778,6 +778,24 @@ export default function App() {
           onRename={(id, title) => engine.renameSession(id, title)}
           onSettings={() => { setDrawerOpen(false); setSettingsPage("home"); setShowSettings(true); }}
           onDelete={(id) => engine.deleteSession(id)}
+          onDeleteMany={(ids) => engine.deleteSessions(ids)}
+          onExportMany={(ids) => {
+            const selected = ids.flatMap((id) => {
+              const session = snapshot.sessions.find((s) => s.id === id);
+              return session ? [session] : [];
+            });
+            if (selected.length === 0) return;
+            const today = new Date();
+            const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+            const title = selected.length === 1
+              ? selected[0].title
+              : `conversations-batch-${date}`;
+            const markdown = selected.length === 1
+              ? conversationMarkdown(selected[0].id, selected[0].title)
+              : batchConversationMarkdown(selected);
+            const result = exportConversation(title, markdown);
+            if (result.startsWith("ERROR:")) showError(result);
+          }}
           onExport={(id) => {
             const session = snapshot.sessions.find((s) => s.id === id);
             if (!session) return;

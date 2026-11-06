@@ -68,6 +68,9 @@ function SessionRow({
   onRename,
   onDelete,
   onExport,
+  managing,
+  selected,
+  onToggle,
 }: {
   session: SessionMeta;
   active: boolean;
@@ -76,6 +79,9 @@ function SessionRow({
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onExport: (id: string) => void;
+  managing: boolean;
+  selected: boolean;
+  onToggle: (id: string) => void;
 }) {
   const { t, language } = useI18n();
   const s = session;
@@ -103,22 +109,28 @@ function SessionRow({
 
   return (
     <div
-      className={`drawer-item ${active ? "active" : ""}`}
+      className={`drawer-item ${!managing && active ? "active" : ""} ${selected ? "selected" : ""} ${managing ? "managing" : ""}`}
       onClick={() => {
         if (editing) return;
+        if (managing) { onToggle(s.id); return; }
         onSwitch(s.id);
         onClose();
       }}
-      role="button"
+      role={managing ? "checkbox" : "button"}
+      aria-checked={managing ? selected : undefined}
+      aria-label={managing ? s.title : undefined}
       tabIndex={0}
       onKeyDown={(e) => {
         if (editing) return;
-        if (e.key === "Enter") {
+        if (e.key === "Enter" || (managing && e.key === " ")) {
+          e.preventDefault();
+          if (managing) { onToggle(s.id); return; }
           onSwitch(s.id);
           onClose();
         }
       }}
     >
+      {managing && <span className="drawer-item-check" aria-hidden="true">{selected ? "✓" : ""}</span>}
       {editing ? (
         <input
           className="drawer-item-rename"
@@ -167,7 +179,7 @@ function SessionRow({
             </span>
           )}
         </span>
-        <span className="drawer-item-actions">
+        {!managing && <span className="drawer-item-actions">
           <button
             type="button"
             className="drawer-action"
@@ -221,7 +233,7 @@ function SessionRow({
               />
             </svg>
           </button>
-        </span>
+        </span>}
       </span>
     </div>
   );
@@ -244,6 +256,8 @@ export function Drawer({
   onRename,
   onDelete,
   onExport,
+  onDeleteMany,
+  onExportMany,
   onSettings,
 }: {
   open: boolean;
@@ -257,6 +271,8 @@ export function Drawer({
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onExport: (id: string) => void;
+  onDeleteMany: (ids: string[]) => void;
+  onExportMany: (ids: string[]) => void;
   onSettings: () => void;
 }) {
   const { t } = useI18n();
@@ -264,6 +280,18 @@ export function Drawer({
   const [theme, setThemeState] = useState(() => resolvedTheme());
   // 分组折叠状态：默认全部展开，按分组 key 记录。
   const [collapsed, setCollapsed] = useState<Partial<Record<TimeGroup, boolean>>>({});
+  const [managing, setManaging] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const visibleIds = groupSessionsByTime(sessions)
+    .filter(({ key }) => !collapsed[key])
+    .flatMap(({ items }) => items.map((session) => session.id));
+  const selectedVisible = visibleIds.filter((id) => selectedIds.has(id));
+  const allSelected = visibleIds.length > 0 && selectedVisible.length === visibleIds.length;
+  const toggleSelected = (id: string) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   // Re-render the sun/moon shortcut when the theme changes.
   useEffect(() => {
@@ -276,6 +304,8 @@ export function Drawer({
   useEffect(() => {
     if (open) setVisible(true);
     else {
+      setManaging(false);
+      setSelectedIds(new Set());
       const t = setTimeout(() => setVisible(false), 220);
       return () => clearTimeout(t);
     }
@@ -312,6 +342,19 @@ export function Drawer({
           </svg>
           {t("newChat")}
         </button>
+
+        <div className="drawer-manage-head">
+          <span>{managing ? t("selectedCount", { count: selectedVisible.length }) : t("sessions")}</span>
+          {managing && <button type="button" onClick={() => setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (allSelected) visibleIds.forEach((id) => next.delete(id));
+            else visibleIds.forEach((id) => next.add(id));
+            return next;
+          })} disabled={visibleIds.length === 0}>{t(allSelected ? "deselectAll" : "selectAll")}</button>}
+          <button type="button" onClick={() => { setManaging(!managing); setSelectedIds(new Set()); }}>
+            {t(managing ? "exitManage" : "manageSessions")}
+          </button>
+        </div>
 
         <div className="drawer-list">
           {sessions.length === 0 && <div className="drawer-empty">{t("noSessions")}</div>}
@@ -351,6 +394,9 @@ export function Drawer({
                         onRename={onRename}
                         onDelete={onDelete}
                         onExport={onExport}
+                        managing={managing}
+                        selected={selectedIds.has(s.id)}
+                        onToggle={toggleSelected}
                       />
                     ))}
                   </div>
@@ -359,6 +405,17 @@ export function Drawer({
             );
           })}
         </div>
+
+        {managing && <div className="drawer-batch-actions">
+          <button type="button" disabled={selectedVisible.length === 0} onClick={async () => {
+            const ids = selectedVisible;
+            if (await appConfirm(t("batchDeleteConfirm", { count: ids.length }))) {
+              onDeleteMany(ids);
+              setSelectedIds(new Set());
+            }
+          }}>{t("batchDelete")}</button>
+          <button type="button" disabled={selectedVisible.length === 0} onClick={() => onExportMany(selectedVisible)}>{t("batchExport")}</button>
+        </div>}
 
         <button
           type="button"

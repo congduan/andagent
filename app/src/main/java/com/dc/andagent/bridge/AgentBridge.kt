@@ -454,13 +454,19 @@ class AgentBridge(
         val context = appContext ?: return "ERROR: Android 环境不可用"
         if (markdown.isBlank()) return "ERROR: 会话内容为空"
         if (markdown.length > 5_000_000) return "ERROR: 导出内容超过 5MB"
-        val filename = (title.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim().take(64)
-            .ifBlank { "对话" }) + "-${System.currentTimeMillis()}.md"
+        val safeTitle = title.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim().take(64)
+            .ifBlank { "对话" }
+        val filename = if (safeTitle.matches(Regex("conversations-batch-\\d{4}-\\d{2}-\\d{2}"))) {
+            "$safeTitle.md"
+        } else {
+            "$safeTitle-${System.currentTimeMillis()}.md"
+        }
         return runCatching {
             if (Build.VERSION.SDK_INT < 29) {
                 val dir = java.io.File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "andagent")
                 if (!dir.exists() && !dir.mkdirs()) error("无法创建导出目录")
-                val file = java.io.File(dir, filename)
+                val target = java.io.File(dir, filename)
+                val file = if (target.exists()) java.io.File(dir, "$safeTitle-${System.currentTimeMillis()}.md") else target
                 file.writeText(markdown)
                 file.absolutePath
             } else {

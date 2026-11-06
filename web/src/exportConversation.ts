@@ -1,5 +1,5 @@
 import { currentLanguage, translate } from "./i18n";
-import { SessionStore } from "./sessions";
+import { SessionStore, type SessionMeta } from "./sessions";
 
 type Part = { type?: string; text?: string; thinking?: string; name?: string; id?: string; content?: unknown };
 type Message = { role?: string; timestamp?: number; content?: string | Part[]; toolCallId?: string; isError?: boolean };
@@ -37,4 +37,8 @@ export function conversationMarkdown(id: string, title: string): string {
     }
   }
   return lines.join("\n").trimEnd() + "\n";
+}
+
+export function batchConversationMarkdown(sessions: SessionMeta[]): string {
+  return sessions.map((session) => conversationMarkdown(session.id, session.title).trimEnd()).join("\n\n---\n\n") + "\n";
 }
