@@ -99,6 +99,7 @@ const META: Record<string, ToolMeta> = {
   location_status: { label: "定位状态", labelEn: "Location status", icon: "🛰️" },
   sms_send: { label: "发送短信", labelEn: "Send SMS", icon: "💬" },
   mic_record: { label: "麦克风录音", labelEn: "Record audio", icon: "🎤" },
+  speech_recognize: { label: "语音识别", labelEn: "Speech to text", icon: "🗣️" },
   camera_overlay_show: { label: "打开相机浮窗", labelEn: "Open camera overlay", icon: "📷" },
   camera_overlay_update: { label: "调整相机浮窗", labelEn: "Adjust camera overlay", icon: "📷" },
   camera_overlay_hide: { label: "关闭相机浮窗", labelEn: "Close camera overlay", icon: "📷" },
