@@ -332,3 +332,25 @@ pre { background: #090d12; color: #eee9df; border-color: var(--line); }
 .teaser-link { display: inline-block; margin-top: 23px; }
 @media (max-width: 900px) { .play-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 680px) { .play-grid, .teaser-grid { grid-template-columns: 1fr; } .play-card { min-height: 0; } .playbook-section { padding-bottom: 32px!important; } }
+
+/* Mobile hardening (320/375 audit fixes) */
+.icon-button{white-space:nowrap}
+.text-link{white-space:normal;overflow-wrap:anywhere}
+.panel{min-width:0}
+.panel pre{max-width:100%}
+.panel pre code{white-space:pre;min-width:0}
+@media (max-width:480px){
+  .hero h1{font-size:clamp(2.1rem,10.5vw,2.9rem)}
+  .page-hero h1{font-size:clamp(1.8rem,8.6vw,2.5rem)}
+  .section-head h2{font-size:clamp(1.5rem,7vw,2rem)}
+  .container{width:min(100% - 28px,1120px)}
+  .tool-table td{padding:8px 14px;overflow-wrap:anywhere}
+  .tool-group h2{padding:14px 16px}
+  .play-card{padding:20px}
+  .stat{padding:16px 18px}
+  .stat strong{font-size:1.6rem}
+  .hero{padding:56px 0 46px}
+  .panel{padding:20px}
+  .page-hero h1{overflow-wrap:anywhere}
+  .hero h1{overflow-wrap:anywhere}
+}
