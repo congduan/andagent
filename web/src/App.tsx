@@ -442,9 +442,6 @@ function Composer({ hasKey }: { hasKey: boolean }) {
           <button type="button" onClick={() => setVoiceError(null)}>×</button>
         </div>
       )}
-      <div className="composer-hint">
-        {t("composerHint")}
-      </div>
     </div>
   );
 }
