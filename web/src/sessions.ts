@@ -280,6 +280,11 @@ export const SessionStore = {
 
   save(id: string, messages: PiMessage[]): SessionMeta[] {
     const index = loadIndex();
+    // 空会话不落盘：newSession() 后未发过任何消息时，save 只 flush 已有内容，
+    // 不把「新对话」占位写进索引——否则每点一次新会话抽屉就多一条空记录。
+    if (messages.length === 0 && !index.some((s) => s.id === id)) {
+      return sortIndex(index);
+    }
     const firstUser = messages.find((m) => m.role === "user");
     const autoTitle = firstText(firstUser).slice(0, 24) || translate("newChat");
     const existing = index.find((s) => s.id === id);

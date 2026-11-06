@@ -471,7 +471,6 @@ function Composer({ hasKey }: { hasKey: boolean }) {
             }
             minRows={1}
             maxRows={6}
-            autoFocus
             submitMode="enter"
             // 触摸设备（手机输入法）按 Enter/换行键只换行，发送走发送按钮，
             // 避免输入法组词时点换行被当成提交直接发出。

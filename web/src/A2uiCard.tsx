@@ -311,6 +311,8 @@ export function A2uiCard({ code }: { code: string }) {
   const [values, setValues] = useState<Record<string, unknown>>(() => Object.create(null));
   const [errors, setErrors] = useState<Record<string, string>>(() => Object.create(null));
   const [submitted, setSubmitted] = useState<string | null>(null);
+  // 折叠状态必须在所有条件 return 之前声明（React hooks 顺序恒定）。
+  const [collapsed, setCollapsed] = useState(false);
   // Broken cards are detected from config alone at parse time: the submit
   // button is disabled (and the hint shown) from the very first render,
   // not only after a failed submit attempt.
@@ -703,25 +705,39 @@ export function A2uiCard({ code }: { code: string }) {
   };
 
   return (
-    <div className="a2ui-card">
-      {title ? <div className="a2ui-title">{title}</div> : null}
-      <div className="a2ui-body">
-        {fields.map((field, index) => renderField(field, 1, `${index}`))}
-      </div>
-      {unknown ? <div className="a2ui-warning">{t("a2uiUnknownType")}</div> : null}
-      {broken ? (
-        <div className="a2ui-warning a2ui-broken">{t("a2uiBrokenCard")}</div>
-      ) : null}
-      <div className="a2ui-actions">
+    <div className={collapsed ? "a2ui-card collapsed" : "a2ui-card"}>
+      {title ? (
         <button
           type="button"
-          className="a2ui-submit"
-          disabled={broken}
-          onClick={submit}
+          className="a2ui-head"
+          onClick={() => setCollapsed((v) => !v)}
+          aria-expanded={!collapsed}
         >
-          {submitLabel || t("a2uiSubmit")}
+          <span className="a2ui-title">{title}</span>
+          <span className="a2ui-chevron" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
         </button>
-      </div>
+      ) : null}
+      {!collapsed && (
+        <>
+          <div className="a2ui-body">
+            {fields.map((field, index) => renderField(field, 1, `${index}`))}
+          </div>
+          {unknown ? <div className="a2ui-warning">{t("a2uiUnknownType")}</div> : null}
+          {broken ? (
+            <div className="a2ui-warning a2ui-broken">{t("a2uiBrokenCard")}</div>
+          ) : null}
+          <div className="a2ui-actions">
+            <button
+              type="button"
+              className="a2ui-submit"
+              disabled={broken}
+              onClick={submit}
+            >
+              {submitLabel || t("a2uiSubmit")}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

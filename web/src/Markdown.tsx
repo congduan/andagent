@@ -20,12 +20,13 @@ import { LiveCard } from "./LiveCard";
 import { ShaderCard } from "./ShaderCard";
 import { WidgetPreviewCard } from "./WidgetPreviewCard";
 import { A2uiCard } from "./A2uiCard";
+import { HtmlCard } from "./HtmlCard";
 
 function CodeBlock({ language, code, components: { Pre, Code } }: SyntaxHighlighterProps) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const kind = (language ?? "").toLowerCase();
-  const isChart = ["chart", "photos", "image", "kv", "table", "json-tree", "geo", "audio", "video", "camera", "widget", "canvas", "live", "shader", "terminal", "mermaid", "svg", "a2ui"].includes(kind);
+  const isChart = ["chart", "photos", "image", "kv", "table", "json-tree", "geo", "audio", "video", "camera", "widget", "canvas", "live", "shader", "terminal", "mermaid", "svg", "a2ui", "html"].includes(kind);
 
   // 流式中重围栏只渲染占位（防闪烁）。判定源 = 本围栏的 code 是否在 800ms 内
   // 变过：draft 流式的围栏随 delta 持续更新；历史消息的围栏 code 恒定 → 永不
@@ -83,6 +84,7 @@ function CodeBlock({ language, code, components: { Pre, Code } }: SyntaxHighligh
   if (kind === "terminal") return <TerminalCard code={code} />;
   if (kind === "widget") return <WidgetPreviewCard code={code} />;
   if (kind === "a2ui") return <A2uiCard code={code} />;
+  if (kind === "html") return <HtmlCard code={code} />;
   if (kind === "audio" || kind === "video") {
     try {
       const data = JSON.parse(code) as { uri?: string; title?: string; poster?: string };

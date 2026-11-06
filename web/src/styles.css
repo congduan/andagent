@@ -132,6 +132,9 @@ button:disabled {
      --kb-inset 是布局视口没有被顶起时（见 keyboard.ts）键盘吃掉的高度：
      整列一起让位，输入框才会停在键盘上沿而不是被压在键盘下面。 */
   height: calc(100% - var(--kb-inset, 0px));
+  /* --kb-inset 变化时平滑过渡：输入法弹出瞬间 visualViewport 连续多次 resize，
+     无过渡时整列高度跳变，顶部输入框视觉上「闪一下」。 */
+  transition: height 0.18s ease;
   max-width: 940px;
   margin: 0 auto;
   display: flex;
@@ -3582,3 +3585,45 @@ html.theme-transition *::after {
 .confirm-actions .confirm-ok:active { transform: scale(0.96); }
 .confirm-actions .confirm-cancel:active { transform: scale(0.96); }
 @keyframes confirm-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* a2ui card collapse (R93 fixup): head toggles body/submit visibility */
+.a2ui-head {
+  width: 100%;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: var(--wash-1);
+}
+.a2ui-head:active { background: var(--wash-2); }
+.a2ui-card.collapsed .a2ui-head { border-bottom: 0; }
+.a2ui-chevron {
+  margin-left: auto;
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* R94: canvas/html 卡片工具栏——图标按钮单行排布（uri 收缩给按钮让位） */
+.webview-bar.canvas-bar { flex-wrap: nowrap; }
+.webview-bar.canvas-bar .webview-uri { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.webview-bar.canvas-bar button {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  border-radius: 8px;
+}
+
+/* ```html 围栏卡片（与 canvas-card 同一视觉语言） */
+.html-card { margin: 10px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); }
+.html-card iframe { display: block; width: 100%; height: 340px; border: 1px solid var(--border); border-radius: 7px; background: var(--code-bg); }
+.html-card.fullscreen { position: fixed; inset: 0; z-index: 1200; margin: 0; border-radius: 0; display: flex; flex-direction: column; background: var(--code-bg); }
+.html-card.fullscreen iframe { flex: 1; height: auto; min-height: 0; border-radius: 0; }
+.html-card.fullscreen > .webview-bar { margin-top: var(--safe-top); margin-bottom: 0; }

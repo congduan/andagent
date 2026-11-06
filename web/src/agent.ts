@@ -163,9 +163,12 @@ const TOOL_DEFS = [
   { name: "shell_exec", description: "在 Termux 用户空间执行 shell 命令。", parameters: { type: "object", properties: { cmd: { type: "string", description: "命令" }, timeout_s: { type: "integer", description: "超时秒数，默认 60" } }, required: ["cmd"] } },
   { name: "pkg_install", description: "安装 Termux 包；白名单外须 confirm=true。", parameters: { type: "object", properties: { pkg: { type: "string", description: "包名" }, confirm: { type: "boolean", description: "确认白名单外安装" } }, required: ["pkg"] } },
   { name: "widget_generate", description: "根据 spec_description 编写 WidgetSpec v2 JSON。schemaVersion=2，name，background=#RRGGBB，padding=0..32，root 为 COLUMN/ROW，children 节点为 COLUMN/ROW/TEXT/SPACER/PROGRESS；TEXT 可用 binding=DATA + source + field。data.sources 为名称到数据源的对象；类型 STATIC(value 对象)、HTTP(https url)、SYSTEM(system=BATTERY/CLOCK/NETWORK/LOCALE/STORAGE/DEVICE_INFO/BATTERY_DETAIL/STEPS_TODAY)、SCRIPT(script 字符串，定义 refresh(ctx) 返回扁平对象；可调用 andagent.tool('steps_today','{}') 并 JSON.parse)。支持 dependsOn、ttlSeconds、fallback、sample。最多 40 节点、6 层、8 数据源。调用后据此输出完整 spec，再调用 widget_save_and_pin。", parameters: { type: "object", properties: { spec_description: { type: "string", description: "用户希望的小组件内容与样式" } }, required: ["spec_description"] } },
-  { name: "shortcut_create", description: "请求在桌面添加一键任务图标；点击后打开 AndAgent 并自动发送预置 prompt。启动器会弹出确认框。", parameters: { type: "object", properties: { name: { type: "string", description: "桌面显示名" }, prompt: { type: "string", description: "点击图标后自动发送的指令" }, emoji: { type: "string", description: "可选：图标上的单个 emoji 字符" } }, required: ["name", "prompt"] } },
+  { name: "shortcut_create", description: "请求在桌面添加一键任务图标；点击后打开 AndAgent 并自动发送预置 prompt。启动器会弹出确认框。", parameters: { type: "object", properties: { name: { type: "string", description: "桌面显示名" }, prompt: { type: "string", description: "点击图标后自动发送的指令" }, emoji: { type: "string", description: "可选：图标上的单个 emoji 字符" }, mode: { type: "string", description: "可选：pin（默认，请求固定到桌面，启动器弹确认框）或 dynamic（动态快捷方式，无需启动器确认，槽位有限会被挤掉）" } }, required: ["name", "prompt"] } },
   { name: "shortcut_list", description: "列出本应用请求创建的桌面一键任务图标及 ID。", parameters: { type: "object", properties: {} } },
   { name: "shortcut_delete", description: "停用指定桌面快捷方式并移除本地记录；Android 不允许应用直接移除已 pin 图标，用户需长按图标拖到卸载才能彻底移除。", parameters: { type: "object", properties: { id: { type: "string", description: "shortcut_list 返回的 ID" } }, required: ["id"] } },
+  { name: "tile_set", description: "配置下拉快捷栏磁贴：设置显示名与点击后自动发送的 prompt（复用 andagent://send deeplink）。已有磁贴需用户先从快捷栏添加；配置后自动请求系统刷新。", parameters: { type: "object", properties: { label: { type: "string", description: "磁贴显示名，1-32 字符，无控制字符" }, prompt: { type: "string", description: "点击磁贴后自动发送的指令，1-2000 字符，无控制字符" } }, required: ["label", "prompt"] } },
+  { name: "tile_get", description: "读取当前下拉快捷栏磁贴配置（显示名/prompt），未配置返回 configured=false。", parameters: { type: "object", properties: {} } },
+  { name: "tile_clear", description: "清除下拉快捷栏磁贴配置；磁贴回落为打开主界面。", parameters: { type: "object", properties: {} } },
   { name: "widget_save_and_pin", description: "验证并保存 WidgetSpec v2 JSON，然后请求添加到桌面。编辑时可在设置页改 JSON。", parameters: { type: "object", properties: { spec_json: { type: "string", description: "完整 WidgetSpec v2 JSON 字符串" } }, required: ["spec_json"] } },
   { name: "docx_create", description: "创建 Word 文档到 Downloads/andagent/。content_spec_json 是 JSON 字符串：{\"title\":\"季度报告\",\"paragraphs\":[{\"type\":\"heading\",\"text\":\"概览\",\"level\":2},{\"type\":\"p\",\"text\":\"正文\",\"bold\":true,\"italic\":false,\"size\":12,\"color\":\"#336699\",\"align\":\"left\"},{\"type\":\"bullet\",\"text\":\"要点\"},{\"type\":\"numbered\",\"text\":\"第一项\"},{\"type\":\"table\",\"headers\":[\"项目\",\"值\"],\"rows\":[[\"A\",\"1\"]]},{\"type\":\"pageBreak\"}]}。", parameters: { type: "object", properties: { filename: { type: "string" }, content_spec_json: { type: "string" } }, required: ["filename", "content_spec_json"] } },
   { name: "pptx_create", description: "创建 16:9 PowerPoint 到 Downloads/andagent/。slides_json 是 JSON 数组字符串：[{\"title\":\"季度报告\",\"bullets\":[\"要点一\",\"要点二\"],\"notes\":\"说明\"}]。也支持 texts:[{x,y,width,height,text,size,bold}]，坐标为英寸。", parameters: { type: "object", properties: { filename: { type: "string" }, slides_json: { type: "string" } }, required: ["filename", "slides_json"] } },
@@ -675,6 +678,7 @@ const LIVE_GUIDE = [
   "- 要画实时曲线时必须提供 render：从 data.points 读点，使用 ctx.beginPath / moveTo / lineTo / stroke 在 canvas 上绘制；省略 render 时卡片只显示本轮 JSON 文本。",
   "- 单 tick 500ms 硬超时；连续 5 次异常自动停止；用户可在卡片上暂停、停止或重启。",
   "- 静态 canvas 2D 绘图用 ```canvas 围栏，内容可为 JS 或 {\"code\":\"...\",\"animate\":true} JSON；运行在 sandbox iframe，代码接收 ctx,t,w,h，animate:true 可随 requestAnimationFrame 重绘。",
+  "- 完整 HTML 页面/富文本/CSS 动画/可交互组件用 ```html 围栏：内容为完整 HTML 文档或 body 片段，原样渲染在 sandbox iframe（零代码执行限制同 canvas，支持触摸/点击/表单交互）。需要表单收集输入时优先 a2ui 围栏。",
 ].join("\n");
 
 const CHART_GUIDE_EN = [
@@ -699,6 +703,7 @@ const LIVE_GUIDE_EN = [
   "- For a live curve include render: read data.points and draw with ctx.beginPath, moveTo, lineTo, and stroke. Without render the card shows JSON text.",
   "- Each tick has a hard 500ms timeout. Five consecutive failures stop the loop. The user can pause, stop, or restart it from the card.",
   "- For static 2D drawing, output a ```canvas fence with JS or JSON {\"code\":\"...\",\"animate\":true}. It runs in a sandbox iframe with ctx,t,w,h; animate:true redraws with requestAnimationFrame.",
+  "- For full HTML pages, rich text, CSS animations, or interactive components, use an ```html fence: complete document or body fragment, rendered as-is in a sandboxed iframe (same zero-code-execution model as canvas; touch/click/form interactions work). Prefer the a2ui fence when collecting structured form input.",
 ].join("\n");
 
 const NETWORK_GUIDE = [
@@ -742,11 +747,13 @@ const HARDWARE_GUIDE_EN = [
 const SHORTCUT_GUIDE = [
   "桌面一键任务：用户说‘帮我做个一键打卡的桌面图标’等需求时，调用 shortcut_create，提供显示名和点击后自动发送的完整 prompt，可选单个 emoji 图标。启动器会要求用户确认 pin。",
   "小组件 widget_generate 是桌面常驻信息卡；快捷方式 shortcut_create 是点击后执行预置任务。列出已有图标用 shortcut_list；shortcut_delete 只能停用，彻底移除需用户长按桌面图标拖到卸载。",
+  "下拉快捷栏磁贴：tile_set 配置显示名与点击自动发送的 prompt（一键触发常用任务）；未配置时点击磁贴只打开主界面；tile_get 查询、tile_clear 清除。",
 ].join("\n");
 
 const SHORTCUT_GUIDE_EN = [
   "Desktop one-tap tasks: when the user asks for a desktop icon that runs a task, call shortcut_create with a label and the full prompt to send automatically on tap; an emoji icon is optional. The launcher asks the user to confirm pinning.",
   "widget_generate creates a persistent desktop information card; shortcut_create creates a one-tap task. Use shortcut_list to find IDs. shortcut_delete only disables a pinned icon; the user must long-press and drag it to Remove to remove it completely.",
+  "Quick-settings tile: tile_set configures the tile label and the prompt sent automatically on tap (one-tap task trigger); when unconfigured, tapping opens the main screen; tile_get to query, tile_clear to reset.",
 ].join("\n");
 
 const STORAGE_MEDIA_GUIDE = [

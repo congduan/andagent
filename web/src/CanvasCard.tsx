@@ -154,11 +154,11 @@ export function CanvasCard({ code, data }: { code: string; data?: unknown }) {
 
   return (
     <div className={`canvas-card${fullscreen ? " fullscreen" : ""}`}>
-      <div className="webview-bar">
+      <div className="webview-bar canvas-bar">
         <span className="webview-uri">🎨 {spec.title ?? `Canvas ${spec.width}×${spec.height}`}</span>
-        <button type="button" onClick={rerun}>{t("rerun")}</button>
-        <button type="button" onClick={() => setFullscreen((v) => !v)}>{fullscreen ? t("exitFullscreen") : t("fullscreen")}</button>
-        <button type="button" onClick={() => { setFullscreen(false); setVisible(false); }}>{t("close")}</button>
+        <button type="button" onClick={rerun} title={t("rerun")}>↻</button>
+        <button type="button" onClick={() => setFullscreen((v) => !v)} title={fullscreen ? t("exitFullscreen") : t("fullscreen")}>⛶</button>
+        <button type="button" onClick={() => { setFullscreen(false); setVisible(false); }} title={t("close")}>✕</button>
       </div>
       <iframe
         key={runNonce}
