@@ -161,6 +161,7 @@ object DevToolsClient {
             try {
                 return fetchPages(candidate).also { socketName = candidate }
             } catch (e: Exception) {
+                android.util.Log.e("DevToolsClient", "连接 $candidate 失败", e)
                 errors += "${candidate}: ${e.message ?: e.javaClass.simpleName}"
             }
         }

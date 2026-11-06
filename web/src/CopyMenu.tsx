@@ -30,12 +30,36 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
+/** 当前非空文本选区的内容（已划选时）；没有选区返回空串。 */
+export function selectedText(): string {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) return "";
+  return selection.toString().trim();
+}
+
+// 全局长按撤销：消息列表可能很长，用一条 selectionchange 通知所有挂起的 useLongPress。
+const pendingCancels = new Set<() => void>();
+let watchingSelection = false;
+
+function watchSelection() {
+  if (watchingSelection || typeof document === "undefined") return;
+  watchingSelection = true;
+  document.addEventListener("selectionchange", () => {
+    if (!selectedText()) return;
+    pendingCancels.forEach((cancel) => cancel());
+  });
+}
+
 /**
  * Long-press (or right-click) detection for message bubbles. Returns handlers
  * to spread on the message root; a short drag cancels the gesture so scrolling
  * does not pop the menu.
+ *
+ * Text selection wins: as soon as the browser starts a real selection (long
+ * press on text / drag-select), the pending long-press is dropped and the
+ * native selection handles + copy menu are left alone.
  */
-export function useLongPress(onLongPress: (x: number, y: number) => void, ms = 500) {
+export function useLongPress(onLongPress: (x: number, y: number) => void, ms = 650) {
   const timer = useRef<number | null>(null);
   const origin = useRef({ x: 0, y: 0 });
 
@@ -48,14 +72,27 @@ export function useLongPress(onLongPress: (x: number, y: number) => void, ms = 5
 
   useEffect(() => clear, [clear]);
 
+  // 划选一开始就撤销待触发菜单，否则自定义菜单会盖住系统选区手柄。
+  useEffect(() => {
+    watchSelection();
+    pendingCancels.add(clear);
+    return () => {
+      pendingCancels.delete(clear);
+    };
+  }, [clear]);
+
   return {
     onPointerDown: (event: React.PointerEvent) => {
       if (event.pointerType === "mouse" && event.button !== 0) return;
+      // 已有选区：用户在调整选区或准备复制所选，不抢手势。
+      if (selectedText()) return;
       origin.current = { x: event.clientX, y: event.clientY };
       clear();
       const { clientX, clientY } = event;
       timer.current = window.setTimeout(() => {
         timer.current = null;
+        // 长按过程中已形成选区 → 交给系统选择/复制。
+        if (selectedText()) return;
         onLongPress(clientX, clientY);
       }, ms);
     },
@@ -71,6 +108,8 @@ export function useLongPress(onLongPress: (x: number, y: number) => void, ms = 5
       }
     },
     onContextMenu: (event: React.MouseEvent) => {
+      // 有选区时保留系统菜单（右键「复制」选区），不弹自定义菜单。
+      if (selectedText()) return;
       event.preventDefault();
       onLongPress(event.clientX, event.clientY);
     },
@@ -89,22 +128,49 @@ export function CopyMenu({ text, x, y, onClose }: CopyMenuProps) {
   const { t } = useI18n();
   const [state, setState] = useState<"idle" | "done" | "failed">("idle");
   const [shareFailed, setShareFailed] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const exitRef = useRef<number | null>(null);
   const nativeBridge = hasBridge();
   const left = Math.max(8, Math.min(x, window.innerWidth - 132));
   const top = Math.max(8, Math.min(y, window.innerHeight - (nativeBridge ? 92 : 54)));
 
+  // 先播退场动画，再通知父级卸载，避免菜单瞬间消失。
+  const dismiss = useCallback(() => {
+    if (closing) return;
+    setClosing(true);
+    exitRef.current = window.setTimeout(onClose, 130);
+  }, [closing, onClose]);
+
+  useEffect(() => () => {
+    if (exitRef.current !== null) window.clearTimeout(exitRef.current);
+  }, []);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") dismiss();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [dismiss]);
+
+  // 选字优先：已经存在选区（或长按过程中系统刚建立了选区）时直接收起菜单，
+  // 把复制/分享交给系统选区菜单，避免两个弹层同时出现。
+  useEffect(() => {
+    if (selectedText()) {
+      dismiss();
+      return;
+    }
+    const onSelectionChange = () => {
+      if (selectedText()) dismiss();
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  }, [dismiss]);
 
   const copy = async () => {
     const ok = await copyText(text);
     setState(ok ? "done" : "failed");
-    window.setTimeout(onClose, 700);
+    window.setTimeout(dismiss, 700);
   };
 
   const share = () => {
@@ -113,13 +179,13 @@ export function CopyMenu({ text, x, y, onClose }: CopyMenuProps) {
       window.setTimeout(() => setShareFailed(false), 1200);
       return;
     }
-    onClose();
+    dismiss();
   };
 
   return createPortal(
-    <div className="copy-backdrop" onPointerDown={onClose}>
+    <div className={`copy-backdrop${closing ? " closing" : ""}`} onPointerDown={dismiss}>
       <div
-        className="copy-menu"
+        className={`copy-menu${closing ? " closing" : ""}`}
         style={{ left, top }}
         onPointerDown={(event) => event.stopPropagation()}
         role="menu"

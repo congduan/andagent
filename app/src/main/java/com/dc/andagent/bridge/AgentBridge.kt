@@ -79,6 +79,9 @@ class AgentBridge(
     private val projectionStop: () -> String = { "ERROR: 屏幕捕获通道不可用" },
     // R39: 主题切换——WebView 把解析后的深浅色回报给原生层（背景/状态栏同步）。
     private val themeChange: (Boolean) -> Unit = {},
+    // R39 修复：系统夜间状态真值（"dark"/"light"）。WebView 的
+    // prefers-color-scheme 取自宿主主题，应用是深色主题时会恒为 dark。
+    private val systemThemeProvider: () -> String = { "light" },
     private val embeddedWebviewOpen: (String) -> String = { "ERROR: 浏览器不可用" },
     private val dbGuiOpen: (String) -> String = { "ERROR: 数据库浏览器不可用" },
     // R91.5: SSH 凭据只在原生界面录入/编辑；WebView 只能打开界面 / 看元数据 / 删除。
@@ -668,6 +671,11 @@ class AgentBridge(
     fun reportTheme(isDark: Boolean) {
         runCatching { themeChange(isDark) }
     }
+
+    /** R39 修复：系统当前深浅色（"dark"/"light"），供 Web 侧「跟随系统」取值。 */
+    @JavascriptInterface
+    fun systemTheme(): String =
+        runCatching { systemThemeProvider() }.getOrDefault("light")
 
     /** R39: 最近一次 shell_exec 的完整结果；空串表示尚未执行过。 */
     @JavascriptInterface

@@ -42,6 +42,84 @@ const DARK_THEME = {
 };
 
 const ALLOWED_TYPES = new Set(["bar", "line", "pie"]);
+const CARTESIAN_TYPES = new Set(["bar", "line"]);
+
+type LooseOption = Record<string, any>;
+
+function asList<T>(value: T | T[] | null | undefined): T[] {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+/**
+ * ECharts defaults assume a desktop canvas: `grid` keeps only 10% margins and
+ * `containLabel` is off, so on a phone-width card the axis labels (long numbers,
+ * rotated category names) and over-long legends are painted past the canvas
+ * edge and silently cut off. Normalize the model-provided option so everything
+ * stays inside the card, while still honoring explicit author settings.
+ */
+export function normalizeOption(option: EChartsCoreOption): EChartsCoreOption {
+  const opt = option as LooseOption;
+  const series = asList<LooseOption>(opt.series);
+  const titles = asList<LooseOption>(opt.title);
+  const legends = asList<LooseOption>(opt.legend);
+  const hasCartesian = series.some((s) => CARTESIAN_TYPES.has(String(s?.type)));
+  const hasPie = series.some((s) => s?.type === "pie");
+
+  // Space taken by title/legend above the plot area; grid.top must clear it,
+  // otherwise the plot starts underneath them.
+  const headerHeight = 8 + (titles.length ? 30 : 0) + (legends.length ? 26 : 0);
+
+  for (const title of titles) {
+    if (title.top === undefined) title.top = 8;
+    if (title.left === undefined && title.right === undefined) title.left = "center";
+  }
+
+  for (const legend of legends) {
+    // Horizontal legends overflow the card width silently; scroll keeps every
+    // entry reachable instead of cropping the tail.
+    if (legend.type === undefined) legend.type = "scroll";
+    if (legend.top === undefined && legend.bottom === undefined && legend.orient !== "vertical") {
+      legend.top = titles.length ? 32 : 4;
+    }
+    if (legend.itemGap === undefined) legend.itemGap = 12;
+  }
+
+  if (hasCartesian) {
+    const grids = opt.grid === undefined ? [{}] : asList<LooseOption>(opt.grid);
+    opt.grid = grids.map((grid) => ({
+      left: 10,
+      right: 12,
+      top: headerHeight,
+      bottom: 8,
+      ...grid,
+      // Reserve room for axis labels inside the canvas instead of letting them
+      // spill over the edge.
+      containLabel: true,
+    }));
+    for (const axis of [...asList<LooseOption>(opt.xAxis), ...asList<LooseOption>(opt.yAxis)]) {
+      if (!axis || typeof axis !== "object") continue;
+      if (axis.type !== "category" && axis.data === undefined) continue;
+      const axisLabel = axis.axisLabel ?? (axis.axisLabel = {});
+      if (axisLabel.hideOverlap === undefined) axisLabel.hideOverlap = true;
+    }
+  }
+
+  if (hasPie) {
+    for (const item of series) {
+      if (item?.type !== "pie") continue;
+      // Keep the pie clear of the legend/title band so neither is covered.
+      if (legends.length) {
+        if (item.center === undefined) item.center = ["50%", "56%"];
+        if (item.radius === undefined) item.radius = ["0%", "58%"];
+      } else if (item.radius === undefined) {
+        item.radius = ["0%", "68%"];
+      }
+    }
+  }
+
+  return option;
+}
 
 function parseOption(code: string): EChartsCoreOption {
   let parsed: unknown;
@@ -92,7 +170,7 @@ export function ChartCard({ code }: { code: string }) {
     let chart: echarts.ECharts | null = null;
     try {
       chart = echarts.init(host, DARK_THEME, { renderer: "canvas" });
-      chart.setOption(option, true);
+      chart.setOption(normalizeOption(option), true);
     } catch (e) {
       chart?.dispose();
       setError(`${t("chartRenderFailed")}：${e instanceof Error ? e.message : String(e)}`);

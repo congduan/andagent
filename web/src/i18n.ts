@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 export type LanguageMode = "system" | "zh" | "en";
 const KEY = "andagent.language";
 const zh = {
-  connectModel: "连接大模型", modelLater: "稍后", modelSetupSubtitle: "选择服务商，连接你自己的模型",
+  connectModel: "连接大模型", modelLater: "稍后",
   modelSetupHeading: "先连接一个大模型", modelSetupNote: "AndAgent 使用你选择的模型服务。主模型需要支持工具调用；API Key 保存在本机，对话直接发给所填地址。测试会发送一次简短请求，可能产生少量费用。",
   modelProvider: "模型服务商", modelCustom: "自定义 · OpenAI 兼容", modelCustomHint: "任意 OpenAI 兼容端点", modelOptionalKey: "API Key（可选）",
   providerGroupCn: "国内服务商", providerGroupGlobal: "海外服务商", providerGroupLocal: "本地 / 自建",
@@ -23,7 +23,10 @@ const zh = {
   chinese: "中文", english: "English", about: "关于 AndAgent", version: "版本",
   built: "构建时间", repository: "GitHub 仓库", license: "开源协议", notices: "开源组件协议",
   star: "喜欢 AndAgent？在 GitHub 点 Star", themeNote: "夜间为默认；跟随系统时自动随系统深浅色切换。",
-  settingsNote: "模型通过 Kotlin 原生网络层代理，不受浏览器 CORS 限制。",
+  aboutTagline: "本地优先的端侧智能体：模型配置、记忆与会话都留在这台手机上。",
+  aboutAppInfo: "应用信息", aboutLinks: "资源与链接",
+  details: "详情", status: "状态", memoryEmpty: "还没有记忆。", cronEmpty: "还没有定时任务。",
+
   baseUrlHint: "OpenAI 兼容端点，不要带 /chat/completions", apiKeyPlaceholder: "粘贴 API Key",
   apiKeyHint: "优先从本机 Download/config.json 读取，不会写入代码或 web 资产",
   modelId: "模型 ID", systemPromptPlaceholder: "定义助手的身份与行为",
@@ -112,6 +115,10 @@ const zh = {
   switchLight: "切换到日间模式",
   switchDark: "切换到夜间模式",
   noSessions: "还没有历史会话",
+  msgNavTitle: "对话记录",
+  msgNavOpen: "快速查看输入过的每条消息",
+  msgNavCount: "{count} 条",
+  msgNavJump: "跳到第 {index} 条消息",
   groupToday: "今天",
   groupYesterday: "昨天",
   groupLast7Days: "近 7 天",
@@ -390,7 +397,7 @@ const zh = {
 } as const;
 type Key = keyof typeof zh;
 const en: Record<Key, string> = {
-  connectModel: "Connect a model", modelLater: "Later", modelSetupSubtitle: "Choose a provider and connect your model",
+  connectModel: "Connect a model", modelLater: "Later",
   modelSetupHeading: "Connect your first model", modelSetupNote: "AndAgent uses the provider you choose. The main model needs tool calling. Your API key stays on this device; chats go directly to the entered endpoint. Testing sends a short request and may incur a small charge.",
   modelProvider: "Model provider", modelCustom: "Custom · OpenAI compatible", modelCustomHint: "Any OpenAI-compatible endpoint", modelOptionalKey: "API Key (optional)",
   providerGroupCn: "China providers", providerGroupGlobal: "Global providers", providerGroupLocal: "Local / self-hosted",
@@ -410,7 +417,10 @@ const en: Record<Key, string> = {
   chinese: "中文", english: "English", about: "About AndAgent", version: "Version",
   built: "Build time", repository: "GitHub repository", license: "Open-source license", notices: "Third-party notices",
   star: "Enjoy AndAgent? Star it on GitHub", themeNote: "Dark is the default; System follows your device theme.",
-  settingsNote: "Model requests use the Kotlin network proxy, so WebView CORS does not apply.",
+  aboutTagline: "A local-first on-device agent: model settings, memory and chats stay on this phone.",
+  aboutAppInfo: "App info", aboutLinks: "Resources & links",
+  details: "Details", status: "Status", memoryEmpty: "No memories yet.", cronEmpty: "No scheduled tasks yet.",
+
   baseUrlHint: "OpenAI-compatible endpoint; omit /chat/completions", apiKeyPlaceholder: "Paste API Key",
   apiKeyHint: "Loaded from local Download/config.json first; never bundled into source or web assets",
   modelId: "Model ID", systemPromptPlaceholder: "Define the assistant's identity and behavior",
@@ -499,6 +509,10 @@ const en: Record<Key, string> = {
   switchLight: "Switch to light mode",
   switchDark: "Switch to dark mode",
   noSessions: "No past conversations",
+  msgNavTitle: "Your messages",
+  msgNavOpen: "Quickly browse every message you sent",
+  msgNavCount: "{count}",
+  msgNavJump: "Jump to message {index}",
   groupToday: "Today",
   groupYesterday: "Yesterday",
   groupLast7Days: "Last 7 days",

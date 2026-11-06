@@ -133,8 +133,13 @@ class UiCommands(
                     or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                 )
         } else {
+            // 退出全屏只恢复状态栏/导航栏，保留宿主 Activity 的沉浸式基线
+            // （内容仍铺到状态栏之后）；否则系统栏会在顶栏上方重新压出一条
+            // 与页面不同色的色带，而 --safe-top 的避让高度还留着。
             @Suppress("DEPRECATION")
-            decor.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+            decor.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                )
         }
         ok("immersive", "enabled" to enabled)
     }

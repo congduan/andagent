@@ -25,7 +25,7 @@
 | 7 | NFC HCE（可选，设备作卡片模拟）| ✅ | AndagentHceService（HostApduService）+ AID F0010203040506 + `nfc_hce_status` |
 | 8 | 对话流内嵌 WebView 打开网站：新增 `web_embed(uri)` 工具——WebView 卡片渲染在消息流里（复用主 WebView 的 bridge 注入，卡片内可关/可全屏） | ✅ | WebViewCard iframe 卡片（刷新/全屏/独立窗口/关闭）+ 原生 Dialog 兜底 |
 | 9 | 对话流富数据渲染扩展：a) 相册照片网格缩略图（album_photos 的 base64 已有，补渲染）；b) 表格/键值卡片统一组件；c) JSON tree 视图；d) 地图卡片（location_get 的 geo 坐标渲染静态图或链接） | ✅ | photos/kv/table/json-tree/geo 围栏全部落地（TableCard/JsonTreeCard 在 RichCards） |
-| 10 | MAX_TOOL_ROUNDS=200（已改，随下版发出） | ✅ |
+| 10 | MAX_TOOL_ROUNDS=200（已改，随下版发出） | ✅ |  |
 | 10a | **对话流音频/视频播放**：```audio/```video 围栏 + MediaCard 组件 + 工具结果按扩展名内嵌播放器 + WebViewAssetLoader /local/ 媒体映射 | ✅ | 含 Range/206 与路径穿越防护 |
 | 10b | **SQLite 数据库工具**（建库/建表/CRUD/查询 + andagent.db JS API） | ✅ | db_* 七工具 + andagent.db() + db_gui |
 | 10c | **外部数据访问**：ContentProvider（联系人/日历/短信 provider 统一读）、FileProvider（分享文件给其他 app）、SAF DocumentsTree 持久授权、MediaStore 全集合（音/视/文）查询 | ✅ | contacts_search / sms_read / provider_query（只读） / file_share（FileProvider） / saf_tree_pick/list/read/write（持久授权） / media_library（audio/video/files） |
@@ -64,39 +64,41 @@ web 化重构（pi+assistant-ui）/ 日历闹钟剪贴板通知 / ECharts / Shiz
 - v0.17.0（R12-R23）：系统 API 全覆盖 + 外部数据 + ZIP/文件管理 + LUT + 邮件 + 商店 + HCE + 深链 + Canvas/Shader 围栏（累计 139 工具）
 
 ## 🟢 R12+ 战役：Android 系统 API 全覆盖（简报就绪，串行派 Codex）
-| 刀 | 内容 | 工具数 |
-|---|---|---|
-| R12 | 连接与媒体：telephony_info/data_usage/audio_state/audio_set_volume/media_library/ringtone_set/wallpaper_set/vibrate | ✅ +8 |
-| R13 | 设备管理：torch/screen_state/brightness_set/volume_dnd/installed_app_details/usage_stats/biometric_check | ✅ +7 |
-| R14 | 自动化效率：alarm_wait/countdown/calendar_reminder_check/hotspot/airplane/tts/screenshot_quick | ✅ +7 |
-（R9 SQLite+媒体播放 ✅ → R10.5 脚本库 ✅ → R10.6 DB GUI ✅ → R10.7 QuickJS fs API ✅ → R10 外部数据 ✅ → R11 Scriptable UI → R12-R14 系统API ✅ → R15 图片编辑 ✅）
-| R10.6 | 数据库 GUI 浏览器（sql.js + Grid.js 开源方案） | ✅ +1 |
-| R10.7 | QuickJS 原生 fs API：andagent.fs.read/write/list/exists（沙箱限定 scripts/+data/ 两根）——Scriptable 脚本自有数据存储 | ✅ |
-| R15 | 图片编辑套件（crop/rotate/color/convolve/border/watermark/collage） | ✅ +4 |
-| R16 | ZIP 套件：zip_create/list/extract/add/test，平台 java.util.zip 实现，含 zip-slip 防护；加密 ZIP 检测后明确报错（zip4j 加密支持未引入，离线无依赖缓存） | ✅ +5 |
-| R17 | 文件管理补全：file_copy/move/delete/rename/mkdir/hash/info | ✅ +7 |
-| R18 | LUT 滤镜：.cube 解析+三线性插值+强度混合，内置 warm/cool/vintage/cinematic/bw 预置，接 R15 管线（image_edit op=lut） | ✅ |
-| R19 | 视频剪辑：ffmpeg-kit 静态链接（LGPL min 变体），video_clip/concat/filter 三工具 | BLOCKED(需要 ffmpeg-kit .aar 外部二进制，离线环境无法引入；待真机环境补齐) |
-| R20 | 平台桥接大扩展（八域 20+ 方法） | ✅ b127aeb + 收口 0.28.1（onMain 超时 CAS 竞态修复 / share 截断 truncated 标记 / parseUiResult 严格协议校验 / VIBRATE 去重）+ R58 竞态单测收口（UiCommandsRaceTest 三路径：cancelled/started/started-then-still-slow，169 tests 绿，8ca4784+aa95cb3） |
-| R21 | Shader 实时渲染围栏（WebGL2，Shadertoy 风格 iTime/iResolution） | ✅ 纯前端 |
-| R22 | 邮件发送：email_send（SMTP SSL/STARTTLS+AUTH+HTML+附件）/email_verify/email_draft | ✅ +3 |
-| R23 | Canvas 围栏（沙箱 iframe 2D 绘制，静态+动画） | ✅ 纯前端 |
+
+> 历史进度链：R9 SQLite+媒体播放 ✅ → R10.5 脚本库 ✅ → R10.6 DB GUI ✅ → R10.7 QuickJS fs API ✅ → R10 外部数据 ✅ → R11 Scriptable UI → R12-R14 系统API ✅ → R15 图片编辑 ✅
+
+| 刀 | 内容 | 工具数 | 备注 |
+|---|---|---|---|
+| R12 | 连接与媒体：telephony_info/data_usage/audio_state/audio_set_volume/media_library/ringtone_set/wallpaper_set/vibrate | ✅ +8 |  |
+| R13 | 设备管理：torch/screen_state/brightness_set/volume_dnd/installed_app_details/usage_stats/biometric_check | ✅ +7 |  |
+| R14 | 自动化效率：alarm_wait/countdown/calendar_reminder_check/hotspot/airplane/tts/screenshot_quick | ✅ +7 |  |
+| R10.6 | 数据库 GUI 浏览器（sql.js + Grid.js 开源方案） | ✅ +1 |  |
+| R10.7 | QuickJS 原生 fs API：andagent.fs.read/write/list/exists（沙箱限定 scripts/+data/ 两根）——Scriptable 脚本自有数据存储 | ✅ |  |
+| R15 | 图片编辑套件（crop/rotate/color/convolve/border/watermark/collage） | ✅ +4 |  |
+| R16 | ZIP 套件：zip_create/list/extract/add/test，平台 java.util.zip 实现，含 zip-slip 防护；加密 ZIP 检测后明确报错（zip4j 加密支持未引入，离线无依赖缓存） | ✅ +5 |  |
+| R17 | 文件管理补全：file_copy/move/delete/rename/mkdir/hash/info | ✅ +7 |  |
+| R18 | LUT 滤镜：.cube 解析+三线性插值+强度混合，内置 warm/cool/vintage/cinematic/bw 预置，接 R15 管线（image_edit op=lut） | ✅ |  |
+| R19 | 视频剪辑：ffmpeg-kit 静态链接（LGPL min 变体），video_clip/concat/filter 三工具 | BLOCKED(需要 ffmpeg-kit .aar 外部二进制，离线环境无法引入；待真机环境补齐) |  |
+| R20 | 平台桥接大扩展（八域 20+ 方法） | ✅ b127aeb + 收口 0.28.1（onMain 超时 CAS 竞态修复 / share 截断 truncated 标记 / parseUiResult 严格协议校验 / VIBRATE 去重）+ R58 竞态单测收口（UiCommandsRaceTest 三路径：cancelled/started/started-then-still-slow，169 tests 绿，8ca4784+aa95cb3） |  |
+| R21 | Shader 实时渲染围栏（WebGL2，Shadertoy 风格 iTime/iResolution） | ✅ 纯前端 |  |
+| R22 | 邮件发送：email_send（SMTP SSL/STARTTLS+AUTH+HTML+附件）/email_verify/email_draft | ✅ +3 |  |
+| R23 | Canvas 围栏（沙箱 iframe 2D 绘制，静态+动画） | ✅ 纯前端 |  |
 | R24 | 存储底座：KV 工具族 + `andagent.kv` JS API + 前端会话迁移（见 10d；依赖 R10.7 `data/` 根与 R20 平台桥接） | ✅ +6 | R51 内核/工具/JS API，R53 前端会话 KV 迁移（10d-5 备份导出仍待） |
-| R26 | 网络搜索：web_search（Bing HTML 主引擎 + DDG IA 摘要，零 key）+ web_read 网页正文；Bing fixture 单测 | ✅ +2 |
-| R28 | MediaProjection 截屏/录屏：consent trampoline + FGS(mediaProjection) + 路由投影→Shizuku→授权弹窗；screen_capture/screen_record/screen_record_stop 全接 `ensureCaptureChannel`；ProjectionRoutingTest 6 用例 | ✅ 16a00a5 + 收口提交 |
-| R29 | Mermaid+KaTeX 对话流渲染（MermaidCard 错误卡片 + remark-math/rehype-katex，vitest 2 用例）+ dbgui 移动端适配（@media≤719px 触控布局） | ✅ 16a00a5 + 收口提交 |
+| R26 | 网络搜索：web_search（Bing HTML 主引擎 + DDG IA 摘要，零 key）+ web_read 网页正文；Bing fixture 单测 | ✅ +2 |  |
+| R28 | MediaProjection 截屏/录屏：consent trampoline + FGS(mediaProjection) + 路由投影→Shizuku→授权弹窗；screen_capture/screen_record/screen_record_stop 全接 `ensureCaptureChannel`；ProjectionRoutingTest 6 用例 | ✅ 16a00a5 + 收口提交 |  |
+| R29 | Mermaid+KaTeX 对话流渲染（MermaidCard 错误卡片 + remark-math/rehype-katex，vitest 2 用例）+ dbgui 移动端适配（@media≤719px 触控布局） | ✅ 16a00a5 + 收口提交 |  |
 | R35 | 能力补口八件套：联系人新建 / 通话记录只读 / 应用卸载禁用 / APK 提取 / 二维码生成识别 / 传感器录制 / 文件加密。ZXing core 3.5.3 纯 Java jar 本地 vendored（零权限、全离线、无 GMS）；file_encrypt 用 AES-256-GCM + PBKDF2；app_uninstall 包名注入守卫 + 系统组件/自身保护名单 | ✅ +8 | R35Tools.kt；R35CodecTest 覆盖 AppGuard/SensorCsv/QrCodec roundtrip/FileCrypto roundtrip；web Schema 已对齐；构建绿，真机未测 |
 | R66 | 红外遥控：ir_available/ir_send_raw/ir_send_pronto（ConsumerIrManager，Pronto Hex 解析，TRANSMIT_IR 权限） | ✅ +3 | e5247bd + 5 个 fixup（单测 fixture 修正），v0.28.9/code 45 |
 | R67 | 系统级事件监听：media_sessions / media_events_on/off/read / media_send_key（耳机按键模拟，AudioManager.dispatchMediaKeyEvent）/ notif_events_on/off/read / notif_permission（NotificationListenerService，需系统设置授权）/ audio_events_on/off/read（AudioDeviceCallback 零权限）。三通道事件写 KV（media_events/notif_events/audio_events，latest+history，100 条/60KB 上限），供 live 围栏轮询触发自动化；前台服务可从通知一键停止；HARDWARE_GUIDE 双语引导 | ✅ +12 | 35944db（注：该提交信息误标为 airpods scan fix，系并行会话 git add -A 混入所致，实际含 R65 修正 + R66 fixup5 + R67 全部内容，远端已核实为该 HEAD），v0.28.10/code 46，主控复测 226 单测全绿 + web 59 测试全绿；真机待测项：通知授权流程/媒体播放暂停事件/耳机插拔事件（Codex 战报原文 /tmp/andagent-r67-run.md） |
-|  | **当前累计 151 工具（v0.28.10，R67 系统事件监听收口）** |  |
+|  | **当前累计 151 工具（v0.28.10，R67 系统事件监听收口）** |  |  |
 
 ## 🔵 R70+ 能力扩展战役（2026-11-06 用户确认，Codex 依次推进；R69 已被并行 camera_info 修复占用）
 
 > 排序即派工顺序，每刀走「勘察→简报→派工→主控独立复测→发包」循环；前置依赖已在备注标明。
 > **当前优先（2026-11-07 用户钦定插队）：R91 SSH 远程运维刀先于 R84-R90 派工**，其余按编号顺序。
 
-| # | 刀 | 内容 | 状态 | 备注 |
-|---|---|---|---|---|
+| # | 刀 / 内容 | 状态 | 备注 |
+|---|---|---|---|
 | R70 | **桌面快捷方式（一键任务图标）**：shortcut_create（ShortcutManagerCompat.requestPinShortcut，icon 可选 emoji 文字生成/内置图标，deeplink `andagent://send?prompt=..&auto=1` 复用已落地）+ shortcut_list + shortcut_delete（删除用 disable+update 或移除 id 追踪表）+ i18n 引导 | ✅ | 5231e4b 已实现 shortcut 三工具并入库（2026-11-06）；真机待测：launcher 固定确认弹窗、emoji 图标渲染、deeplink 自动发送 |
 | R71 | 无障碍服务自动化（AccessibilityService：节点查找按 id/text/描述点击、读屏、滚动、返回手势模拟；targetSdk28 需用户系统设置手动开启） | TODO | 大刀；从「盲点坐标」升级为「控件级操控」 |
 | R72 | **相机三件套**（扩容）：camera_capture（camera2/ImageReader 静态拍照：前后置/分辨率/闪光/JPEG 落相册）/ camera_record（MediaRecorder 相机录像，区别于 screen_record 录屏）/ camera_scan（ZXing 连续取景扫码，analysis 用例复用 vendored core） | TODO | R68 camera_info 已落地作前置 |

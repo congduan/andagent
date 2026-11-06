@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { DEFAULT_SETTINGS, persistSettings } from "./bridge";
@@ -26,7 +26,8 @@ describe("startup model setup", () => {
     expect(screen.getByRole("dialog", { name: "连接大模型" })).toBeTruthy();
     expect(needsModelSetup(DEFAULT_SETTINGS)).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "稍后" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
+    // 关闭后先播退场动画再卸载，这里等它真正消失。
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(needsModelSetup(DEFAULT_SETTINGS)).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "去配置" }));
     expect(screen.getByRole("dialog", { name: "模型配置" })).toBeTruthy();

@@ -3,6 +3,7 @@ import { persistSettings, type Settings } from "./bridge";
 import { useI18n } from "./i18n";
 import { isValidModelUrl, listModels, normalizeModelUrl, providerForUrl, testModel } from "./modelConfig";
 import { ModelFields } from "./ModelFields";
+import { SettingsHead } from "./SettingsHead";
 import { showError, showInfo } from "./toast";
 
 interface Props {
@@ -10,9 +11,11 @@ interface Props {
   onboarding?: boolean;
   onClose: () => void;
   onSave: (settings: Settings) => void;
+  /** 父级正在播放退场动画。 */
+  closing?: boolean;
 }
 
-export function ModelSetup({ settings, onboarding, onClose, onSave }: Props) {
+export function ModelSetup({ settings, onboarding, onClose, onSave, closing }: Props) {
   const { t } = useI18n();
   const [draft, setDraft] = useState(settings);
   const [busy, setBusy] = useState(false);
@@ -67,15 +70,14 @@ export function ModelSetup({ settings, onboarding, onClose, onSave }: Props) {
     }
   };
 
-  return <div className="settings-overlay model-setup-overlay" role="dialog" aria-modal="true" aria-labelledby="model-setup-title">
+  return <div className={`settings-overlay model-setup-overlay${closing ? " closing" : ""}`} role="dialog" aria-modal="true" aria-labelledby="model-setup-title">
     <section className="settings-panel model-setup-panel">
-      <header className="settings-subpage-head model-setup-head">
-        <button type="button" className="icon-btn" onClick={onClose} aria-label={t(onboarding ? "modelLater" : "back")}>←</button>
-        <div className="model-setup-head-text">
-          <h2 id="model-setup-title">{t(onboarding ? "connectModel" : "modelSettings")}</h2>
-          <p>{t("modelSetupSubtitle")}</p>
-        </div>
-      </header>
+      <SettingsHead
+        id="model-setup-title"
+        title={t(onboarding ? "connectModel" : "modelSettings")}
+        backLabel={t(onboarding ? "modelLater" : "back")}
+        onBack={onClose}
+      />
       <div className="settings-body">
         <div className="model-intro"><h3>{t(onboarding ? "modelSetupHeading" : "connectModel")}</h3><p>{t("modelSetupNote")}</p></div>
         <ModelFields settings={draft} onChange={update} disabled={busy} />

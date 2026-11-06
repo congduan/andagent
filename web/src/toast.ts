@@ -26,6 +26,11 @@ let host: HTMLDivElement | null = null;
 let seq = 0;
 const timers = new Map<number, number>();
 
+/** 上滑超过该距离即消除；小于它则回弹。 */
+const SWIPE_DISMISS_PX = 48;
+/** 判定手势方向前允许的抖动。 */
+const SWIPE_SLOP_PX = 8;
+
 function ensureHost(): HTMLDivElement {
   if (host?.isConnected) return host;
   host = document.createElement("div");
@@ -43,16 +48,118 @@ function removeNow(el: HTMLElement, id: number): void {
   el.remove();
 }
 
-export function dismissToast(id: number): void {
+function clearTimer(id: number): void {
   const timer = timers.get(id);
   if (timer !== undefined) {
     window.clearTimeout(timer);
     timers.delete(id);
   }
+}
+
+export function dismissToast(id: number): void {
+  clearTimer(id);
   const el = host?.querySelector<HTMLElement>(`[data-toast-id="${id}"]`);
   if (!el) return;
   el.classList.add("toast-out");
   window.setTimeout(() => el.remove(), 180);
+}
+
+/** 跟手滑出：不再走 toast-out（那只上移 8px），直接推出屏幕。 */
+function swipeAway(el: HTMLElement, id: number): void {
+  clearTimer(id);
+  el.style.transition = "transform 0.18s ease-out, opacity 0.18s ease-out";
+  el.style.transform = "translateY(-140%)";
+  el.style.opacity = "0";
+  window.setTimeout(() => el.remove(), 190);
+}
+
+/**
+ * 上滑消除：拖动时跟手位移（只允许向上），松手时超过阈值则滑出，
+ * 否则回弹。横向手势（文本选择、外部滑动手势）直接放弃，交给默认行为。
+ */
+function attachSwipe(el: HTMLElement, id: number): void {
+  let startX = 0;
+  let startY = 0;
+  let offsetY = 0;
+  let tracking = false;
+  let swiped = false;
+  let pointerId: number | null = null;
+
+  const resetStyles = () => {
+    el.style.transition = "";
+    el.style.transform = "";
+    el.style.opacity = "";
+  };
+
+  el.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    if (pointerId !== null) return;
+    pointerId = event.pointerId;
+    startX = event.clientX;
+    startY = event.clientY;
+    offsetY = 0;
+    tracking = true;
+    swiped = false;
+  });
+
+  el.addEventListener("pointermove", (event) => {
+    if (!tracking || event.pointerId !== pointerId) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    if (!swiped) {
+      if (Math.abs(dx) < SWIPE_SLOP_PX && Math.abs(dy) < SWIPE_SLOP_PX) return;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        tracking = false;
+        pointerId = null;
+        return;
+      }
+      swiped = true;
+      // 拖拽期间交给 inline transform，避免入场动画覆盖跟手位移。
+      el.style.animation = "none";
+      el.setPointerCapture(event.pointerId);
+    }
+    event.preventDefault();
+    offsetY = Math.min(0, dy);
+    el.style.transition = "none";
+    el.style.transform = `translateY(${offsetY}px)`;
+    el.style.opacity = String(Math.max(0.3, 1 + offsetY / 160));
+  });
+
+  const finish = (event: PointerEvent) => {
+    if (!tracking || event.pointerId !== pointerId) return;
+    tracking = false;
+    const distance = offsetY;
+    if (pointerId !== null && el.hasPointerCapture(pointerId)) {
+      el.releasePointerCapture(pointerId);
+    }
+    pointerId = null;
+    if (!swiped) return;
+    if (distance <= -SWIPE_DISMISS_PX) {
+      swipeAway(el, id);
+      return;
+    }
+    el.style.transition = "transform 0.16s ease-out, opacity 0.16s ease-out";
+    el.style.transform = "";
+    el.style.opacity = "";
+    window.setTimeout(() => {
+      if (!tracking) resetStyles();
+    }, 180);
+  };
+
+  el.addEventListener("pointerup", finish);
+  el.addEventListener("pointercancel", finish);
+
+  // 拖过之后浏览器仍会补发 click，拦掉以免回弹后又被当成点击关闭。
+  el.addEventListener(
+    "click",
+    (event) => {
+      if (!swiped) return;
+      swiped = false;
+      event.stopPropagation();
+      event.preventDefault();
+    },
+    true,
+  );
 }
 
 /** 显示一条顶部 toast，返回 id（重复内容会复用同一条并重新计时）。 */
@@ -69,6 +176,10 @@ export function showToast(message: string, options: ToastOptions = {}): number {
   if (existing) {
     const id = Number(existing.dataset.toastId);
     existing.classList.remove("toast-out");
+    existing.style.transition = "";
+    existing.style.transform = "";
+    existing.style.opacity = "";
+    existing.style.animation = "";
     node.appendChild(existing);
     const prev = timers.get(id);
     if (prev !== undefined) window.clearTimeout(prev);
@@ -106,6 +217,7 @@ export function showToast(message: string, options: ToastOptions = {}): number {
   });
 
   el.append(icon, body, close);
+  attachSwipe(el, id);
   el.addEventListener("click", () => dismissToast(id));
   node.appendChild(el);
 

@@ -2,6 +2,7 @@ import { useI18n } from "./i18n";
 import { useEffect, useMemo, useState } from "react";
 import type { ToolCallMessagePartProps } from "@assistant-ui/react";
 import { cancelToolByCallId } from "./bridge";
+import { selectedText } from "./CopyMenu";
 import { WebViewCard } from "./WebViewCard";
 import { MediaCard, mediaFromResult } from "./MediaCard";
 import { PhotosCard } from "./RichCards";
@@ -199,7 +200,15 @@ function JsonNode({ label, value, depth = 0 }: { label: string; value: unknown; 
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value);
     return <div className="json-node" style={{ marginLeft: depth ? 12 : 0 }}>
-      <button type="button" onClick={() => setOpen(!open)}>{open ? "▾" : "▸"} {label} <span>{Array.isArray(value) ? `[${entries.length}]` : `{${entries.length}}`}</span></button>
+      <button
+        type="button"
+        onClick={() => {
+          if (selectedText()) return;
+          setOpen(!open);
+        }}
+      >
+        {open ? "▾" : "▸"} {label} <span>{Array.isArray(value) ? `[${entries.length}]` : `{${entries.length}}`}</span>
+      </button>
       {open && entries.map(([key, child]) => <JsonNode key={key} label={key} value={child} depth={depth + 1} />)}
     </div>;
   }
@@ -254,7 +263,15 @@ export function ToolCard(props: ToolCallMessagePartProps) {
         meta.destructive ? " tool-destructive" : ""
       }`}
     >
-      <button type="button" className="tool-summary" onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className="tool-summary"
+        onClick={() => {
+          // 划选标题/预览文字时不要误触折叠。
+          if (selectedText()) return;
+          setOpen((v) => !v);
+        }}
+      >
         <span className="tool-icon" aria-hidden="true">
           {meta.icon}
         </span>
@@ -307,48 +324,51 @@ export function ToolCard(props: ToolCallMessagePartProps) {
       {media && <MediaCard kind={media.kind} uri={media.uri} />}
       {captureImage && <div className="tool-image-comparison">{beforeImage && <figure><img src={beforeImage} alt={t("beforeEdit")} /><figcaption>{t("beforeEdit")}</figcaption></figure>}<figure><img src={captureImage} alt={t("afterEdit")} /><figcaption>{beforeImage ? t("afterEdit") : t("imagePreview")}</figcaption></figure></div>}
 
-      {open && (
-        <div className="tool-body">
-          <div className="tool-section">
-            <div className="tool-label">{t("arguments")}</div>
-            <pre className="tool-pre">{formatArgs(props.args, t("noArgs"))}</pre>
-          </div>
-          {!running && (
+      {/* 常驻挂载 + 网格行高过渡：详情展开/收起是滑动而不是瞬断。 */}
+      <div className={`tool-body-wrap${open ? " open" : ""}`} aria-hidden={!open}>
+        <div className="tool-body-inner">
+          <div className="tool-body">
             <div className="tool-section">
-              <div className="tool-label">
-                {t("result")}{formatted.json ? " · JSON" : ""}
-                {canFold ? ` · ${lines.length} ${t("rows")}` : ""}
-                <button
-                  type="button"
-                  className="tool-copy"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(raw);
-                      setCopied(true);
-                      window.setTimeout(() => setCopied(false), 1400);
-                    } catch {
-                      /* clipboard unavailable */
-                    }
-                  }}
-                >
-                  {copied ? t("copied") : t("copy")}
-                </button>
-              </div>
-              {formatted.json && parsed !== null && <details className="json-tree"><summary>{t("treeView")}</summary><JsonNode label="result" value={parsed} /></details>}
-              <pre className="tool-pre tool-result">{captureImage ? t("screenshotSaved") : shown}</pre>
-              {canFold && (
-                <button
-                  type="button"
-                  className="tool-expand"
-                  onClick={() => setExpanded((v) => !v)}
-                >
-                  {expanded ? t("collapse") : t("expandMore", { count: lines.length - COLLAPSE_LINES })}
-                </button>
-              )}
+              <div className="tool-label">{t("arguments")}</div>
+              <pre className="tool-pre">{formatArgs(props.args, t("noArgs"))}</pre>
             </div>
-          )}
+            {!running && (
+              <div className="tool-section">
+                <div className="tool-label">
+                  {t("result")}{formatted.json ? " · JSON" : ""}
+                  {canFold ? ` · ${lines.length} ${t("rows")}` : ""}
+                  <button
+                    type="button"
+                    className="tool-copy"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(raw);
+                        setCopied(true);
+                        window.setTimeout(() => setCopied(false), 1400);
+                      } catch {
+                        /* clipboard unavailable */
+                      }
+                    }}
+                  >
+                    {copied ? t("copied") : t("copy")}
+                  </button>
+                </div>
+                {formatted.json && parsed !== null && <details className="json-tree"><summary>{t("treeView")}</summary><JsonNode label="result" value={parsed} /></details>}
+                <pre className="tool-pre tool-result">{captureImage ? t("screenshotSaved") : shown}</pre>
+                {canFold && (
+                  <button
+                    type="button"
+                    className="tool-expand"
+                    onClick={() => setExpanded((v) => !v)}
+                  >
+                    {expanded ? t("collapse") : t("expandMore", { count: lines.length - COLLAPSE_LINES })}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

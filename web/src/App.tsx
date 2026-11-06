@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -24,11 +24,12 @@ import {
   type DeeplinkDetail,
   type Settings,
 } from "./bridge";
-import { CopyMenu, useLongPress } from "./CopyMenu";
+import { CopyMenu, selectedText, useLongPress } from "./CopyMenu";
 import { Drawer } from "./Drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { conversationMarkdown } from "./exportConversation";
 import { MarkdownText } from "./Markdown";
+import { MessageNav, type MessageNavItem } from "./MessageNav";
 import { SettingsPanel, type SettingsPage } from "./Settings";
 import { ModelSetup } from "./ModelSetup";
 import { dismissModelSetup, isModelConfigured, needsModelSetup } from "./modelConfig";
@@ -37,6 +38,7 @@ import { ToolCard } from "./ToolCard";
 import { fmtTokens } from "./usage";
 import { useI18n } from "./i18n";
 import { showError, showSuccess } from "./toast";
+import { usePresence } from "./usePresence";
 
 /** metadata.custom 透传的每条消息消耗（agent.ts toUiMessages 写入）。 */
 interface MessageUsageMeta {
@@ -131,10 +133,12 @@ function UserText({ text }: TextMessagePartProps) {
 
 function UserMessage() {
   const text = useMessageText();
+  const messageId = useAuiState((state) => state.message.id);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const longPress = useLongPress((x, y) => setMenu({ x, y }));
   return (
-    <MessagePrimitive.Root className="msg msg-user" {...longPress}>
+    // id 供「对话记录」快捷导航定位（MessageNav 用 msg-<id> 查找节点）。
+    <MessagePrimitive.Root id={`msg-${messageId}`} className="msg msg-user" {...longPress}>
       <div className="user-bubble">
         <MessagePrimitive.Parts components={{ Text: UserText }} />
       </div>
@@ -166,16 +170,21 @@ function AssistantReasoning(props: {
       <button
         type="button"
         className="thinking-toggle"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          // 划选标题文字时不要误触折叠。
+          if (selectedText()) return;
+          setOpen((v) => !v);
+        }}
         aria-expanded={open || running}
       >
-        <span className="thinking-caret" aria-hidden="true">
-          {open || running ? "▾" : "▸"}
+        <span className={`thinking-caret${open || running ? " open" : ""}`} aria-hidden="true">
+          ▸
         </span>
         {running ? t("thinkingNow") : t("thinking")}
       </button>
-      {(open || running) && (
-        <div className="thinking-body-wrap">
+      {/* 常驻挂载 + 高度过渡：折叠/展开不再瞬间跳变。 */}
+      <div className={`thinking-body-wrap${open || running ? " open" : ""}`} aria-hidden={!(open || running)}>
+        <div className="thinking-body-inner">
           <div
             className="thinking-body"
             ref={bodyRef}
@@ -200,14 +209,29 @@ function AssistantReasoning(props: {
             {copied ? t("copied") : t("copy")}
           </button>
         </div>
-      )}
+      </div>
     </div>
+  );
+}
+
+/** 是否已收到可见内容（文本 / 思考 / 工具调用）；都没有说明还在等首包。 */
+function useHasAssistantContent(): boolean {
+  return useAuiState((state) =>
+    state.message.content.some((part) => {
+      if (part.type === "text") return part.text.trim().length > 0;
+      if (part.type === "reasoning") {
+        return ((part as { text?: string }).text ?? "").trim().length > 0;
+      }
+      if (part.type === "tool-call") return true;
+      return false;
+    }),
   );
 }
 
 function AssistantMessage() {
   const { t } = useI18n();
   const running = useAuiState((state) => state.message.status?.type === "running");
+  const hasContent = useHasAssistantContent();
   const text = useFullCopyText();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const longPress = useLongPress((x, y) => setMenu({ x, y }));
@@ -221,7 +245,12 @@ function AssistantMessage() {
             tools: { Fallback: ToolCard },
           }}
         />
-        {running && <span className="stream-cursor" aria-hidden="true" />}
+        {running &&
+          (hasContent ? (
+            <span className="stream-cursor" aria-hidden="true" />
+          ) : (
+            <span className="stream-spinner" role="status" aria-label={t("thinkingNow")} />
+          ))}
         <MessageMetaLine />
         <MessagePrimitive.Error>
           <div className="msg-error">{t("renderFailed")}</div>
@@ -459,12 +488,17 @@ export default function App() {
     if (needsModelSetup(settings)) { setModelOnboarding(true); setShowModelSetup(true); }
   }, []);
   const openModelSetup = () => { setModelOnboarding(false); setShowModelSetup(true); };
-  const closeModelSetup = useCallback(() => { dismissModelSetup(); setShowModelSetup(false); setModelOnboarding(false); }, []);
+  // 不退场期间改 onboarding 标记：标题在滑出过程中不能变；下次打开由 openModelSetup 重置。
+  const closeModelSetup = useCallback(() => { dismissModelSetup(); setShowModelSetup(false); }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // 设置内部的子页也由 App 记账：子页多占一条 history 记录，返回时先回设置列表。
   const [settingsPage, setSettingsPage] = useState<SettingsPage>("home");
   const settingsOnSubpage = showSettings && settingsPage !== "home";
-  const closeSettings = useCallback(() => { setShowSettings(false); setSettingsPage("home"); }, []);
+  // 关闭时保留当前子页，让面板带着原内容滑出；下次打开前再重置到首页。
+  const closeSettings = useCallback(() => setShowSettings(false), []);
+  // 退场动画期间仍保持挂载，避免覆盖层瞬间消失。
+  const settingsPresence = usePresence(showSettings);
+  const modelPresence = usePresence(showModelSetup);
   // 返回键层级：覆盖层（设置/抽屉）打开时各占一条 history 记录——Android 返回
   // 手势/按键先收起覆盖层，而不是退出 App。depth 由 backLayers 模块持久持有，
   // effect 重跑只做 attach + sync，不会把已压入的记录丢在栈里。
@@ -566,6 +600,20 @@ export default function App() {
   };
 
   const hasMessages = snapshot.messages.length > 0;
+  // 「对话记录」列表：本次会话里输入过的每一条消息（保持发送顺序）。
+  const userInputs = useMemo<MessageNavItem[]>(() => {
+    const items: MessageNavItem[] = [];
+    for (const message of snapshot.messages) {
+      if (message.role !== "user" || !message.id) continue;
+      const text =
+        typeof message.content === "string"
+          ? message.content
+          : message.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+      const trimmed = text.trim();
+      if (trimmed) items.push({ id: message.id, text: trimmed });
+    }
+    return items;
+  }, [snapshot.messages]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -651,14 +699,17 @@ export default function App() {
               />
             </div>
           </ThreadPrimitive.Viewport>
+          {/* 会话切换时用 key 重置：面板收起，列表重新按新会话计算。 */}
+          <MessageNav key={snapshot.sessionId} items={userInputs} />
         </ThreadPrimitive.Root>
 
         <Composer hasKey={isModelConfigured(settings)} />
 
-        {showSettings && (
+        {settingsPresence.rendered && (
           <SettingsPanel
             settings={settings}
             page={settingsPage}
+            closing={settingsPresence.closing}
             onNavigate={setSettingsPage}
             // 子页返回只改 UI 状态；history 层由 backLayers.sync() 收回，
             // 其程序化 back() 的回响由 pendingBacks 吸收，不会连带关掉设置本身。
@@ -669,10 +720,11 @@ export default function App() {
           />
         )}
 
-        {showModelSetup && (
+        {modelPresence.rendered && (
           <ModelSetup
             settings={settings}
             onboarding={modelOnboarding}
+            closing={modelPresence.closing}
             onClose={closeModelSetup}
             onSave={saveSettings}
           />
@@ -693,7 +745,7 @@ export default function App() {
           }}
           onSwitch={(id) => engine.switchSession(id)}
           onRename={(id, title) => engine.renameSession(id, title)}
-          onSettings={() => { setDrawerOpen(false); setShowSettings(true); }}
+          onSettings={() => { setDrawerOpen(false); setSettingsPage("home"); setShowSettings(true); }}
           onDelete={(id) => engine.deleteSession(id)}
           onExport={(id) => {
             const session = snapshot.sessions.find((s) => s.id === id);

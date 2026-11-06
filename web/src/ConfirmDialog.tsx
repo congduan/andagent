@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "./i18n";
 
 export interface ConfirmRequest {
@@ -21,18 +21,38 @@ export function appConfirm(message: string): Promise<boolean> {
 export function ConfirmDialog() {
   const { t } = useI18n();
   const [req, setReq] = useState<ConfirmRequest | null>(null);
+  const [closing, setClosing] = useState(false);
+  const exitRef = useRef<number | null>(null);
   useEffect(() => {
-    const update = (r: ConfirmRequest | null) => setReq(r);
+    const update = (r: ConfirmRequest | null) => {
+      // 新的确认请求立刻接管，取消上一轮的退场定时器。
+      if (exitRef.current !== null) {
+        window.clearTimeout(exitRef.current);
+        exitRef.current = null;
+      }
+      setClosing(false);
+      setReq(r);
+    };
     listeners.add(update);
-    return () => { listeners.delete(update); };
+    return () => {
+      listeners.delete(update);
+      if (exitRef.current !== null) window.clearTimeout(exitRef.current);
+    };
   }, []);
   if (!req) return null;
   const done = (ok: boolean) => {
+    if (closing) return;
     req.resolve(ok);
-    setReq(null);
+    // 先播退场再卸载，避免弹窗瞬间消失。
+    setClosing(true);
+    exitRef.current = window.setTimeout(() => {
+      exitRef.current = null;
+      setClosing(false);
+      setReq(null);
+    }, 170);
   };
   return (
-    <div className="confirm-overlay" role="dialog" aria-modal="true" onClick={() => done(false)}>
+    <div className={`confirm-overlay${closing ? " closing" : ""}`} role="dialog" aria-modal="true" onClick={() => done(false)}>
       <div className="confirm-card" onClick={(e) => e.stopPropagation()}>
         <p className="confirm-msg">{req.message}</p>
         <div className="confirm-actions">

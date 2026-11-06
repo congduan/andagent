@@ -338,19 +338,23 @@ export function Drawer({
                   <span className="drawer-group-title">{t(GROUP_LABEL[key])}</span>
                   <span className="drawer-group-count">{items.length}</span>
                 </button>
-                {!isCollapsed &&
-                  items.map((s) => (
-                    <SessionRow
-                      key={s.id}
-                      session={s}
-                      active={s.id === currentId}
-                      onClose={onClose}
-                      onSwitch={onSwitch}
-                      onRename={onRename}
-                      onDelete={onDelete}
-                      onExport={onExport}
-                    />
-                  ))}
+                {/* 常驻挂载 + 网格行高过渡：分组折叠/展开是滑动而不是瞬断。 */}
+                <div className={`drawer-group-body${isCollapsed ? "" : " open"}`}>
+                  <div className="drawer-group-inner">
+                    {items.map((s) => (
+                      <SessionRow
+                        key={s.id}
+                        session={s}
+                        active={s.id === currentId}
+                        onClose={onClose}
+                        onSwitch={onSwitch}
+                        onRename={onRename}
+                        onDelete={onDelete}
+                        onExport={onExport}
+                      />
+                    ))}
+                  </div>
+                </div>
               </section>
             );
           })}

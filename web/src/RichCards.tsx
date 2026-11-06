@@ -1,6 +1,7 @@
 import { translate } from "./i18n";
 import { useState } from "react";
 import { execTool } from "./bridge";
+import { selectedText } from "./CopyMenu";
 import { showError, showSuccess } from "./toast";
 
 type Photo = { id?: string; uri?: string; name?: string; thumbnailBase64?: string; thumb?: string };
@@ -11,7 +12,15 @@ export function JsonNode({ label, value, depth = 0 }: { label: string; value: un
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value);
     return <div className="json-node" style={{ marginLeft: depth ? 12 : 0 }}>
-      <button type="button" onClick={() => setOpen(!open)}>{open ? "▾" : "▸"} {label} <span>{Array.isArray(value) ? `[${entries.length}]` : `{${entries.length}}`}</span></button>
+      <button
+        type="button"
+        onClick={() => {
+          if (selectedText()) return;
+          setOpen(!open);
+        }}
+      >
+        {open ? "▾" : "▸"} {label} <span>{Array.isArray(value) ? `[${entries.length}]` : `{${entries.length}}`}</span>
+      </button>
       {open && entries.map(([key, child]) => <JsonNode key={key} label={key} value={child} depth={depth + 1} />)}
     </div>;
   }

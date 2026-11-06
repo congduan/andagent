@@ -204,6 +204,8 @@ interface AndroidBridge {
   projectionRequest(): string;
   projectionStop(): string;
   reportTheme?(isDark: boolean): void;
+  /** R39 修复：系统深/浅色真值（"dark" | "light"），WebView 媒体查询不可信。 */
+  systemTheme?(): string;
   cancelTool?(reqId: string): void;
   lastShellResult?(): string;
   /* R20: 八域 UI 命令（可选；浏览器预览下全部缺失）。 */

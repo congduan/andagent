@@ -13,13 +13,16 @@ import com.dc.andagent.tools.IR_TOOLS
 import com.dc.andagent.tools.NfcMifareTool
 import com.dc.andagent.tools.WebEmbedTool
 import android.content.Intent
+import android.content.res.Configuration
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -30,12 +33,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.StepsRecord
+import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import com.dc.andagent.bridge.AgentBridge
 import com.dc.andagent.bridge.DbGuiBridge
 import com.dc.andagent.bridge.PermissionBroker
@@ -201,6 +209,16 @@ class MainActivity : ComponentActivity() {
 
     private val healthPermissionResult = AtomicReference<Set<String>?>(null)
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** 沉浸式顶栏：状态栏高度（CSS px = dp），由 insets 监听刷新后注入页面。 */
+    private var safeTopCssPx = 0f
+    private var publishedSafeTop = -1f
+    private var safeTopScript: ScriptHandler? = null
+
+    private companion object {
+        /** WebView 页面同源（loadUrl 与 WebViewAssetLoader 用的域名）。 */
+        const val SHELL_ORIGIN = "https://appassets.androidplatform.net"
+    }
 
     /**
      * Tool-level on-demand Health Connect authorization: launches the
@@ -549,6 +567,7 @@ class MainActivity : ComponentActivity() {
             },
             uiCommands = UiCommands(this) { if (::webView.isInitialized) webView else null },
             themeChange = { dark -> runOnUiThread { applyUiTheme(dark) } },
+            systemThemeProvider = { if (systemPrefersDark()) "dark" else "light" },
             termuxGrant = {
                 if (!shizuku.isGranted()) "ERROR: 请先启动 Shizuku 并在设置页授权 AndAgent"
                 else {
@@ -572,7 +591,7 @@ class MainActivity : ComponentActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
-            setBackgroundColor(Color.parseColor("#0b0d11"))
+            setBackgroundColor(themeBackgroundColor())
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
@@ -642,6 +661,12 @@ class MainActivity : ComponentActivity() {
                         true
                     }.getOrDefault(true)
                 }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    // 重新加载/跳转后要补写一次；没有文档级注入能力的旧版
+                    // WebView 只有这条路径（首帧后顶栏会补上避让高度）。
+                    view.evaluateJavascript(safeTopScriptBody(), null)
+                }
             }
         }
 
@@ -656,6 +681,7 @@ class MainActivity : ComponentActivity() {
             addView(webView)
         }
         setContentView(webViewContainer)
+        installImmersiveChrome(webViewContainer)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (webView.canGoBack()) {
@@ -682,13 +708,106 @@ class MainActivity : ComponentActivity() {
      * 避免下次冷启动闪错色。夜间为默认。
      */
     private fun isDarkThemeStored(): Boolean =
-        getSharedPreferences("ui", MODE_PRIVATE).getBoolean("dark", true)
+        getSharedPreferences("ui", MODE_PRIVATE).getBoolean("dark", systemPrefersDark())
+
+    /**
+     * 系统当前的夜间设置。不能用 WebView 的 prefers-color-scheme 判断——
+     * 它跟随宿主 Activity 主题（本项目是深色 Theme.Material），恒报 dark。
+     */
+    private fun systemPrefersDark(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    /** 系统切换日夜（manifest 已声明 uiMode，不重建 Activity）：通知 Web 侧重新解析。 */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (!::webView.isInitialized) return
+        val dark = (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        webView.evaluateJavascript("window.__andagentSystemTheme && window.__andagentSystemTheme($dark)", null)
+    }
+
+    /**
+     * 沉浸式状态栏：内容（顶栏 / 抽屉 / 设置面板）一直铺到屏幕顶端，状态栏透明，
+     * 底色由页面自己的顶栏渐变提供——系统色块一旦和顶栏不同色，屏幕上就会多出
+     * 一条明显的分界带，这也正是"顶栏不沉浸"的观感来源。
+     *
+     * 只让出顶部：导航栏仍在窗口之外，键盘 adjustResize 与底部安全区维持原状。
+     * targetSdk=28 走兼容行为，因此这里用 legacy 布局 flag 而不是
+     * setDecorFitsSystemWindows(false)——后者在 Android 11+ 会让 adjustResize
+     * 失效（输入法只能靠 insets 自己躲）。
+     *
+     * 代价是页面必须自己避开状态栏：WebView 里 env(safe-area-inset-*) 恒为 0，
+     * 所以这里把真实高度换算成 CSS px（与 dp 等值）写成 --safe-top 注入页面，
+     * 由 styles.css 的顶栏 / 抽屉 / 全屏卡消费。
+     */
+    private fun installImmersiveChrome(container: View) {
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        window.statusBarColor = Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+        )
+        ViewCompat.setOnApplyWindowInsetsListener(container) { view, insets ->
+            publishSafeTop(statusBarTopPx(view, insets))
+            // 不消费 insets：WebView 继续保持满屏（含状态栏区域）。
+            insets
+        }
+        ViewCompat.requestApplyInsets(container)
+        // 首次布局后再兜一次：部分镜像上内容视图会提前消费窗口 insets，
+        // 监听器那次可能拿到 0，这里从窗口根 insets 直接取。
+        container.post { publishSafeTop(statusBarTopPx(container, null)) }
+    }
+
+    /**
+     * 状态栏高度（px）。监听器给的 insets 与窗口根 insets 取较大值：
+     * 前者在某些机型上被上层内容视图吃掉，后者（API 23+）始终可读。
+     */
+    private fun statusBarTopPx(view: View, insets: WindowInsetsCompat?): Float {
+        val types = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+        val fromListener = insets?.getInsets(types)?.top ?: 0
+        val fromWindow = ViewCompat.getRootWindowInsets(view)?.getInsets(types)?.top ?: 0
+        return maxOf(fromListener, fromWindow).toFloat()
+    }
+
+    /** 注入脚本：把状态栏高度写到 <html> 的行内 style 上（覆盖 CSS 里的 env() 兜底）。 */
+    private fun safeTopScriptBody(): String {
+        val px = kotlin.math.round(safeTopCssPx.coerceAtLeast(0f) * 100f) / 100f
+        return "document.documentElement&&document.documentElement.style" +
+            ".setProperty('--safe-top','${px}px')"
+    }
+
+    /**
+     * 状态栏高度变化（首次布局、旋转、刘海差异）时刷新注入值。优先注册为
+     * 文档级脚本：脚本在页面解析前执行，首帧就带着正确避让，顶栏不会先画歪
+     * 再跳一下；老版本 WebView 没有该能力时退回 onPageFinished 补写。
+     */
+    private fun publishSafeTop(insetPx: Float) {
+        if (!::webView.isInitialized) return
+        val cssPx = (insetPx / resources.displayMetrics.density).coerceAtLeast(0f)
+        if (kotlin.math.abs(cssPx - publishedSafeTop) < 0.5f) return
+        publishedSafeTop = cssPx
+        safeTopCssPx = cssPx
+        val script = safeTopScriptBody()
+        runCatching { safeTopScript?.remove() }
+        safeTopScript = if (runCatching {
+                WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+            }.getOrDefault(false)
+        ) {
+            runCatching {
+                WebViewCompat.addDocumentStartJavaScript(webView, script, setOf(SHELL_ORIGIN))
+            }.getOrNull()
+        } else {
+            null
+        }
+        // 已经加载完成的页面立即生效（旋转等场景不会再触发首帧）。
+        runCatching { webView.evaluateJavascript(script, null) }
+    }
 
     private fun applyUiTheme(dark: Boolean) {
         getSharedPreferences("ui", MODE_PRIVATE).edit().putBoolean("dark", dark).apply()
         val bg = Color.parseColor(if (dark) "#0b0d11" else "#f5f7fa")
         if (::webView.isInitialized) webView.setBackgroundColor(bg)
-        window.statusBarColor = bg
+        // 状态栏透明（沉浸式）：颜色由页面顶栏自己给，系统栏不再另刷一层底色。
+        window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = bg
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = !dark
@@ -854,6 +973,8 @@ class MainActivity : ComponentActivity() {
         if (::quickJsEngine.isInitialized) { WidgetToolRuntime.detach(quickJsEngine); quickJsEngine.shutdown() }
         scriptToolExecutor.shutdownNow()
         if (::shizuku.isInitialized) shizuku.shutdown()
+        runCatching { safeTopScript?.remove() }
+        safeTopScript = null
         webView.destroy()
         super.onDestroy()
     }

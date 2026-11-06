@@ -15,6 +15,7 @@ import { loadThemeMode, setTheme, type ThemeMode } from "./theme";
 import { setLanguageMode, useI18n, type LanguageMode } from "./i18n";
 import { appConfirm } from "./ConfirmDialog";
 import { ModelFields } from "./ModelFields";
+import { SettingsHead } from "./SettingsHead";
 import { showError, showResult, showSuccess } from "./toast";
 
 type Props = {
@@ -29,6 +30,8 @@ type Props = {
   onClose: () => void;
   onSave: (next: Settings) => void;
   onModelSetup: () => void;
+  /** 父级正在播放退场动画（保持挂载但不再响应交互）。 */
+  closing?: boolean;
 };
 
 export type SettingsPage =
@@ -44,7 +47,7 @@ type SkillEntry = { name: string; description: string; enabled: boolean; toolCou
 
 const THEME_OPTIONS: ThemeMode[] = ["system", "light", "dark"];
 
-export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onSave, onModelSetup }: Props) {
+export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onSave, onModelSetup, closing }: Props) {
   const { t, mode, language } = useI18n();
   const [draft, setDraft] = useState<Settings>(settings);
   useEffect(() => { setDraft(prev => !hasSavedSystemPrompt() && isDefaultSystemPrompt(prev.systemPrompt) ? { ...prev, systemPrompt: defaultSystemPrompt() } : prev); }, [language]);
@@ -65,7 +68,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
   const [memoriesLoaded, setMemoriesLoaded] = useState(false);
   const [memoryEdits, setMemoryEdits] = useState<Record<string, string>>({});
-  const [showNotices, setShowNotices] = useState(false);
+
   const [creds, setCreds] = useState<SshCredentialMeta[]>([]);
   const [credsLoaded, setCredsLoaded] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -178,14 +181,13 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     { key: "about", icon: "ℹ️", tint: "#64748b", title: t("about"), sub: `${t("version")} ${getAppVersion()}` },
   ];
 
-  // ===== 子页公共骨架 =====
-  const sub = (title: string, children: React.ReactNode) => (
+  // ===== 子页公共骨架（顶栏与首页、模型向导共用 SettingsHead）=====
+  // footer 用于「保存」这类需要常驻可见的操作：它挂在滚动区外，长表单滚到底也能直接点到。
+  const sub = (title: string, children: React.ReactNode, footer?: React.ReactNode) => (
     <div className="settings-subpage">
-      <header className="settings-subpage-head">
-        <button type="button" className="icon-btn" aria-label={t("back")} onClick={onBack}>←</button>
-        <h2>{title}</h2>
-      </header>
+      <SettingsHead title={title} backLabel={t("back")} onBack={onBack} />
       <div className="settings-body" ref={bodyRef}>{children}</div>
+      {footer && <div className="settings-foot settings-foot-actions">{footer}</div>}
     </div>
   );
   const section = (title: string, children: React.ReactNode) => (
@@ -197,27 +199,27 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
 
   // ===== 各子页内容 =====
   // 与首次启动向导共用同一份 ModelFields（服务商卡片 + Base URL / Key / 模型 + 拉取列表）。
-  const modelPage = sub(t("modelSettings"), <>
-    <ModelFields settings={draft} onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))} />
-    <div className="settings-card-actions">
-      <button type="button" className="btn-primary" onClick={save}>{t("save")}</button>
-      {/* 需要"测试并保存"时走向导：设置页只做本地保存，不发网络请求。 */}
+  const modelPage = sub(t("modelSettings"),
+    <ModelFields settings={draft} onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))} />,
+    <>
       <button type="button" className="btn-ghost" onClick={onModelSetup}>{t("modelTestSave")}</button>
-    </div>
-  </>);
+      <button type="button" className="btn-primary" onClick={save}>{t("save")}</button>
+    </>,
+  );
 
   const promptPage = sub(t("promptGroup"), <>
-    <p className="settings-card-note">{t("promptNote")}</p>
-    <label className="field"><span>{t("systemPrompt")}</span>
-      <textarea rows={14} value={draft.systemPrompt} onChange={(e) => setDraft({ ...draft, systemPrompt: e.target.value })} placeholder={t("systemPromptPlaceholder")} />
-    </label>
-    <div className="settings-card-actions">
-      <button type="button" className="btn-primary" onClick={save}>{t("save")}</button>
-      <button type="button" className="btn-ghost" onClick={async () => {
-        if (!(await appConfirm(t("promptResetConfirm")))) return;
-        setDraft((prev) => ({ ...prev, systemPrompt: defaultSystemPrompt() }));
-      }}>{t("promptReset")}</button>
-    </div>
+    <p className="settings-page-note">{t("promptNote")}</p>
+    {section(t("systemPrompt"), (
+      <label className="field">
+        <textarea rows={14} value={draft.systemPrompt} onChange={(e) => setDraft({ ...draft, systemPrompt: e.target.value })} placeholder={t("systemPromptPlaceholder")} />
+      </label>
+    ))}
+  </>, <>
+    <button type="button" className="btn-ghost" onClick={async () => {
+      if (!(await appConfirm(t("promptResetConfirm")))) return;
+      setDraft((prev) => ({ ...prev, systemPrompt: defaultSystemPrompt() }));
+    }}>{t("promptReset")}</button>
+    <button type="button" className="btn-primary" onClick={save}>{t("save")}</button>
   </>);
 
   const appearancePage = sub(t("appearanceLang"), <>
@@ -241,22 +243,28 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   </>);
 
   const memoryPage = sub(t("memory"), <>
-    <p className="settings-card-note">{t("memoryNote")}</p>
+    <p className="settings-page-note">{t("memoryNote")}</p>
     {section(`${t("coreMemory")} (${memories.filter(m => m.core).length}/10)`, <>
+      {memories.length === 0 && <p className="settings-empty">{t("memoryEmpty")}</p>}
       {memories.filter(m => m.core).map(m => (
-        <div className="memory-entry" key={m.id}>
-          <small>{m.category}</small>
+        <div className="memory-item" key={m.id}>
+          {m.category && <span className="memory-cat">{m.category}</span>}
           <textarea rows={2} maxLength={500} value={memoryEdits[m.id] ?? m.content} onChange={e => setMemoryEdits({ ...memoryEdits, [m.id]: e.target.value })} />
-          <button type="button" onClick={() => saveMemory(m.id)}>{t("save")}</button>
-          <button type="button" onClick={() => deleteMemory(m.id)}>{t("delete")}</button>
+          <div className="memory-item-foot">
+            <button type="button" className="btn-ghost btn-sm" onClick={() => deleteMemory(m.id)}>{t("delete")}</button>
+            <button type="button" className="btn-primary btn-sm" onClick={() => saveMemory(m.id)}>{t("save")}</button>
+          </div>
         </div>
       ))}
     </>)}
     {section(`${t("archivedMemory")} (${memories.filter(m => !m.core).length}/200)`, <>
+      {memories.length > 0 && memories.filter(m => !m.core).length === 0 && <p className="settings-empty">{t("none")}</p>}
       {memories.filter(m => !m.core).map(m => (
-        <div className="memory-entry" key={m.id}>
-          <span>{m.content}</span>
-          <button type="button" onClick={() => deleteMemory(m.id)}>{t("delete")}</button>
+        <div className="memory-item" key={m.id}>
+          <p className="memory-text">{m.content}</p>
+          <div className="memory-item-foot">
+            <button type="button" className="btn-ghost btn-sm" onClick={() => deleteMemory(m.id)}>{t("delete")}</button>
+          </div>
         </div>
       ))}
     </>)}
@@ -270,19 +278,39 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   </>);
 
   const automationPage = sub(t("cron"), <>
-    <p className="settings-card-note">{t("cronNote")}</p>
-    {!exactAllowed && hasBridge() && <div className="settings-card-actions">
+    <p className="settings-page-note">{t("cronNote")}</p>
+    {!exactAllowed && hasBridge() && <div className="settings-alert">
       <span>{t("exactAlarmMissing")}</span>
-      <button type="button" className="btn-ghost" onClick={() => { showResult(cronOpenExactSettings()); window.setTimeout(refreshCron, 1000); }}>{t("exactAlarmSettings")}</button>
+      <button type="button" className="btn-ghost btn-sm" onClick={() => { showResult(cronOpenExactSettings()); window.setTimeout(refreshCron, 1000); }}>{t("exactAlarmSettings")}</button>
     </div>}
-    {cronTasks.map((task) => <div key={task.id}>
-      <div className="settings-card-actions">
-        <button type="button" className="btn-ghost" onClick={() => setCronDetail(cronDetail === task.id ? "" : task.id)}>{task.name} · {task.schedule} · {task.kind}</button>
-        <label><input type="checkbox" checked={task.enabled} onChange={(e) => { showResult(cronToggle(task.id, e.target.checked)); refreshCron(); }} />{t("enabled")}</label>
-        <button type="button" className="btn-ghost" onClick={async () => { if (await appConfirm(t("deleteCronConfirm", { name: task.name }))) { showResult(cronDelete(task.id)); refreshCron(); } }}>{t("delete")}</button>
-      </div>
-      {cronDetail === task.id && <p className="settings-card-note">{t("lastRun")}：{task.lastRun ? new Date(task.lastRun).toLocaleString() : t("neverRun")} · {t("nextRun")}：{task.nextRun ? new Date(task.nextRun).toLocaleString() : t("paused")}<br />{t("lastResult")}：{task.lastResult || t("none")}</p>}
-    </div>)}
+    {cronTasks.length === 0
+      ? <p className="settings-empty">{t("cronEmpty")}</p>
+      : <div className="settings-list">
+          {cronTasks.map((task) => (
+            <div key={task.id} className={`settings-list-item${task.enabled ? "" : " is-off"}`}>
+              <div className="settings-list-head">
+                <button type="button" className="settings-list-toggle" aria-expanded={cronDetail === task.id}
+                  onClick={() => setCronDetail(cronDetail === task.id ? "" : task.id)}>
+                  <span className="settings-list-title">{task.name}</span>
+                  <span className="settings-list-sub">{task.schedule} · {task.kind}</span>
+                </button>
+                <label className="settings-switch">
+                  <input type="checkbox" checked={task.enabled} onChange={(e) => { showResult(cronToggle(task.id, e.target.checked)); refreshCron(); }} />
+                  <span>{t("enabled")}</span>
+                </label>
+                <button type="button" className="icon-btn settings-list-remove" aria-label={t("delete")}
+                  onClick={async () => { if (await appConfirm(t("deleteCronConfirm", { name: task.name }))) { showResult(cronDelete(task.id)); refreshCron(); } }}>✕</button>
+              </div>
+              {cronDetail === task.id && (
+                <dl className="settings-rows">
+                  <div className="settings-row"><dt>{t("lastRun")}</dt><dd>{task.lastRun ? new Date(task.lastRun).toLocaleString() : t("neverRun")}</dd></div>
+                  <div className="settings-row"><dt>{t("nextRun")}</dt><dd>{task.nextRun ? new Date(task.nextRun).toLocaleString() : t("paused")}</dd></div>
+                  <div className="settings-row"><dt>{t("lastResult")}</dt><dd>{task.lastResult || t("none")}</dd></div>
+                </dl>
+              )}
+            </div>
+          ))}
+        </div>}
     <div className="settings-card-actions">
       <button type="button" className="btn-ghost" onClick={() => { showResult(cronPauseAll()); refreshCron(); }}>{t("pauseAll")}</button>
       <button type="button" className="btn-ghost" onClick={refreshCron}>{t("refresh")}</button>
@@ -291,7 +319,16 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
 
   const extensionsPage = sub(t("extensionsGroup"), <>
     {section(t("shizuku"), <>
-      <p className="settings-card-note">{shizuku.note ?? t("shizukuNote")}{shizuku.managerVersion ? ` · v${shizuku.managerVersion}` : ""}</p>
+      <dl className="settings-rows">
+        <div className="settings-row">
+          <dt>{t("status")}</dt>
+          <dd className={shizuku.status === "granted" ? "is-ok" : "is-warn"}>
+            {t(shizuku.status === "granted" ? "granted" : shizuku.status === "not_granted" ? "notGranted" : "unavailable")}
+            {shizuku.managerVersion ? ` · v${shizuku.managerVersion}` : ""}
+          </dd>
+        </div>
+      </dl>
+      <p className="settings-card-note">{shizuku.note ?? t("shizukuNote")}</p>
       <div className="settings-card-actions">
         <button type="button" className="btn-primary" onClick={askShizuku}>{t("requestAccess")}</button>
         <a className="btn-ghost" href="market://details?id=moe.shizuku.privileged.api">{t("activateShizuku")}</a>
@@ -314,7 +351,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
         <p className="settings-card-note">{t("debugPages")} {devtools.pages.length}：{devtools.pages.slice(0, 4).map((p) => p.title || p.url).join(" · ")}{devtools.pages.length > 4 ? " …" : ""}</p>
       )}
       <div className="settings-card-actions">
-        <button type="button" className="btn-primary" onClick={() => {
+        <button type="button" className={devtools?.enabled ? "btn-ghost" : "btn-primary"} onClick={() => {
           const ack = setDevToolsEnabled(!devtools?.enabled);
           showResult(ack.message ?? "");
           window.setTimeout(() => setDevtools(getDevToolsStatus()), 600);
@@ -332,12 +369,12 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
         <button type="button" className="btn-ghost" onClick={() => { showResult(skillManage("reload")); refreshSkills(); }}>{t("skillRefresh")}</button>
       </div>
       {skills.length === 0
-        ? <p className="settings-card-note">{t("skillsEmpty")}</p>
+        ? <p className="settings-empty">{t("skillsEmpty")}</p>
         : <div className="skill-list">{skills.map((skill) => (
             <div key={skill.name} className={`skill-row${skill.enabled ? "" : " skill-row-off"}`}>
               <div className="skill-row-main">
                 <span className="skill-name">{skill.name}</span>
-                <label className="skill-switch">
+                <label className="settings-switch">
                   <input type="checkbox" checked={skill.enabled}
                     onChange={(e) => { showResult(skillManage("enable", skill.name, String(e.target.checked))); refreshSkills(); }} />
                   <span>{t("enabled")}</span>
@@ -383,14 +420,14 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
 
   // ===== SSH 凭据（独立分类）=====
   const sshPage = sub(t("sshCredentials"), <>
-    <p className="settings-card-note">{t("sshCredentialsNote")}</p>
+    <p className="settings-page-note">{t("sshCredentialsNote")}</p>
     {section(`${t("sshCredentialList")} (${creds.length})`, <>
       <div className="settings-card-actions">
         <button type="button" className="btn-primary" onClick={() => showResult(sshCredentialsOpen())}>{t("sshCredentialAdd")}</button>
         <button type="button" className="btn-ghost" onClick={() => setCreds(sshCredentialsList())}>{t("refreshStatus")}</button>
       </div>
       {creds.length === 0
-        ? <p className="settings-card-note">{t("sshCredentialEmpty")}</p>
+        ? <p className="settings-empty">{t("sshCredentialEmpty")}</p>
         : creds.map((cred) => <div key={cred.nickname} className="settings-card-actions cred-row">
             <span className="cred-row-info">
               <b>{cred.nickname}</b>
@@ -436,16 +473,47 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     </>)}
   </>);
 
+  // 构建时间是编译期写入的 ISO 串：转成本地可读格式，解析失败时退回「未知」。
+  const aboutBuildTime = () => {
+    const date = new Date(__BUILD_TIME__);
+    return Number.isNaN(date.getTime()) ? t("buildUnknown") : date.toLocaleString();
+  };
+
   const aboutPage = sub(t("about"), <>
-    {section(t("version"), <>
-      <p className="settings-card-note">{t("version")}: {getAppVersion()} · {t("built")}: {__BUILD_TIME__}</p>
-      <p className="settings-card-note">{t("license")}: Apache-2.0</p>
-      <div className="settings-card-actions">
-        <a className="btn-ghost" href="https://github.com/congduan/andagent" target="_blank" rel="noreferrer">{t("repository")}</a>
-        <a className="btn-ghost" href="https://github.com/congduan/andagent/stargazers" target="_blank" rel="noreferrer">{t("star")}</a>
-        <button type="button" className="btn-ghost" onClick={() => setShowNotices(v => !v)}>{t("notices")}</button>
+    <div className="about-hero">
+      <div className="about-hero-mark" aria-hidden="true">◆</div>
+      <div className="about-hero-main">
+        <div className="about-hero-title">
+          <h3>AndAgent</h3>
+          <span className="about-pill">v{getAppVersion()}</span>
+        </div>
+        <p className="about-hero-sub">{t("aboutTagline")}</p>
       </div>
-      {showNotices && <div className="settings-notices"><pre>{noticesText || t("noticesUnavailable")}</pre></div>}
+    </div>
+
+    {section(t("aboutAppInfo"), (
+      <dl className="settings-rows">
+        <div className="settings-row"><dt>{t("version")}</dt><dd>{getAppVersion()}</dd></div>
+        <div className="settings-row"><dt>{t("built")}</dt><dd>{aboutBuildTime()}</dd></div>
+        <div className="settings-row"><dt>{t("license")}</dt><dd>Apache-2.0</dd></div>
+      </dl>
+    ))}
+
+    {section(t("aboutLinks"), <>
+      <div className="about-links">
+        <a className="about-link" href="https://github.com/congduan/andagent" target="_blank" rel="noreferrer">
+          <span className="about-link-label">{t("repository")}</span>
+          <span className="about-link-chevron" aria-hidden="true">↗</span>
+        </a>
+        <a className="about-link" href="https://github.com/congduan/andagent/stargazers" target="_blank" rel="noreferrer">
+          <span className="about-link-label">{t("star")}</span>
+          <span className="about-link-chevron" aria-hidden="true">↗</span>
+        </a>
+      </div>
+      <details className="settings-details about-notices">
+        <summary>{t("notices")}</summary>
+        <div className="settings-notices"><pre>{noticesText || t("noticesUnavailable")}</pre></div>
+      </details>
     </>)}
   </>);
 
@@ -456,15 +524,13 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   };
 
   return (
-    <div className="settings-overlay" role="dialog" aria-modal="true">
+    <div className={`settings-overlay${closing ? " closing" : ""}`} role="dialog" aria-modal="true">
       <div className="settings-panel">
         {page === "home" ? (
           <>
-            <header className="settings-head">
-              <div><h2>{t("settings")}</h2><p>{t("settingsNote")}</p></div>
-              <button type="button" className="icon-btn" onClick={onClose} aria-label={t("close")}>✕</button>
-            </header>
-            <div className="settings-body">
+            {/* 这一层返回即关闭设置；顶栏与子页、模型向导完全一致。 */}
+            <SettingsHead title={t("settings")} backLabel={t("back")} onBack={onClose} />
+            <div className="settings-body settings-body-home">
               {homeItems.map((item) => (
                 <button key={item.key} type="button" className="settings-home-item" onClick={() => onNavigate(item.key)}>
                   <span className="settings-home-icon" style={{ background: item.tint + "22", color: item.tint }}>{item.icon}</span>
@@ -476,7 +542,6 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
                   <span className="settings-home-chevron">›</span>
                 </button>
               ))}
-              <div className="settings-note">{hasBridge() ? t("bridgeConnected") : t("browserPreview")}</div>
             </div>
           </>
         ) : subPages[page]}
