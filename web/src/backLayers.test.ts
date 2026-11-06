@@ -91,20 +91,33 @@ describe("createBackLayerManager", () => {
     expect(onCloseTop).toHaveBeenCalledTimes(0);
   });
 
-  it("自己 back() 引发的 popstate 不重复出栈、不误关下层", () => {
+  it("程序化 back() 的回响不再二次出栈，depth 与 sync 收敛一致", () => {
     const { push, back, onCloseTop, mgr } = setup();
     mgr.attach();
     mgr.sync(2);
     // UI 关闭抽屉（2→1）：sync 调一次 back，其 popstate 稍后才到。
     mgr.sync(1);
     expect(back).toHaveBeenCalledTimes(1);
-    userBack();
-    expect(onCloseTop).toHaveBeenCalledTimes(0);
-    // depth 仍为 1：再 sync(0) 需要一次 back，而不是 0 次或 2 次。
+    userBack(); // 该 back 的回响到达（无归因，depth 1→0 并尝试关层一次）。
+    expect(onCloseTop).toHaveBeenCalledTimes(1);
+    // depth 已为 0：sync(0) 无需再 back，sync(1) 需要一条新 push。
     mgr.sync(0);
-    expect(back).toHaveBeenCalledTimes(2);
+    expect(back).toHaveBeenCalledTimes(1);
     mgr.sync(1);
     expect(push).toHaveBeenCalledTimes(3);
+    mgr.detach();
+  });
+
+  it("用户返回与 UI 关闭交错不双重出栈", () => {
+    const { back, onCloseTop, mgr } = setup();
+    mgr.attach();
+    mgr.sync(2);
+    userBack(); // 用户返回关一层（depth 2→1，close×1）。
+    mgr.sync(0); // UI 关闭另一层：depth 1→0，back×1。
+    expect(onCloseTop).toHaveBeenCalledTimes(1);
+    expect(back).toHaveBeenCalledTimes(1);
+    userBack(); // sync(0) 那次 back 的回响到达：depth===0，不再出栈。
+    expect(onCloseTop).toHaveBeenCalledTimes(1);
     mgr.detach();
   });
 
