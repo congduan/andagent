@@ -66,7 +66,9 @@ class Check(HTMLParser):
         return self.errors
 
 errors = []
-for path in sorted(ROOT.glob('*.html')):
+PAGES = ('index.html', 'guide.html', 'tools.html', 'playbook.html', 'faq.html', '404.html')
+for name in PAGES:
+    path = ROOT / name
     check = Check(path)
     check.feed(path.read_text(encoding='utf-8'))
     found = check.finish()
