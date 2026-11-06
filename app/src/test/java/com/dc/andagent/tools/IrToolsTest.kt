@@ -18,8 +18,8 @@ class IrToolsTest {
     }
 
     @Test fun prontoAcceptsWhitespaceAndHex() {
-        val a = parse("0000 006D 0000 0004 0012 002A 0012 0014")
-        val b = parse("0000  006d  0000  0004  0012  002a  0012  0014")
+        val a = parse("0000 006D 0000 0002 0012 002A 0012 0014")
+        val b = parse("0000  006d  0000  0002  0012  002a  0012  0014")
         assertEquals(a.carrierHz, b.carrierHz)
         assertEquals(a.pattern.toList(), b.pattern.toList())
     }
@@ -31,13 +31,14 @@ class IrToolsTest {
     }
 
     @Test fun prontoRejectsShortHeader() {
+        // tokens.size(3) != 4 + pairCount*2 → 引导段校验拒绝（require 要求 4 位 hex 字）
         assertThrows(IllegalArgumentException::class.java) {
-            parse("0000 006D 0000") // 缺少 repeat/pair 数据
+            parse("0000 006D 0000 0004") // 声明 4 对脉冲但缺数据
         }
     }
 
     @Test fun patternValidationBounds() {
-        val ok = validatePattern(intArrayOf(560, 1690, 560))
+        validatePattern(intArrayOf(560, 1690, 560)) // 合法：奇数项 on/off 交替、全正
         assertThrows(IllegalArgumentException::class.java) { validatePattern(intArrayOf(0)) }       // 非正时长
         assertThrows(IllegalArgumentException::class.java) { validatePattern(intArrayOf(-5)) }      // 负值
         assertThrows(IllegalArgumentException::class.java) { validatePattern(IntArray(0)) }         // 空
