@@ -730,14 +730,14 @@ class MainActivity : ComponentActivity() {
      * 底色由页面自己的顶栏渐变提供——系统色块一旦和顶栏不同色，屏幕上就会多出
      * 一条明显的分界带，这也正是"顶栏不沉浸"的观感来源。
      *
-     * 只让出顶部：导航栏仍在窗口之外，键盘 adjustResize 与底部安全区维持原状。
+     * 只让出顶部：导航栏与键盘都留在窗口之外。
      * targetSdk=28 走兼容行为，因此这里用 legacy 布局 flag 而不是
-     * setDecorFitsSystemWindows(false)——后者在 Android 11+ 会让 adjustResize
-     * 失效（输入法只能靠 insets 自己躲）。
+     * setDecorFitsSystemWindows(false)。
      *
      * 代价是页面必须自己避开状态栏：WebView 里 env(safe-area-inset-*) 恒为 0，
      * 所以这里把真实高度换算成 CSS px（与 dp 等值）写成 --safe-top 注入页面，
-     * 由 styles.css 的顶栏 / 抽屉 / 全屏卡消费。
+     * 由 styles.css 的顶栏 / 抽屉 / 全屏卡消费。底部则由 [applyBottomInset]
+     * 从窗口 insets 直接给 WebView 让位（新版系统 adjustResize 已不生效）。
      */
     private fun installImmersiveChrome(container: View) {
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
@@ -748,13 +748,35 @@ class MainActivity : ComponentActivity() {
         )
         ViewCompat.setOnApplyWindowInsetsListener(container) { view, insets ->
             publishSafeTop(statusBarTopPx(view, insets))
+            applyBottomInset(view, insets)
             // 不消费 insets：WebView 继续保持满屏（含状态栏区域）。
             insets
         }
         ViewCompat.requestApplyInsets(container)
         // 首次布局后再兜一次：部分镜像上内容视图会提前消费窗口 insets，
         // 监听器那次可能拿到 0，这里从窗口根 insets 直接取。
-        container.post { publishSafeTop(statusBarTopPx(container, null)) }
+        container.post {
+            publishSafeTop(statusBarTopPx(container, null))
+            ViewCompat.getRootWindowInsets(container)?.let { applyBottomInset(container, it) }
+        }
+    }
+
+    /**
+     * 让 WebView 的布局区让出键盘与导航栏。
+     *
+     * 新版系统（Android 15+ 的强制 edge-to-edge）不再为输入法收缩窗口，页面
+     * 布局视口始终是整屏高度，只把键盘盖在底部。这时系统只能靠平移可视区
+     * （visualViewport.offsetTop）去露出被聚焦的输入框，顶栏会跟着被推出屏幕，
+     * 表现为"对话滚动/输入时标题栏没有固定在顶部"。给容器加底部 padding 后，
+     * WebView 的 CSS 视口高度等于真实可视高度，页面按可见区域重排，顶栏常驻。
+     */
+    private fun applyBottomInset(view: View, insets: WindowInsetsCompat) {
+        val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+        val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+        val bottom = maxOf(ime, bars)
+        if (view.paddingBottom != bottom) {
+            view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, bottom)
+        }
     }
 
     /**

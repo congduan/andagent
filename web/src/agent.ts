@@ -856,7 +856,8 @@ export interface AgentSnapshot {
   usage: { session: UsageSum; last: LastUsage | null };
 }
 
-function toUiMessages(messages: PiMessage[], draft: Draft | null): ThreadMessageLike[] {
+/** 供测试直接校验快照状态映射。 */
+export function toUiMessages(messages: PiMessage[], draft: Draft | null): ThreadMessageLike[] {
   const results = new Map<string, { text: string; isError: boolean }>();
   for (const message of messages) {
     if (message.role === "toolResult") {
@@ -913,16 +914,21 @@ function toUiMessages(messages: PiMessage[], draft: Draft | null): ThreadMessage
     };
     const durationMs = (message as { durationMs?: number }).durationMs;
     if (durationMs !== undefined) custom.durationMs = durationMs;
+    // 完成态不显式给 status：让 assistant-ui 按「最后一条 + 线程 running」自动推断，
+    // 否则写死 complete 会压住自动状态，工具执行完等下一段回复时就没有等待指示。
     ui.push({
       id: `a-${index}-${message.timestamp}`,
       role: "assistant",
       content: parts.length ? parts : [{ type: "text", text: "" }],
-      status: incomplete
+      ...(incomplete
         ? {
-            type: "incomplete",
-            reason: message.stopReason === "aborted" ? "cancelled" : "error",
+            status: {
+              type: "incomplete" as const,
+              reason:
+                message.stopReason === "aborted" ? ("cancelled" as const) : ("error" as const),
+            },
           }
-        : { type: "complete", reason: "stop" },
+        : {}),
       metadata: { custom },
       createdAt: new Date(message.timestamp),
     });
@@ -1251,6 +1257,7 @@ export class AgentEngine {
           this.persist();
           this.emit();
         }
+
       }
 
       if (!finished) {

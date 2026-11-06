@@ -5,6 +5,7 @@ import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.core.content.FileProvider
+import com.dc.andagent.i18n.tr
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -33,16 +34,19 @@ class ClipboardWriteRichTool(private val context: Context) : Tool {
 
     override suspend fun execute(args: JsonObject): String {
         val kind = normalizeKind(args.strArg("kind"))
-            ?: return "ERROR: 不支持的 kind：${args.strArg("kind")}（可选 text|html|uri|image）"
-        val data = args.strArg("data") ?: return "ERROR: 缺少 data"
+            ?: return "ERROR: " + tr(
+                "不支持的 kind：${args.strArg("kind")}（可选 text|html|uri|image）",
+                "Unsupported kind: ${args.strArg("kind")} (use text|html|uri|image)",
+            )
+        val data = args.strArg("data") ?: return "ERROR: " + tr("缺少 data", "missing data")
         val label = args.strArg("label") ?: "AndAgent"
         val cm = context.getSystemService(ClipboardManager::class.java)
-            ?: return "ERROR: 系统剪贴板不可用"
+            ?: return "ERROR: " + tr("系统剪贴板不可用", "system clipboard unavailable")
         return runCatching {
             when (kind) {
                 "text" -> {
                     cm.setPrimaryClip(ClipData.newPlainText(label, data))
-                    "已写入剪贴板文本（${data.length} 字）"
+                    tr("已写入剪贴板文本（${data.length} 字）", "Copied text to clipboard (${data.length} chars)")
                 }
                 "html" -> {
                     val clip = if (android.os.Build.VERSION.SDK_INT >= 29) {
@@ -51,13 +55,17 @@ class ClipboardWriteRichTool(private val context: Context) : Tool {
                         ClipData.newPlainText(label, data)
                     }
                     cm.setPrimaryClip(clip)
-                    val mode = if (android.os.Build.VERSION.SDK_INT >= 29) "text/html" else "text（系统不支持 HTML clip，已降级）"
-                    "已写入剪贴板 HTML（$mode，${data.length} 字）"
+                    val mode = if (android.os.Build.VERSION.SDK_INT >= 29) {
+                        "text/html"
+                    } else {
+                        tr("text（系统不支持 HTML clip，已降级）", "text (HTML clip unsupported, downgraded)")
+                    }
+                    tr("已写入剪贴板 HTML（$mode，${data.length} 字）", "Copied HTML to clipboard ($mode, ${data.length} chars)")
                 }
                 "uri" -> {
                     val uri = android.net.Uri.parse(data)
                     cm.setPrimaryClip(ClipData.newRawUri(label, uri))
-                    "已写入剪贴板 URI：$data"
+                    tr("已写入剪贴板 URI：$data", "Copied URI to clipboard: $data")
                 }
                 else -> { // image
                     val raw = data.substringAfter("base64,", data)
@@ -68,10 +76,15 @@ class ClipboardWriteRichTool(private val context: Context) : Tool {
                     file.writeBytes(bytes)
                     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                     cm.setPrimaryClip(ClipData.newRawUri(label, uri))
-                    "已写入剪贴板图片（$mime，${bytes.size} 字节，粘贴到聊天/文档即可插入）"
+                    tr(
+                        "已写入剪贴板图片（$mime，${bytes.size} 字节，粘贴到聊天/文档即可插入）",
+                        "Copied image to clipboard ($mime, ${bytes.size} bytes; paste into chat or a document)",
+                    )
                 }
             }
-        }.getOrElse { "ERROR: 写入剪贴板失败：${it.message ?: it.javaClass.simpleName}" }
+        }.getOrElse {
+            "ERROR: " + tr("写入剪贴板失败：${it.message ?: it.javaClass.simpleName}", "could not write to clipboard: ${it.message ?: it.javaClass.simpleName}")
+        }
     }
 
     companion object {
@@ -94,11 +107,14 @@ class ClipboardReadRichTool(private val context: Context) : Tool {
 
     override suspend fun execute(args: JsonObject): String {
         val cm = context.getSystemService(ClipboardManager::class.java)
-            ?: return "ERROR: 系统剪贴板不可用"
-        if (!cm.hasPrimaryClip()) return "ERROR: 剪贴板为空"
+            ?: return "ERROR: " + tr("系统剪贴板不可用", "system clipboard unavailable")
+        if (!cm.hasPrimaryClip()) return "ERROR: " + tr("剪贴板为空", "clipboard is empty")
         val clip = cm.primaryClip
-            ?: return "ERROR: 无法读取剪贴板（Android 10+ 要求应用窗口有焦点）"
-        if (clip.itemCount == 0) return "ERROR: 剪贴板为空"
+            ?: return "ERROR: " + tr(
+                "无法读取剪贴板（Android 10+ 要求应用窗口有焦点）",
+                "could not read clipboard (Android 10+ requires the app window to have focus)",
+            )
+        if (clip.itemCount == 0) return "ERROR: " + tr("剪贴板为空", "clipboard is empty")
         val desc = clip.description
         val item = clip.getItemAt(0)
         return buildJsonObject {
@@ -139,16 +155,21 @@ class ClipboardClearTool(private val context: Context) : Tool {
 
     override suspend fun execute(args: JsonObject): String {
         val cm = context.getSystemService(ClipboardManager::class.java)
-            ?: return "ERROR: 系统剪贴板不可用"
-        if (!cm.hasPrimaryClip()) return "剪贴板本来就是空的"
+            ?: return "ERROR: " + tr("系统剪贴板不可用", "system clipboard unavailable")
+        if (!cm.hasPrimaryClip()) return tr("剪贴板本来就是空的", "Clipboard is already empty")
         return runCatching {
             if (android.os.Build.VERSION.SDK_INT >= 28) {
                 // 先尝试真清空（少数 ROM/旧版本允许）；被拒则回退空 clip 覆盖。
                 val cleared = runCatching { cm.clearPrimaryClip(); true }.getOrDefault(false)
-                if (cleared) return@runCatching "已清空剪贴板（clearPrimaryClip）"
+                if (cleared) return@runCatching tr("已清空剪贴板（clearPrimaryClip）", "Clipboard cleared (clearPrimaryClip)")
             }
             cm.setPrimaryClip(ClipData.newPlainText("", ""))
-            "已清空剪贴板（Android 10+ 限制 clear 仅默认输入法可用，已用空 clip 覆盖，原内容不可再粘贴）"
-        }.getOrElse { "ERROR: 清空剪贴板失败：${it.message ?: it.javaClass.simpleName}" }
+            tr(
+                "已清空剪贴板（Android 10+ 限制 clear 仅默认输入法可用，已用空 clip 覆盖，原内容不可再粘贴）",
+                "Clipboard cleared (Android 10+ only lets the default IME clear it; an empty clip overwrote the content, so it can no longer be pasted)",
+            )
+        }.getOrElse {
+            "ERROR: " + tr("清空剪贴板失败：${it.message ?: it.javaClass.simpleName}", "could not clear clipboard: ${it.message ?: it.javaClass.simpleName}")
+        }
     }
 }

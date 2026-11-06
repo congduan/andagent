@@ -114,6 +114,16 @@ class AgentBridge(
     fun getAppVersion(): String =
         buildJsonObject { put("version", appVersion) }.toString()
 
+    /**
+     * 语言设置由 web 层持有（localStorage），同步给原生，让工具结果与
+     * 原生界面跟界面语言一致。
+     */
+    @JavascriptInterface
+    fun setUiLanguage(mode: String): String {
+        com.dc.andagent.i18n.Lang.setMode(appContext, mode)
+        return "OK"
+    }
+
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.SECONDS) // SSE: keep the stream open

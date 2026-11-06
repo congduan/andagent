@@ -162,7 +162,10 @@ object DevToolsClient {
                 return fetchPages(candidate).also { socketName = candidate }
             } catch (e: Exception) {
                 android.util.Log.e("DevToolsClient", "连接 $candidate 失败", e)
-                errors += "${candidate}: ${e.message ?: e.javaClass.simpleName}"
+                val top = e.stackTrace.firstOrNull()
+                    ?.let { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
+                errors += "${candidate}: ${e.message ?: e.javaClass.simpleName}" +
+                    if (top != null) " @ $top" else ""
             }
         }
         val hints = candidates.filter { it.contains("devtools") }.take(6).joinToString(" | ")
@@ -357,7 +360,14 @@ private class LocalBridgeSocket(private val name: String) : java.net.Socket() {
 
     override fun connect(address: java.net.SocketAddress?, timeout: Int) {
         val ns = if (isPath) LocalSocketAddress.Namespace.FILESYSTEM else LocalSocketAddress.Namespace.ABSTRACT
-        local.connect(LocalSocketAddress(name, ns), timeout)
+        val endpoint = LocalSocketAddress(name, ns)
+        // Android 17 (API 37) 的 connect(endpoint, timeout) 直接抛 UnsupportedOperationException，
+        // 回退到无超时重载；本地 socket 连接是即时的，超时参数无实际意义。
+        try {
+            local.connect(endpoint, timeout)
+        } catch (e: UnsupportedOperationException) {
+            local.connect(endpoint)
+        }
         connectedFlag = true
     }
 

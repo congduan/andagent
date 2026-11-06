@@ -20,6 +20,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.dc.andagent.R
 import com.dc.andagent.bridge.PermissionBroker
+import com.dc.andagent.i18n.tr
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -189,14 +190,16 @@ class ClipboardWriteTool(private val context: Context) : Tool {
     )
 
     override suspend fun execute(args: JsonObject): String {
-        val text = args.strArg("text") ?: return "ERROR: 缺少 text"
+        val text = args.strArg("text") ?: return "ERROR: " + tr("缺少 text", "missing text")
         val label = args.strArg("label") ?: "AndAgent"
         return runCatching {
             val cm = context.getSystemService(ClipboardManager::class.java)
-                ?: return@runCatching "ERROR: 系统剪贴板不可用"
+                ?: return@runCatching "ERROR: " + tr("系统剪贴板不可用", "system clipboard unavailable")
             cm.setPrimaryClip(ClipData.newPlainText(label, text))
-            "已写入剪贴板（${text.length} 字）"
-        }.getOrElse { "ERROR: 写入剪贴板失败：${it.message ?: it.javaClass.simpleName}" }
+            tr("已写入剪贴板（${text.length} 字）", "Copied to clipboard (${text.length} chars)")
+        }.getOrElse {
+            "ERROR: " + tr("写入剪贴板失败：${it.message ?: it.javaClass.simpleName}", "could not write to clipboard: ${it.message ?: it.javaClass.simpleName}")
+        }
     }
 }
 
@@ -208,15 +211,20 @@ class ClipboardReadTool(private val context: Context) : Tool {
 
     override suspend fun execute(args: JsonObject): String {
         val cm = context.getSystemService(ClipboardManager::class.java)
-            ?: return "ERROR: 系统剪贴板不可用"
-        if (!cm.hasPrimaryClip()) return "ERROR: 剪贴板为空"
+            ?: return "ERROR: " + tr("系统剪贴板不可用", "system clipboard unavailable")
+        if (!cm.hasPrimaryClip()) return "ERROR: " + tr("剪贴板为空", "clipboard is empty")
         val clip = cm.primaryClip
-            ?: return "ERROR: 无法读取剪贴板（Android 10+ 要求应用窗口有焦点）"
-        if (clip.itemCount == 0) return "ERROR: 剪贴板为空"
+            ?: return "ERROR: " + tr(
+                "无法读取剪贴板（Android 10+ 要求应用窗口有焦点）",
+                "could not read clipboard (Android 10+ requires the app window to have focus)",
+            )
+        if (clip.itemCount == 0) return "ERROR: " + tr("剪贴板为空", "clipboard is empty")
         val text = runCatching {
             clip.getItemAt(0).coerceToText(context)?.toString().orEmpty()
-        }.getOrElse { return "ERROR: 读取剪贴板失败：${it.message ?: it.javaClass.simpleName}" }
-        if (text.isEmpty()) return "ERROR: 剪贴板内容不是文本，或为空"
+        }.getOrElse {
+            return "ERROR: " + tr("读取剪贴板失败：${it.message ?: it.javaClass.simpleName}", "could not read clipboard: ${it.message ?: it.javaClass.simpleName}")
+        }
+        if (text.isEmpty()) return "ERROR: " + tr("剪贴板内容不是文本，或为空", "clipboard content is not text or is empty")
         return buildJsonObject {
             put("text", if (text.length > maxChars) text.take(maxChars) else text)
             put("chars", text.length)
@@ -243,18 +251,18 @@ class NotifySendTool(
     )
 
     override suspend fun execute(args: JsonObject): String {
-        val title = args.strArg("title") ?: return "ERROR: 缺少 title"
-        val text = args.strArg("text") ?: return "ERROR: 缺少 text"
+        val title = args.strArg("title") ?: return "ERROR: " + tr("缺少 title", "missing title")
+        val text = args.strArg("text") ?: return "ERROR: " + tr("缺少 text", "missing text")
         if (Build.VERSION.SDK_INT >= 33) {
             val granted = permissions.ensure(listOf(Manifest.permission.POST_NOTIFICATIONS))
-            if (!granted) return "ERROR: 通知权限未授予，请在系统设置中开启"
+            if (!granted) return "ERROR: " + tr("通知权限未授予，请在系统设置中开启", "notification permission not granted; enable it in system settings")
         }
         return runCatching {
             val manager = context.getSystemService(NotificationManager::class.java)
-                ?: return@runCatching "ERROR: 通知服务不可用"
+                ?: return@runCatching "ERROR: " + tr("通知服务不可用", "notification service unavailable")
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "AndAgent 通知", NotificationManager.IMPORTANCE_DEFAULT)
-                    .apply { description = "来自 AndAgent 的本地提醒" },
+                NotificationChannel(CHANNEL_ID, tr("AndAgent 通知", "AndAgent notifications"), NotificationManager.IMPORTANCE_DEFAULT)
+                    .apply { description = tr("来自 AndAgent 的本地提醒", "Local reminders from AndAgent") },
             )
             val id = args.intArg("id") ?: (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
             val progress = args.intArg("progress")
@@ -282,8 +290,10 @@ class NotifySendTool(
                 }
                 .build()
             manager.notify(id, notification)
-            "已发送通知「$title」（id=$id）"
-        }.getOrElse { "ERROR: 发送通知失败：${it.message ?: it.javaClass.simpleName}" }
+            tr("已发送通知「$title」（id=$id）", "Notification \"$title\" sent (id=$id)")
+        }.getOrElse {
+            "ERROR: " + tr("发送通知失败：${it.message ?: it.javaClass.simpleName}", "could not send notification: ${it.message ?: it.javaClass.simpleName}")
+        }
     }
 
     companion object {

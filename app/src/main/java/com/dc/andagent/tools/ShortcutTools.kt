@@ -12,6 +12,7 @@ import android.graphics.RectF
 import android.graphics.drawable.Icon
 import android.net.Uri
 import com.dc.andagent.R
+import com.dc.andagent.i18n.tr
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -127,17 +128,19 @@ class ShortcutTool(private val context: Context, override val name: String) : To
             "shortcut_create" -> create(args)
             "shortcut_list" -> list()
             "shortcut_delete" -> delete(args)
-            else -> "ERROR: 未知快捷方式工具 $name"
+            else -> "ERROR: " + tr("未知快捷方式工具 $name", "unknown shortcut tool $name")
         }
     }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
 
     private fun create(args: JsonObject): String {
-        val label = args.strArg("name")?.trim() ?: return "ERROR: 缺少 name"
-        val prompt = args.strArg("prompt") ?: return "ERROR: 缺少 prompt"
+        val label = args.strArg("name")?.trim() ?: return "ERROR: " + tr("缺少 name", "missing name")
+        val prompt = args.strArg("prompt") ?: return "ERROR: " + tr("缺少 prompt", "missing prompt")
         val emoji = args.strArg("emoji")?.trim().orEmpty()
         val manager = context.getSystemService(ShortcutManager::class.java)
-            ?: return "ERROR: 当前设备没有快捷方式服务"
-        if (!manager.isRequestPinShortcutSupported) return "ERROR: 启动器不支持 pin，请手动创建"
+            ?: return "ERROR: " + tr("当前设备没有快捷方式服务", "no shortcut service on this device")
+        if (!manager.isRequestPinShortcutSupported) {
+            return "ERROR: " + tr("启动器不支持 pin，请手动创建", "the launcher does not support pinning; create it manually")
+        }
 
         val id = ShortcutFactory.id(label, prompt)
         val icon = if (emoji.isEmpty()) Icon.createWithResource(context, R.mipmap.ic_launcher)
@@ -150,13 +153,18 @@ class ShortcutTool(private val context: Context, override val name: String) : To
         val store = ShortcutStore(context)
         val existing = store.list().firstOrNull { it.id == id }
         if (manager.pinnedShortcuts.any { it.id == id }) {
-            check(manager.updateShortcuts(listOf(shortcut))) { "更新快捷方式失败" }
+            check(manager.updateShortcuts(listOf(shortcut))) { tr("更新快捷方式失败", "failed to update the shortcut") }
             store.save(TaskShortcut(id, label, prompt, emoji, existing?.createdAt ?: System.currentTimeMillis()))
-            return "已更新桌面快捷方式「$label」（id=$id）"
+            return tr("已更新桌面快捷方式「$label」（id=$id）", "Home screen shortcut \"$label\" updated (id=$id)")
         }
-        if (!manager.requestPinShortcut(shortcut, null)) return "ERROR: 启动器未接受 pin 请求，请手动创建"
+        if (!manager.requestPinShortcut(shortcut, null)) {
+            return "ERROR: " + tr("启动器未接受 pin 请求，请手动创建", "the launcher rejected the pin request; create it manually")
+        }
         store.save(TaskShortcut(id, label, prompt, emoji, existing?.createdAt ?: System.currentTimeMillis()))
-        return "已请求添加桌面快捷方式「$label」（id=$id）；请在启动器确认"
+        return tr(
+            "已请求添加桌面快捷方式「$label」（id=$id）；请在启动器确认",
+            "Requested to add home screen shortcut \"$label\" (id=$id); confirm it in the launcher",
+        )
     }
 
     private fun list(): String = buildJsonArray {
@@ -166,19 +174,30 @@ class ShortcutTool(private val context: Context, override val name: String) : To
                 put("name", record.name)
                 put("prompt", record.prompt)
                 put("createdAt", record.createdAt)
-                put("launcherManaged", "图标由启动器管理；shortcut_delete 仅停用，长按图标拖到卸载可彻底移除")
+                put(
+                    "launcherManaged",
+                    tr(
+                        "图标由启动器管理；shortcut_delete 仅停用，长按图标拖到卸载可彻底移除",
+                        "Icons are managed by the launcher; shortcut_delete only disables them — long-press the icon and drag it to uninstall to remove it completely",
+                    ),
+                )
             })
         }
     }.toString()
 
     private fun delete(args: JsonObject): String {
-        val id = args.strArg("id") ?: return "ERROR: 缺少 id"
+        val id = args.strArg("id") ?: return "ERROR: " + tr("缺少 id", "missing id")
         val store = ShortcutStore(context)
-        if (store.list().none { it.id == id }) return "ERROR: 快捷方式记录不存在：$id"
+        if (store.list().none { it.id == id }) {
+            return "ERROR: " + tr("快捷方式记录不存在：$id", "shortcut record not found: $id")
+        }
         val manager = context.getSystemService(ShortcutManager::class.java)
-            ?: return "ERROR: 当前设备没有快捷方式服务"
+            ?: return "ERROR: " + tr("当前设备没有快捷方式服务", "no shortcut service on this device")
         manager.disableShortcuts(listOf(id))
         store.delete(id)
-        return "已停用快捷方式 $id，并移除本地记录；长按桌面图标拖到卸载可彻底移除"
+        return tr(
+            "已停用快捷方式 $id，并移除本地记录；长按桌面图标拖到卸载可彻底移除",
+            "Shortcut $id disabled and its local record removed; long-press the icon and drag it to uninstall to remove it completely",
+        )
     }
 }

@@ -127,8 +127,11 @@ button:disabled {
 .app {
   position: relative;
   z-index: 1;
-  height: 100%;
-  height: 100dvh;
+  /* 跟随初始包含块（布局视口）而不是 100dvh：键盘顶起窗口时 100% 会一起缩短，
+     而 dvh 在键盘弹出时不一定变化，会把底部输入框留在键盘后面。
+     --kb-inset 是布局视口没有被顶起时（见 keyboard.ts）键盘吃掉的高度：
+     整列一起让位，输入框才会停在键盘上沿而不是被压在键盘下面。 */
+  height: calc(100% - var(--kb-inset, 0px));
   max-width: 940px;
   margin: 0 auto;
   display: flex;
@@ -139,6 +142,10 @@ button:disabled {
 
 .app-head {
   flex: none;
+  /* 顶栏浮层（对话记录面板）要压住对话区：.thread 是定位元素且 DOM 在后，
+     backdrop-filter 又让顶栏自成层叠上下文，只靠 z-index:auto 会被盖住。 */
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -333,9 +340,9 @@ button:disabled {
   color: #0b0d11;
 }
 
+/* 语气只靠图标与描边区分，不再用侧边色条。 */
 .toast-error {
   border-color: rgba(255, 95, 95, 0.42);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38), inset 3px 0 0 var(--danger);
 }
 
 .toast-error .toast-icon {
@@ -344,7 +351,6 @@ button:disabled {
 
 .toast-success {
   border-color: rgba(79, 209, 161, 0.4);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38), inset 3px 0 0 var(--ok);
 }
 
 .toast-success .toast-icon {
@@ -353,7 +359,6 @@ button:disabled {
 
 .toast-info {
   border-color: rgba(127, 155, 255, 0.34);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38), inset 3px 0 0 var(--accent);
 }
 
 .toast-info .toast-icon {
@@ -402,7 +407,7 @@ button:disabled {
 /* ---------------- Thread ---------------- */
 
 .thread {
-  position: relative; /* 「对话记录」悬浮按钮的定位基准 */
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -505,28 +510,52 @@ button:disabled {
   vertical-align: text-bottom;
 }
 
-/* 尚未收到任何内容时的等待指示：旋转圆环（菊花） */
-.stream-spinner {
-  display: block;
-  width: 16px;
+/* 尚未收到任何内容时的等待指示：三点依次起落，比旋转圆环更轻。 */
+.stream-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   height: 16px;
   margin-top: 4px;
+}
+
+.stream-dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  border: 2px solid rgba(127, 137, 255, 0.25);
-  border-top-color: var(--accent);
-  animation: stream-spin 0.8s linear infinite;
+  background: var(--accent);
+  animation: stream-dot 1.2s ease-in-out infinite;
+}
+
+.stream-dot:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.stream-dot:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes stream-dot {
+  0%,
+  100% {
+    opacity: 0.28;
+    transform: translateY(0) scale(0.85);
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .stream-spinner {
+  .stream-dot {
     animation-duration: 2.4s;
   }
 }
 
-@keyframes stream-spin {
-  to {
-    transform: rotate(360deg);
-  }
+/* 线程级等待：还没有任何消息承载指示时的兜底三点。 */
+.thread-waiting {
+  margin: 2px 0 4px 2px;
 }
 
 .msg-error {
@@ -609,8 +638,9 @@ button:disabled {
 
 .md blockquote {
   margin: 12px 0;
-  padding: 2px 0 2px 14px;
-  border-left: 3px solid rgba(127, 155, 255, 0.5);
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(127, 155, 255, 0.07);
   color: var(--muted);
 }
 
@@ -943,12 +973,101 @@ button:disabled {
 /* ---------------- Tool cards ---------------- */
 
 .tool-card {
+  position: relative;
   margin: 10px 0;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--panel);
   overflow: hidden;
   transition: border-color 0.2s ease;
+}
+
+/* 未返回的工具：顶部流动进度条 + 详情区骨架，明确"还在跑"。 */
+.tool-progress {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  overflow: hidden;
+  background: rgba(127, 155, 255, 0.14);
+}
+
+.tool-progress span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  transform: translateX(-100%);
+  animation: tool-progress-slide 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes tool-progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+.tool-elapsed {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-waiting {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--code-bg);
+  border: 1px solid var(--wash-2);
+}
+
+.tool-skeleton span {
+  height: 9px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--wash-2) 0%, var(--wash-3) 50%, var(--wash-2) 100%);
+  background-size: 200% 100%;
+  animation: tool-skeleton-sweep 1.4s linear infinite;
+}
+
+.tool-skeleton span:nth-child(1) {
+  width: 62%;
+}
+
+.tool-skeleton span:nth-child(2) {
+  width: 88%;
+}
+
+.tool-skeleton span:nth-child(3) {
+  width: 44%;
+}
+
+@keyframes tool-skeleton-sweep {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-progress span,
+  .tool-skeleton span {
+    animation: none;
+  }
 }
 
 .tool-card:hover {
@@ -1117,11 +1236,21 @@ button:disabled {
 }
 
 .tool-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 10px;
   letter-spacing: 0.6px;
   text-transform: uppercase;
   color: var(--faint);
   margin-bottom: 4px;
+}
+
+.tool-label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-pre {
@@ -1236,63 +1365,54 @@ button:disabled {
 
 /* ---------------- 对话记录（消息快捷导航） ---------------- */
 
-/* 面板与悬浮按钮都锚在对话区右下角，向上生长，不挤压消息流。 */
-.msg-nav-scrim {
-  position: absolute;
-  inset: 0;
-  z-index: 15;
-}
-
+/* 入口在顶栏，面板从按钮下方弹出，不占布局、不挤压消息流。 */
 .msg-nav {
-  position: absolute;
-  right: 10px;
-  bottom: 10px;
-  z-index: 16;
+  position: relative;
+  flex: none;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
+  align-items: center;
 }
 
 .msg-nav-btn {
+  /* 与模型 chip 同高的胶囊按钮，避免顶栏出现两种高度。 */
   position: relative;
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
-  border-radius: 12px;
+  width: 32px;
+  height: 24px;
+  border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--wash-2);
   color: var(--muted);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 
-.msg-nav-btn:hover,
+.msg-nav-btn:hover:not(:disabled),
 .msg-nav-btn.open {
   color: var(--text);
-  border-color: var(--border-strong);
-  background: var(--panel-2);
+  border-color: var(--border);
+  background: var(--wash-3);
 }
 
 .msg-nav-badge {
   position: absolute;
-  top: -5px;
+  top: -4px;
   right: -5px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
   border: 1px solid var(--panel);
   background: var(--accent);
   color: var(--bg);
-  font-size: 10px;
-  line-height: 14px;
+  font-size: 9px;
+  line-height: 12px;
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
 .msg-nav-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 16;
   width: min(320px, 78vw);
   max-height: min(46vh, 420px);
   display: flex;
@@ -1302,7 +1422,7 @@ button:disabled {
   background: var(--menu-bg);
   box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
   overflow: hidden;
-  animation: fade-up 0.16s ease both;
+  animation: fade-down 0.16s ease both;
 }
 
 .msg-nav-head {
@@ -1404,6 +1524,8 @@ button:disabled {
 
 .composer-dock {
   flex: none;
+  /* 键盘让位由 .app 的高度统一处理（--kb-inset），这里只管安全区：
+     给输入框单独加内边距会让整列溢出，反而把输入框顶到键盘里去。 */
   padding: 6px 18px calc(9px + env(safe-area-inset-bottom));
   background: linear-gradient(180deg, var(--bg), var(--bg));
 }
@@ -2166,6 +2288,17 @@ button:disabled {
   }
 }
 
+@keyframes fade-down {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes fade-up {
   from {
     opacity: 0;
@@ -2678,6 +2811,7 @@ html.theme-transition *::after {
 /* --------------------------- thinking block -------------------------- */
 
 .thinking {
+  position: relative;
   margin: 2px 0 8px;
   border: 1px solid var(--wash-4);
   border-radius: 10px;
@@ -2690,7 +2824,8 @@ html.theme-transition *::after {
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 8px 12px;
+  /* 右侧留出复制按钮的位置 */
+  padding: 8px 64px 8px 12px;
   border: none;
   background: transparent;
   color: var(--muted);
@@ -2699,10 +2834,16 @@ html.theme-transition *::after {
   text-align: left;
 }
 
+/* 图标盒固定 12×12 并双向居中，旋转中心==视觉中心。 */
 .thinking-caret {
-  font-size: 10px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 12px;
-  display: inline-block;
+  height: 12px;
+  line-height: 1;
+  transform-origin: 50% 50%;
   transition: transform 0.18s ease;
 }
 
@@ -2752,17 +2893,16 @@ html.theme-transition *::after {
   50% { transform: scale(1.08); }
 }
 
-.mic-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--wash-5);
-  border-top-color: var(--text);
-  border-radius: 50%;
-  animation: mic-spin 0.8s linear infinite;
+/* 转写中用同一套三点指示，避免出现第二个旋转圆环。 */
+.mic-typing {
+  margin-top: 0;
+  gap: 3px;
 }
 
-@keyframes mic-spin {
-  to { transform: rotate(360deg); }
+.mic-typing .stream-dot {
+  width: 4px;
+  height: 4px;
+  background: currentColor;
 }
 
 /* 思考块展开/收起：常驻挂载，用网格行高做滑动过渡。 */
@@ -2811,12 +2951,13 @@ html.theme-transition *::after {
 
 .thinking-copy {
   position: absolute;
+  top: 6px;
   right: 8px;
-  bottom: 6px;
 }
 
 .tool-copy {
   margin-left: auto;
+  flex: none;
 }
 
 .webview-card, .geo-card, .kv-card { margin: 10px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); }
@@ -2837,7 +2978,9 @@ html.theme-transition *::after {
 .tool-image-comparison { display: flex; gap: 8px; margin: 8px; justify-content: center; }
 .tool-image-comparison figure { min-width: 0; flex: 1; margin: 0; text-align: center; color: var(--muted); font-size: 11px; }
 .tool-image-comparison img { display: block; max-width: 100%; max-height: 260px; margin: 0 auto 4px; border-radius: 8px; object-fit: contain; }
-.kv-card div { display: grid; grid-template-columns: minmax(90px,35%) 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.kv-card { font-size: 12px; line-height: 1.5; }
+.kv-card div { display: grid; grid-template-columns: minmax(90px,35%) 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+.kv-card div:last-child { border-bottom: 0; padding-bottom: 0; }
 .kv-card dt { color: var(--muted); } .kv-card dd { margin: 0; overflow-wrap: anywhere; }
 .geo-card iframe { display: block; width: 100%; height: 230px; border: 0; border-radius: 7px; margin: 8px 0; }
 .json-tree { font: 11px var(--mono); margin-bottom: 8px; color: var(--muted); }

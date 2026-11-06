@@ -17,7 +17,7 @@ const zh = {
   modelFallbackHint: "可检查地址与密钥后重试；若服务不提供模型列表，请手动填写模型 ID 后测试，也可直接保存。",
   modelUrlInvalid: "请输入有效的 HTTP(S) Base URL，不要包含账号、查询参数或 #。",
   modelKeyRequired: "请填写 API Key。", modelIdRequired: "请填写模型 ID。", modelSaveFailed: "保存失败，请重试。",
-  modelNotConfigured: "还没有连接大模型。", modelConfigure: "去配置", modelInputUnconfigured: "先连接一个大模型…",
+  modelNotConfigured: "还没有连接大模型。", modelConfigure: "去配置", modelInputUnconfigured: "连接大模型后就能开始对话…",
   settings: "设置", close: "关闭", cancel: "取消", save: "保存", appearance: "外观", confirmOk: "确定",
   system: "跟随系统", light: "日间", dark: "夜间", language: "语言 Language",
   chinese: "中文", english: "English", about: "关于 AndAgent", version: "版本",
@@ -46,8 +46,8 @@ const zh = {
   sessions: "会话列表", newChat: "新对话", send: "发送", stop: "停止生成",
   emptyTitle: "今天想让我做什么？", emptyBody: "我可以读取设备状态、分析存储与相册，并把结果整理成结论。",
   missingKey: "还没有配置 API Key，模型请求会失败。", goSettings: "去设置", requestFailed: "请求失败",
-  inputPlaceholder: "给 AndAgent 发消息…", inputNoKey: "先在设置中填入 API Key…",
-  inputRecording: "录音中…再次点击停止", inputTranscribing: "转写中…",
+  inputPlaceholder: "有什么需要？直接说…", inputNoKey: "先在设置中填入 API Key…",
+  inputRecording: "正在录音…点麦克风结束", inputTranscribing: "正在转写…",
   thinking: "思考过程", thinkingNow: "思考中…", copied: "已复制", copy: "复制",
   renderFailed: "这条消息渲染失败。", aborted: "已中断（消耗未回报）",
   buildUnknown: "未知", noticesUnavailable: "组件声明暂时无法读取。",
@@ -155,6 +155,8 @@ const zh = {
   toolNfcWaiting: "请贴近 NFC 卡片，最多等待 60 秒…",
   toolWriting: "写入",
   toolRunningState: "执行中",
+  toolElapsed: "已等待 {seconds}s",
+  toolSlowHint: "已等待 {seconds}s，仍在执行；长时间无响应可点「停止」",
   toolInterrupted: "已被用户中断",
   toolFailed: "失败",
   toolDone: "完成",
@@ -411,7 +413,7 @@ const en: Record<Key, string> = {
   modelFallbackHint: "Check the address and key and retry. If model listing is unavailable, enter a model ID to test it, or save without testing.",
   modelUrlInvalid: "Enter a valid HTTP(S) Base URL without credentials, query parameters or a fragment.",
   modelKeyRequired: "Enter an API key.", modelIdRequired: "Enter a model ID.", modelSaveFailed: "Could not save. Please retry.",
-  modelNotConfigured: "No model connected yet.", modelConfigure: "Configure", modelInputUnconfigured: "Connect a model first…",
+  modelNotConfigured: "No model connected yet.", modelConfigure: "Configure", modelInputUnconfigured: "Connect a model to start chatting…",
   settings: "Settings", close: "Close", cancel: "Cancel", save: "Save", appearance: "Appearance", confirmOk: "OK",
   system: "System", light: "Light", dark: "Dark", language: "Language 语言",
   chinese: "中文", english: "English", about: "About AndAgent", version: "Version",
@@ -440,8 +442,8 @@ const en: Record<Key, string> = {
   sessions: "Sessions", newChat: "New chat", send: "Send", stop: "Stop generation",
   emptyTitle: "What can I help with today?", emptyBody: "I can inspect device status, storage, and photos, then summarize what I find.",
   missingKey: "No API Key configured. Model requests will fail.", goSettings: "Open settings", requestFailed: "Request failed",
-  inputPlaceholder: "Message AndAgent…", inputNoKey: "Add an API Key in Settings…",
-  inputRecording: "Recording… tap again to stop", inputTranscribing: "Transcribing…",
+  inputPlaceholder: "What do you need? Just ask…", inputNoKey: "Add an API Key in Settings…",
+  inputRecording: "Recording… tap the mic to stop", inputTranscribing: "Transcribing…",
   thinking: "Reasoning", thinkingNow: "Thinking…", copied: "Copied", copy: "Copy",
   renderFailed: "This message could not be rendered.", aborted: "Stopped (usage unavailable)",
   buildUnknown: "unknown", noticesUnavailable: "Component notices could not be loaded.",
@@ -549,6 +551,8 @@ const en: Record<Key, string> = {
   toolNfcWaiting: "Hold an NFC card nearby; waiting up to 60 seconds…",
   toolWriting: "Write",
   toolRunningState: "Running",
+  toolElapsed: "{seconds}s elapsed",
+  toolSlowHint: "Waiting {seconds}s — still running. Tap Stop if it seems stuck",
   toolInterrupted: "Stopped by user",
   toolFailed: "Failed",
   toolDone: "Done",
@@ -794,8 +798,21 @@ export function getLanguageMode(): LanguageMode {
   const value = localStorage.getItem(KEY);
   return value === "zh" || value === "en" ? value : "system";
 }
+/** Mirror the UI language into the native layer so tool results match it. */
+function pushLanguageToNative(mode: LanguageMode): void {
+  try {
+    window.AndroidBridge?.setUiLanguage?.(mode);
+  } catch {
+    /* browser preview: no bridge */
+  }
+}
+/** Push the stored language on startup (the native side defaults to the system locale). */
+export function syncLanguageToNative(): void {
+  pushLanguageToNative(getLanguageMode());
+}
 export function setLanguageMode(mode: LanguageMode): void {
   localStorage.setItem(KEY, mode);
+  pushLanguageToNative(mode);
   window.dispatchEvent(new Event("andagent:language"));
 }
 export function currentLanguage(): "zh" | "en" {

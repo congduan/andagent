@@ -51,6 +51,38 @@ function asList<T>(value: T | T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
+/** Category on the y axis, value on the x axis — the "ranking" layout. */
+export function isHorizontalBar(option: EChartsCoreOption): boolean {
+  const opt = option as LooseOption;
+  if (!asList<LooseOption>(opt.series).some((s) => s?.type === "bar")) return false;
+  const yAxes = asList<LooseOption>(opt.yAxis);
+  const xAxes = asList<LooseOption>(opt.xAxis);
+  const categoryOnY = yAxes.some((a) => a?.type === "category" || Array.isArray(a?.data));
+  const categoryOnX = xAxes.some((a) => a?.type === "category" || Array.isArray(a?.data));
+  return categoryOnY && !categoryOnX;
+}
+
+const DEFAULT_CHART_HEIGHT = 320;
+
+/**
+ * A horizontal bar needs roughly one row per category. With the fixed 320px
+ * shell, long rankings collapse into a wall of bars and their labels overlap,
+ * so derive the canvas height from the row count (capped, page scrolls).
+ */
+export function chartHeight(option: EChartsCoreOption): number {
+  if (!isHorizontalBar(option)) return DEFAULT_CHART_HEIGHT;
+  const opt = option as LooseOption;
+  const rowCount = Math.max(
+    0,
+    ...asList<LooseOption>(opt.series)
+      .filter((s) => s?.type === "bar")
+      .map((s) => (Array.isArray(s.data) ? s.data.length : 0)),
+    ...asList<LooseOption>(opt.yAxis).map((a) => (Array.isArray(a?.data) ? a.data.length : 0)),
+  );
+  if (rowCount <= 6) return DEFAULT_CHART_HEIGHT;
+  return Math.min(720, 140 + rowCount * 32);
+}
+
 /**
  * ECharts defaults assume a desktop canvas: `grid` keeps only 10% margins and
  * `containLabel` is off, so on a phone-width card the axis labels (long numbers,
@@ -86,10 +118,13 @@ export function normalizeOption(option: EChartsCoreOption): EChartsCoreOption {
   }
 
   if (hasCartesian) {
+    const horizontal = isHorizontalBar(option);
     const grids = opt.grid === undefined ? [{}] : asList<LooseOption>(opt.grid);
     opt.grid = grids.map((grid) => ({
       left: 10,
-      right: 12,
+      // Value labels sit outside the bar on horizontal layouts; reserve room so
+      // they are not clipped by the canvas edge.
+      right: horizontal ? 48 : 12,
       top: headerHeight,
       bottom: 8,
       ...grid,
@@ -102,6 +137,27 @@ export function normalizeOption(option: EChartsCoreOption): EChartsCoreOption {
       if (axis.type !== "category" && axis.data === undefined) continue;
       const axisLabel = axis.axisLabel ?? (axis.axisLabel = {});
       if (axisLabel.hideOverlap === undefined) axisLabel.hideOverlap = true;
+      // Long category names would otherwise eat the plot width on a phone.
+      if (horizontal && axisLabel.width === undefined) axisLabel.width = 104;
+      if (horizontal && axisLabel.overflow === undefined) axisLabel.overflow = "truncate";
+    }
+
+    if (horizontal) {
+      for (const item of series) {
+        if (item?.type !== "bar") continue;
+        const label = item.label;
+        // Only restyle labels that are actually rendered.
+        if (label !== true && label?.show !== true) continue;
+        const next = label === true ? (item.label = { show: true }) : label;
+        const position = next.position === undefined ? "" : String(next.position);
+        if (position === "" || position.startsWith("inside")) {
+          // A short bar has no room inside; keep the value outside so it stays
+          // legible instead of colliding with the category name.
+          next.position = "right";
+          if (next.distance === undefined) next.distance = 4;
+          if (next.color === undefined) next.color = "#c9d1e3";
+        }
+      }
     }
   }
 
@@ -153,6 +209,7 @@ export function ChartCard({ code }: { code: string }) {
   const { t, language } = useI18n();
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [height, setHeight] = useState(DEFAULT_CHART_HEIGHT);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -166,6 +223,7 @@ export function ChartCard({ code }: { code: string }) {
       return;
     }
     setError(null);
+    setHeight(chartHeight(option));
 
     let chart: echarts.ECharts | null = null;
     try {
@@ -201,7 +259,7 @@ export function ChartCard({ code }: { code: string }) {
       <div className="chart-head">
         <span className="chart-badge">{t("chart")}</span>
       </div>
-      <div ref={hostRef} className="chart-body" />
+      <div ref={hostRef} className="chart-body" style={{ height }} />
     </div>
   );
 }

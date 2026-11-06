@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "./i18n";
 
 /** 一条用户输入：id 与会话消息 id 一致，text 用于列表预览。 */
@@ -37,16 +37,16 @@ function preview(text: string, max = 120): string {
 }
 
 /**
- * 对话记录快捷导航：贴在对话区右下角，点开即可看到本次会话里输入过的
- * 每一条消息，点哪条就滚到哪条并高亮。
+ * 对话记录快捷导航：入口在顶栏，点开即可看到本次会话里输入过的每一条
+ * 消息，点哪条就滚到哪条并高亮。
  */
 export function MessageNav({ items }: { items: MessageNavItem[] }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState("");
   const listRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
-  const close = useCallback(() => setOpen(false), []);
   // 只有"刚打开"时才把当前条目滚进列表中间；后续滚动不打断用户。
   const openedRef = useRef(false);
 
@@ -98,6 +98,16 @@ export function MessageNav({ items }: { items: MessageNavItem[] }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  // 顶栏里的浮层：点外面收起（不需要全屏遮罩，避免挡住对话区的点击）。
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+
   const jump = (item: MessageNavItem) => {
     setOpen(false);
     const el = messageElement(item.id);
@@ -109,51 +119,48 @@ export function MessageNav({ items }: { items: MessageNavItem[] }) {
   if (items.length === 0) return null;
 
   return (
-    <>
-      {open && <div className="msg-nav-scrim" onClick={close} aria-hidden="true" />}
-      <div className="msg-nav">
-        {open && (
-          <div className="msg-nav-panel" role="dialog" aria-label={t("msgNavTitle")}>
-            <div className="msg-nav-head">
-              <span className="msg-nav-head-title">{t("msgNavTitle")}</span>
-              <span className="msg-nav-head-count">{t("msgNavCount", { count: items.length })}</span>
-            </div>
-            <div className="msg-nav-list" ref={listRef}>
-              {items.map((item, index) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  data-nav-id={item.id}
-                  className={`msg-nav-item ${item.id === active ? "active" : ""}`}
-                  aria-label={t("msgNavJump", { index: index + 1 })}
-                  onClick={() => jump(item)}
-                >
-                  <span className="msg-nav-index">{index + 1}</span>
-                  <span className="msg-nav-text">{preview(item.text)}</span>
-                </button>
-              ))}
-            </div>
+    <div className="msg-nav" ref={rootRef}>
+      {open && (
+        <div className="msg-nav-panel" role="dialog" aria-label={t("msgNavTitle")}>
+          <div className="msg-nav-head">
+            <span className="msg-nav-head-title">{t("msgNavTitle")}</span>
+            <span className="msg-nav-head-count">{t("msgNavCount", { count: items.length })}</span>
           </div>
-        )}
-        <button
-          type="button"
-          className={`msg-nav-btn ${open ? "open" : ""}`}
-          aria-expanded={open}
-          aria-label={t("msgNavOpen")}
-          title={t("msgNavOpen")}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none">
-            <path
-              d="M4.5 7h15M4.5 12h15M4.5 17h9"
-              stroke="currentColor"
-              strokeWidth="1.9"
-              strokeLinecap="round"
-            />
-          </svg>
-          <span className="msg-nav-badge">{items.length}</span>
-        </button>
-      </div>
-    </>
+          <div className="msg-nav-list" ref={listRef}>
+            {items.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                data-nav-id={item.id}
+                className={`msg-nav-item ${item.id === active ? "active" : ""}`}
+                aria-label={t("msgNavJump", { index: index + 1 })}
+                onClick={() => jump(item)}
+              >
+                <span className="msg-nav-index">{index + 1}</span>
+                <span className="msg-nav-text">{preview(item.text)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <button
+        type="button"
+        className={`icon-btn msg-nav-btn ${open ? "open" : ""}`}
+        aria-expanded={open}
+        aria-label={t("msgNavOpen")}
+        title={t("msgNavOpen")}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none">
+          <path
+            d="M4.5 7h15M4.5 12h15M4.5 17h9"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        </svg>
+        <span className="msg-nav-badge">{items.length}</span>
+      </button>
+    </div>
   );
 }

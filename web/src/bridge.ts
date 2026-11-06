@@ -166,6 +166,8 @@ interface AndroidBridge {
   sshCredentialDelete?(nickname: string): string;
   saveSettings(json: string): void;
   getAppVersion(): string;
+  /** 界面语言（"system" | "zh" | "en"）：工具结果与原生界面据此本地化。 */
+  setUiLanguage?(mode: string): void;
   widgetList(): string;
   widgetSave(specJson: string, id: string): string;
   widgetPin(id: string): string;

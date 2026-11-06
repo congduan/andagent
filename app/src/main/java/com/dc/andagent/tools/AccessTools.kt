@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import com.dc.andagent.bridge.PermissionBroker
+import com.dc.andagent.i18n.tr
 import androidx.core.content.ContextCompat
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -165,17 +166,23 @@ class ImageSaveTool(
             val resolver = context.contentResolver
             val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
             val uri = resolver.insert(collection, values)
-                ?: return "ERROR: MediaStore 插入失败"
+                ?: return "ERROR: " + tr("MediaStore 插入失败", "MediaStore insert failed")
             resolver.openOutputStream(uri)?.use { it.write(bytes) }
-                ?: return "ERROR: 无法写入图片数据"
+                ?: return "ERROR: " + tr("无法写入图片数据", "could not write image data")
             values.clear()
             values.put(MediaStore.Images.Media.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-            "WRITTEN: 图片已保存到相册 Pictures/AndAgent/$display（${bytes.size / 1024}KB，$ext）"
+            "WRITTEN: " + tr(
+                "图片已保存到相册 Pictures/AndAgent/$display（${bytes.size / 1024}KB，$ext）",
+                "image saved to Pictures/AndAgent/$display (${bytes.size / 1024}KB, $ext)",
+            )
         } catch (e: SecurityException) {
-            "ERROR: 相册写入被系统拒绝（${e.message}）；Android 10+ 通常无需 WRITE_EXTERNAL_STORAGE，此错误请反馈"
+            "ERROR: " + tr(
+                "相册写入被系统拒绝（${e.message}）；Android 10+ 通常无需 WRITE_EXTERNAL_STORAGE，此错误请反馈",
+                "gallery write denied by the system (${e.message}); Android 10+ normally needs no WRITE_EXTERNAL_STORAGE — please report this",
+            )
         } catch (e: Exception) {
-            "ERROR: 保存失败（${e.message ?: e.javaClass.simpleName}）"
+            "ERROR: " + tr("保存失败（${e.message ?: e.javaClass.simpleName}）", "save failed (${e.message ?: e.javaClass.simpleName})")
         }
     }
 }

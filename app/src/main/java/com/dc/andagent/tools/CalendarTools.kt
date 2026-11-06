@@ -6,6 +6,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.provider.CalendarContract
 import com.dc.andagent.bridge.PermissionBroker
+import com.dc.andagent.i18n.tr
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -22,7 +23,8 @@ import java.time.format.DateTimeFormatter
  * denied permission, a provider that is missing/disabled, or a security
  * exception turn into a readable "ERROR:" string instead of a crash.
  */
-private const val CALENDAR_DENIED = "ERROR: 日历权限未授予，请在系统设置中开启"
+private val CALENDAR_DENIED = "ERROR: " +
+    tr("日历权限未授予，请在系统设置中开启", "calendar permission not granted; enable it in system settings")
 
 private object CalendarTime {
     private val OUTPUT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
@@ -77,7 +79,7 @@ private fun readCalendarNames(context: Context): Map<Long, String> {
         val nameCol = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME)
         while (cursor.moveToNext()) {
             val id = cursor.getLong(idCol)
-            names[id] = cursor.getString(nameCol) ?: "日历 $id"
+            names[id] = cursor.getString(nameCol) ?: tr("日历 $id", "Calendar $id")
         }
     }
     return names
@@ -119,7 +121,7 @@ class CalendarListTool(
                     while (cursor.moveToNext()) {
                         add(buildJsonObject {
                             put("id", cursor.getLong(idCol))
-                            put("name", cursor.getString(nameCol) ?: "（未命名）")
+                            put("name", cursor.getString(nameCol) ?: tr("（未命名）", "(unnamed)"))
                             put("account", cursor.getString(accountCol) ?: "")
                             put(
                                 "writable",
@@ -133,7 +135,9 @@ class CalendarListTool(
                 put("count", calendars.size)
                 put("calendars", calendars)
             }.toString()
-        }.getOrElse { "ERROR: 读取日历失败：${it.message ?: it.javaClass.simpleName}" }
+        }.getOrElse {
+        "ERROR: " + tr("读取日历失败：${it.message ?: it.javaClass.simpleName}", "could not read calendars: ${it.message ?: it.javaClass.simpleName}")
+    }
     }
 }
 
@@ -156,7 +160,7 @@ class CalendarEventsTool(
         val now = System.currentTimeMillis()
         val start = CalendarTime.parse(args.strArg("start")) ?: (now - 30L * 24 * 3600_000)
         val end = CalendarTime.parse(args.strArg("end")) ?: (now + 30L * 24 * 3600_000)
-        if (end <= start) return "ERROR: end 必须晚于 start"
+        if (end <= start) return "ERROR: " + tr("end 必须晚于 start", "end must be later than start")
 
         return runCatching {
             val names = readCalendarNames(context)
@@ -207,7 +211,7 @@ class CalendarEventsTool(
                         count++
                         add(buildJsonObject {
                             put("id", cursor.getLong(idCol))
-                            put("title", cursor.getString(titleCol) ?: "（无标题）")
+                            put("title", cursor.getString(titleCol) ?: tr("（无标题）", "(untitled)"))
                             put("begin", CalendarTime.format(beginMs))
                             put("beginMs", beginMs)
                             if (endMs != null) {
@@ -217,7 +221,7 @@ class CalendarEventsTool(
                                 put("end", JsonNull)
                             }
                             put("location", cursor.getString(locCol) ?: "")
-                            put("calendar", names[calendarId] ?: "日历 $calendarId")
+                            put("calendar", names[calendarId] ?: tr("日历 $calendarId", "Calendar $calendarId"))
                             put("calendarId", calendarId)
                             put("allDay", cursor.getInt(allDayCol) != 0)
                         })
@@ -230,7 +234,9 @@ class CalendarEventsTool(
                 put("count", events.size)
                 put("events", events)
             }.toString()
-        }.getOrElse { "ERROR: 查询日历事件失败：${it.message ?: it.javaClass.simpleName}" }
+        }.getOrElse {
+            "ERROR: " + tr("查询日历事件失败：${it.message ?: it.javaClass.simpleName}", "could not query calendar events: ${it.message ?: it.javaClass.simpleName}")
+        }
     }
 }
 
@@ -261,18 +267,25 @@ class CalendarAddTool(
             return CALENDAR_DENIED
         }
 
-        val title = args.strArg("title") ?: return "ERROR: 缺少 title"
-        val beginText = args.strArg("begin") ?: return "ERROR: 缺少 begin"
-        val endText = args.strArg("end") ?: return "ERROR: 缺少 end"
-        val begin = CalendarTime.parse(beginText) ?: return "ERROR: 无法解析开始时间：$beginText"
-        val end = CalendarTime.parse(endText) ?: return "ERROR: 无法解析结束时间：$endText"
-        if (end <= begin) return "ERROR: 结束时间必须晚于开始时间"
+        val title = args.strArg("title") ?: return "ERROR: " + tr("缺少 title", "missing title")
+        val beginText = args.strArg("begin") ?: return "ERROR: " + tr("缺少 begin", "missing begin")
+        val endText = args.strArg("end") ?: return "ERROR: " + tr("缺少 end", "missing end")
+        val begin = CalendarTime.parse(beginText)
+            ?: return "ERROR: " + tr("无法解析开始时间：$beginText", "could not parse start time: $beginText")
+        val end = CalendarTime.parse(endText)
+            ?: return "ERROR: " + tr("无法解析结束时间：$endText", "could not parse end time: $endText")
+        if (end <= begin) return "ERROR: " + tr("结束时间必须晚于开始时间", "end time must be later than start time")
         val remind = args.intArg("remindMinutes") ?: args.intArg("remind_minutes")
-        if (remind != null && remind !in 0..10_080) return "ERROR: remindMinutes 需在 0..10080 之间"
+        if (remind != null && remind !in 0..10_080) {
+            return "ERROR: " + tr("remindMinutes 需在 0..10080 之间", "remindMinutes must be between 0 and 10080")
+        }
 
         return runCatching {
             val calendar = pickWritableCalendar(args.longArg("calendar_id"))
-                ?: return@runCatching "ERROR: 设备上没有可写入的日历账户，请先在系统日历中添加账户"
+                ?: return@runCatching "ERROR: " + tr(
+                    "设备上没有可写入的日历账户，请先在系统日历中添加账户",
+                    "no writable calendar account on this device; add one in the system calendar app first",
+                )
             val values = ContentValues().apply {
                 put(CalendarContract.Events.CALENDAR_ID, calendar.first)
                 put(CalendarContract.Events.TITLE, title)
@@ -285,10 +298,13 @@ class CalendarAddTool(
                 args.strArg("description")?.let { put(CalendarContract.Events.DESCRIPTION, it) }
             }
             val uri = context.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
-                ?: return@runCatching "ERROR: 日历 Provider 拒绝写入（可能没有可写日历）"
+                ?: return@runCatching "ERROR: " + tr(
+                    "日历 Provider 拒绝写入（可能没有可写日历）",
+                    "calendar provider rejected the write (no writable calendar?)",
+                )
             val eventId = ContentUris.parseId(uri)
 
-            var reminderNote = "未设置提醒"
+            var reminderNote = tr("未设置提醒", "no reminder")
             if (remind != null) {
                 val reminder = ContentValues().apply {
                     put(CalendarContract.Reminders.EVENT_ID, eventId)
@@ -300,21 +316,25 @@ class CalendarAddTool(
                     reminder,
                 )
                 reminderNote = if (reminderUri != null) {
-                    "提前 $remind 分钟提醒"
+                    tr("提前 $remind 分钟提醒", "reminder $remind min before")
                 } else {
-                    "提醒写入失败（事件已创建）"
+                    tr("提醒写入失败（事件已创建）", "reminder write failed (event was created)")
                 }
             }
 
             val message = buildString {
-                append("WRITTEN: 已创建事件「").append(title).append("」 ")
+                append("WRITTEN: ")
+                append(tr("已创建事件「", "created event \""))
+                append(title).append(tr("」 ", "\" "))
                 append(CalendarTime.format(begin)).append(" → ").append(CalendarTime.format(end))
-                append("（日历：").append(calendar.second)
-                append("，id=").append(eventId)
-                append("，").append(reminderNote).append("）")
+                append(tr("（日历：", " (calendar: ")).append(calendar.second)
+                append(", id=").append(eventId)
+                append(", ").append(reminderNote).append(")")
             }
             message
-        }.getOrElse { "ERROR: 创建日历事件失败：${it.message ?: it.javaClass.simpleName}" }
+        }.getOrElse {
+            "ERROR: " + tr("创建日历事件失败：${it.message ?: it.javaClass.simpleName}", "could not create calendar event: ${it.message ?: it.javaClass.simpleName}")
+        }
     }
 
     private fun pickWritableCalendar(wantedId: Long?): Pair<Long, String>? {
@@ -336,7 +356,7 @@ class CalendarAddTool(
             val accessCol = cursor.getColumnIndexOrThrow(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL)
             while (cursor.moveToNext()) {
                 if (cursor.getInt(accessCol) >= CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR) {
-                    writable.add(cursor.getLong(idCol) to (cursor.getString(nameCol) ?: "日历"))
+                    writable.add(cursor.getLong(idCol) to (cursor.getString(nameCol) ?: tr("日历", "Calendar")))
                 }
             }
         }
@@ -360,15 +380,17 @@ class CalendarDeleteTool(
 
     override suspend fun execute(args: JsonObject): String {
         if (!permissions.ensure(listOf(Manifest.permission.WRITE_CALENDAR))) return CALENDAR_DENIED
-        val id = args.longArg("id") ?: return "ERROR: 缺少事件 id"
+        val id = args.longArg("id") ?: return "ERROR: " + tr("缺少事件 id", "missing event id")
         return runCatching {
             val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, id)
             val rows = context.contentResolver.delete(uri, null, null)
             if (rows <= 0) {
-                "ERROR: 未找到 id=$id 的事件（可能已被删除）"
+                "ERROR: " + tr("未找到 id=$id 的事件（可能已被删除）", "no event with id=$id (it may already be deleted)")
             } else {
-                "DELETED: 已删除事件 id=$id"
+                "DELETED: " + tr("已删除事件 id=$id", "event id=$id deleted")
             }
-        }.getOrElse { "ERROR: 删除日历事件失败：${it.message ?: it.javaClass.simpleName}" }
+        }.getOrElse {
+            "ERROR: " + tr("删除日历事件失败：${it.message ?: it.javaClass.simpleName}", "could not delete calendar event: ${it.message ?: it.javaClass.simpleName}")
+        }
     }
 }

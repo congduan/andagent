@@ -1,5 +1,6 @@
 package com.dc.andagent.tools
 
+import com.dc.andagent.i18n.tr
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -255,7 +256,7 @@ class ProjectionService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         if (manager.getNotificationChannel(CHANNEL_ID) == null) {
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "屏幕捕获", NotificationManager.IMPORTANCE_LOW),
+                NotificationChannel(CHANNEL_ID, tr("屏幕捕获", "Screen capture"), NotificationManager.IMPORTANCE_LOW),
             )
         }
         val contentIntent = PendingIntent.getActivity(
@@ -264,8 +265,8 @@ class ProjectionService : Service() {
         )
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentTitle("AndAgent 屏幕捕获")
-            .setContentText("截屏 / 录屏通道已就绪，可在设置中停止。")
+            .setContentTitle(tr("AndAgent 屏幕捕获", "AndAgent screen capture"))
+            .setContentText(tr("截屏 / 录屏通道已就绪，可在设置中停止。", "Screenshot / recording channel ready; stop it in Settings."))
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .build()
@@ -365,7 +366,7 @@ private fun saveToPictures(context: Context, jpeg: ByteArray, name: String): Str
  */
 suspend fun projectionCaptureFrame(context: Context): String = withContext(Dispatchers.IO) {
     val projection = ProjectionService.instance?.projection
-        ?: return@withContext "ERROR: MediaProjection 未就绪"
+        ?: return@withContext "ERROR: " + tr("MediaProjection 未就绪", "MediaProjection is not ready")
     val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
     val display = windowManager.defaultDisplay
     val real = android.graphics.Point()
@@ -395,7 +396,7 @@ suspend fun projectionCaptureFrame(context: Context): String = withContext(Dispa
             if (image != null) break
             Thread.sleep(60)
         }
-        if (image == null) return@withContext "ERROR: 屏幕帧未到达（display 镜像超时）"
+        if (image == null) return@withContext "ERROR: " + tr("屏幕帧未到达（display 镜像超时）", "no screen frame arrived (display mirroring timed out)")
         try {
             val plane = image.planes[0]
             val pixelStride = plane.pixelStride
@@ -419,7 +420,7 @@ suspend fun projectionCaptureFrame(context: Context): String = withContext(Dispa
             cropped.recycle()
             val name = "andagent_proj_${System.currentTimeMillis()}.jpg"
             val path = saveToPictures(context, jpeg, name)
-                ?: return@withContext "ERROR: 无法保存截屏文件"
+                ?: return@withContext "ERROR: " + tr("无法保存截屏文件", "could not save the screenshot file")
             buildJsonObject {
                 put("path", path)
                 put("thumbnailBase64", Base64.encodeToString(thumbnailUnder200k(jpeg), Base64.NO_WRAP))
@@ -430,7 +431,10 @@ suspend fun projectionCaptureFrame(context: Context): String = withContext(Dispa
             image.close()
         }
     } catch (e: Exception) {
-        "ERROR: MediaProjection 截屏失败：${e.message ?: e.javaClass.simpleName}"
+        "ERROR: " + tr(
+                "MediaProjection 截屏失败：${e.message ?: e.javaClass.simpleName}",
+                "MediaProjection screenshot failed: ${e.message ?: e.javaClass.simpleName}",
+            )
     } finally {
         runCatching { virtual?.release() }
         runCatching { reader.close() }
@@ -500,9 +504,12 @@ private var autoStopRunnable: Runnable? = null
 suspend fun projectionStartRecording(context: Context, durationS: Int, bitRate: Int): String =
     withContext(Dispatchers.IO) {
         val projection = ProjectionService.instance?.projection
-            ?: return@withContext "ERROR: MediaProjection 未就绪"
+            ?: return@withContext "ERROR: " + tr("MediaProjection 未就绪", "MediaProjection is not ready")
         if (projectionRecordings.active() != null) {
-            return@withContext "ERROR: 已有进行中的投影录屏，请先调用 screen_record_stop"
+            return@withContext "ERROR: " + tr(
+            "已有进行中的投影录屏，请先调用 screen_record_stop",
+            "a projection recording is already running; call screen_record_stop first",
+        )
         }
         val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
         val display = windowManager.defaultDisplay
@@ -551,9 +558,9 @@ suspend fun projectionStartRecording(context: Context, durationS: Int, bitRate: 
                     put(MediaStore.Video.Media.IS_PENDING, 1)
                 }
                 uri = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                    ?: error("无法创建 Movies 视频")
+                    ?: error(tr("无法创建 Movies 视频", "could not create the Movies video"))
                 pfd = context.contentResolver.openFileDescriptor(uri, "rw")
-                    ?: error("无法打开视频文件")
+                    ?: error(tr("无法打开视频文件", "could not open the video file"))
                 recorder.setOutputFile(pfd.fileDescriptor)
                 path = "/sdcard/Movies/AndAgent/$name"
             } else {
@@ -573,7 +580,7 @@ suspend fun projectionStartRecording(context: Context, durationS: Int, bitRate: 
             )
             recorder.start()
             if (!projectionRecordings.start(path, uri?.toString())) {
-                error("已有进行中的投影录屏")
+                error(tr("已有进行中的投影录屏", "a projection recording is already running"))
             }
             ActiveRecorder.recorder = recorder
             ActiveRecorder.virtual = virtual
@@ -587,14 +594,23 @@ suspend fun projectionStartRecording(context: Context, durationS: Int, bitRate: 
                 put("path", path)
                 put("durationSeconds", durationS)
                 put("channel", "projection")
-                put("message", "录屏已开始：$path，时长 ${durationS}s。可调用 screen_record_stop 提前停止，或 screen_record_list 查看。")
+                put(
+                    "message",
+                    tr(
+                        "录屏已开始：$path，时长 ${durationS}s。可调用 screen_record_stop 提前停止，或 screen_record_list 查看。",
+                        "Recording started: $path (${durationS}s). Call screen_record_stop to stop early, or screen_record_list to view it.",
+                    ),
+                )
             }.toString()
         } catch (e: Exception) {
             uri?.let { runCatching { context.contentResolver.delete(it, null, null) } }
             runCatching { pfd?.close() }
             releaseRecorder()
             projectionRecordings.stop()
-            "ERROR: MediaProjection 录屏启动失败：${e.message ?: e.javaClass.simpleName}"
+            "ERROR: " + tr(
+                "MediaProjection 录屏启动失败：${e.message ?: e.javaClass.simpleName}",
+                "MediaProjection recording failed to start: ${e.message ?: e.javaClass.simpleName}",
+            )
         }
     }
 
@@ -638,7 +654,10 @@ fun projectionStopRecording(context: Context): String? {
         if (error != null) {
             uri?.let { runCatching { context.contentResolver.delete(it, null, null) } }
             runCatching { pfd?.close() }
-            return "ERROR: 录屏停止失败（$error），已丢弃未完成的视频"
+            return "ERROR: " + tr(
+                "录屏停止失败（$error），已丢弃未完成的视频",
+                "stopping the recording failed ($error); the unfinished video was discarded",
+            )
         }
         runCatching {
             val uriNonNull = uri ?: return@runCatching
@@ -658,7 +677,7 @@ fun projectionStopRecording(context: Context): String? {
         }, 1_500)
     }
     return buildString {
-        append("已停止投影录屏\n文件：").append(active.path)
-        append("\n媒体库扫描已安排，稍后可在相册看到。")
+        append(tr("已停止投影录屏\n文件：", "Projection recording stopped\nFile: ")).append(active.path)
+        append(tr("\n媒体库扫描已安排，稍后可在相册看到。", "\nMedia library scan scheduled; the video will appear in your gallery shortly."))
     }
 }

@@ -215,6 +215,8 @@ function JsonNode({ label, value, depth = 0 }: { label: string; value: unknown; 
   return <div className="json-leaf" style={{ marginLeft: depth * 12 }}><span>{label}:</span> {JSON.stringify(value)}</div>;
 }
 
+const SLOW_HINT_SECONDS = 20;
+
 export function ToolCard(props: ToolCallMessagePartProps) {
   const { t, language } = useI18n();
   const running = props.result === undefined;
@@ -223,6 +225,18 @@ export function ToolCard(props: ToolCallMessagePartProps) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+
+  // 工具没有返回时给出可见的耗时，避免"以为卡住了"。
+  useEffect(() => {
+    if (!running) return;
+    const startedAt = Date.now();
+    setElapsed(0);
+    const timer = window.setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [running]);
   useEffect(() => {
     if (!props.toolName.startsWith("nfc_")) return;
     const listener = (event: Event) => setNotice((event as CustomEvent<string>).detail);
@@ -263,6 +277,7 @@ export function ToolCard(props: ToolCallMessagePartProps) {
         meta.destructive ? " tool-destructive" : ""
       }`}
     >
+      {running && <div className="tool-progress" aria-hidden="true"><span /></div>}
       <button
         type="button"
         className="tool-summary"
@@ -282,6 +297,7 @@ export function ToolCard(props: ToolCallMessagePartProps) {
           {running ? (
             <>
               <span className="dot-pulse" /> {t("toolRunningState")}
+              {elapsed > 0 && <span className="tool-elapsed">{elapsed}s</span>}
             </>
           ) : interrupted ? (
             t("toolInterrupted")
@@ -332,11 +348,30 @@ export function ToolCard(props: ToolCallMessagePartProps) {
               <div className="tool-label">{t("arguments")}</div>
               <pre className="tool-pre">{formatArgs(props.args, t("noArgs"))}</pre>
             </div>
+            {running && (
+              <div className="tool-section">
+                <div className="tool-label">
+                  <span className="tool-label-text">{t("result")}</span>
+                  <span className="tool-waiting">
+                    {elapsed >= SLOW_HINT_SECONDS
+                      ? t("toolSlowHint", { seconds: elapsed })
+                      : t("toolElapsed", { seconds: elapsed })}
+                  </span>
+                </div>
+                <div className="tool-skeleton" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              </div>
+            )}
             {!running && (
               <div className="tool-section">
                 <div className="tool-label">
-                  {t("result")}{formatted.json ? " · JSON" : ""}
-                  {canFold ? ` · ${lines.length} ${t("rows")}` : ""}
+                  <span className="tool-label-text">
+                    {t("result")}{formatted.json ? " · JSON" : ""}
+                    {canFold ? ` · ${lines.length} ${t("rows")}` : ""}
+                  </span>
                   <button
                     type="button"
                     className="tool-copy"

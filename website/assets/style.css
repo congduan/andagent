@@ -106,7 +106,7 @@ pre code{color:inherit}
 .sidebar{align-self:start;position:sticky;top:96px}
 .sidebar a{display:block;padding:7px 0;color:var(--muted);font-size:.88rem}
 .sidebar a:hover{color:var(--accent)}
-.callout{border-left:3px solid var(--accent-strong);padding:12px 16px;background:var(--glow);border-radius:0 10px 10px 0;color:var(--text)!important}
+.callout{padding:12px 16px;background:var(--glow);border:1px solid var(--line);border-radius:10px;color:var(--text)!important}
 .toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:0 0 20px}
 .search{width:min(460px,100%);border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);padding:12px 15px;outline:none}
 .search:focus{border-color:var(--accent)}
@@ -318,7 +318,7 @@ pre { background: #090d12; color: #eee9df; border-color: var(--line); }
 .play-card details[open] summary:after { content: '−'; }
 .play-details { padding-top: 17px; }
 .play-label { display: block; color: var(--muted); font-size: .65rem; font-weight: 800; letter-spacing: .13em; }
-.play-details blockquote { margin: 8px 0 21px; padding: 13px 15px; border-left: 2px solid var(--accent); background: var(--glow); border-radius: 0 8px 8px 0; font-size: .83rem; line-height: 1.68; }
+.play-details blockquote { margin: 8px 0 21px; padding: 13px 15px; background: var(--glow); border: 1px solid var(--line); border-radius: 8px; font-size: .83rem; line-height: 1.68; }
 .play-chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 9px; }
 .play-chain code { padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2); font-size: .67rem; overflow-wrap: anywhere; }
 .teaser-section { background: linear-gradient(180deg,transparent,var(--glow),transparent); }

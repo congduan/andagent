@@ -178,9 +178,28 @@ function AssistantReasoning(props: {
         aria-expanded={open || running}
       >
         <span className={`thinking-caret${open || running ? " open" : ""}`} aria-hidden="true">
-          ▸
+          {/* 用 SVG 而非 ▸ 字形：字形自带侧边距与基线偏移，旋转中心不在视觉中心。 */}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m9 6 6 6-6 6" />
+          </svg>
         </span>
         {running ? t("thinkingNow") : t("thinking")}
+      </button>
+      {/* 复制按钮固定在卡片右上角，与标题栏同排。 */}
+      <button
+        type="button"
+        className="thinking-copy"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(props.text);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1400);
+          } catch {
+            /* clipboard unavailable */
+          }
+        }}
+      >
+        {copied ? t("copied") : t("copy")}
       </button>
       {/* 常驻挂载 + 高度过渡：折叠/展开不再瞬间跳变。 */}
       <div className={`thinking-body-wrap${open || running ? " open" : ""}`} aria-hidden={!(open || running)}>
@@ -193,45 +212,30 @@ function AssistantReasoning(props: {
               stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
             }}
           >{props.text}</div>
-          <button
-            type="button"
-            className="thinking-copy"
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(props.text);
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 1400);
-              } catch {
-                /* clipboard unavailable */
-              }
-            }}
-          >
-            {copied ? t("copied") : t("copy")}
-          </button>
         </div>
       </div>
     </div>
   );
 }
 
-/** 是否已收到可见内容（文本 / 思考 / 工具调用）；都没有说明还在等首包。 */
-function useHasAssistantContent(): boolean {
-  return useAuiState((state) =>
-    state.message.content.some((part) => {
-      if (part.type === "text") return part.text.trim().length > 0;
-      if (part.type === "reasoning") {
-        return ((part as { text?: string }).text ?? "").trim().length > 0;
-      }
-      if (part.type === "tool-call") return true;
-      return false;
-    }),
-  );
+/**
+ * 消息尾部状态：正在流出文本/思考 → 光标；其余（等首包、工具执行中、
+ * 工具已返回但下一段回复还没到）→ 三点等待指示。
+ */
+function useAssistantTail(): "streaming" | "waiting" {
+  return useAuiState((state) => {
+    const content = state.message.content;
+    const last = content[content.length - 1] as { type?: string; text?: string } | undefined;
+    if (last?.type === "text" && (last.text ?? "").trim().length > 0) return "streaming";
+    if (last?.type === "reasoning" && (last.text ?? "").trim().length > 0) return "streaming";
+    return "waiting";
+  });
 }
 
 function AssistantMessage() {
   const { t } = useI18n();
   const running = useAuiState((state) => state.message.status?.type === "running");
-  const hasContent = useHasAssistantContent();
+  const tail = useAssistantTail();
   const text = useFullCopyText();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const longPress = useLongPress((x, y) => setMenu({ x, y }));
@@ -246,10 +250,14 @@ function AssistantMessage() {
           }}
         />
         {running &&
-          (hasContent ? (
+          (tail === "streaming" ? (
             <span className="stream-cursor" aria-hidden="true" />
           ) : (
-            <span className="stream-spinner" role="status" aria-label={t("thinkingNow")} />
+            <span className="stream-typing" role="status" aria-label={t("thinkingNow")}>
+              <span className="stream-dot" />
+              <span className="stream-dot" />
+              <span className="stream-dot" />
+            </span>
           ))}
         <MessageMetaLine />
         <MessagePrimitive.Error>
@@ -260,6 +268,24 @@ function AssistantMessage() {
         <CopyMenu text={text} x={menu.x} y={menu.y} onClose={() => setMenu(null)} />
       )}
     </MessagePrimitive.Root>
+  );
+}
+
+/** 线程在跑、但还没有任何消息承载等待指示（例如刚发送、首包未到）。 */
+function ThreadWaitingHint() {
+  const { t } = useI18n();
+  const waiting = useAuiState((state) => {
+    if (!state.thread.isRunning) return false;
+    const last = state.thread.messages[state.thread.messages.length - 1];
+    return !last || last.role !== "assistant" || last.status.type !== "running";
+  });
+  if (!waiting) return null;
+  return (
+    <div className="stream-typing thread-waiting" role="status" aria-label={t("thinkingNow")}>
+      <span className="stream-dot" />
+      <span className="stream-dot" />
+      <span className="stream-dot" />
+    </div>
   );
 }
 
@@ -409,7 +435,11 @@ function Composer({ hasKey }: { hasKey: boolean }) {
               aria-label={voiceState === "recording" ? t("stopRecording") : t("voiceInput")}
             >
               {voiceState === "transcribing" ? (
-                <span className="mic-spinner" aria-hidden="true" />
+                <span className="stream-typing mic-typing" aria-hidden="true">
+                  <span className="stream-dot" />
+                  <span className="stream-dot" />
+                  <span className="stream-dot" />
+                </span>
               ) : (
                 <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                   <path
@@ -652,6 +682,8 @@ export default function App() {
             >
               {settings.model || t("connectModel")}
             </button>
+            {/* 会话切换时用 key 重置：面板收起，列表重新按新会话计算。 */}
+            <MessageNav key={snapshot.sessionId} items={userInputs} />
             <button
               type="button"
               className="icon-btn"
@@ -697,10 +729,9 @@ export default function App() {
                   AssistantMessage,
                 }}
               />
+              <ThreadWaitingHint />
             </div>
           </ThreadPrimitive.Viewport>
-          {/* 会话切换时用 key 重置：面板收起，列表重新按新会话计算。 */}
-          <MessageNav key={snapshot.sessionId} items={userInputs} />
         </ThreadPrimitive.Root>
 
         <Composer hasKey={isModelConfigured(settings)} />

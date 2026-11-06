@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteException
+import com.dc.andagent.i18n.tr
 import kotlinx.serialization.json.*
 import java.io.File
 
@@ -108,18 +109,34 @@ class SqliteTool(private val context: Context, override val name: String) : Tool
             }.toString()
         }
         val dbName = args.strArg("name")
-        if (!valid(dbName)) return@runCatching "ERROR: 表/库名只允许字母数字下划线，长度最多 64"
+        if (!valid(dbName)) {
+            return@runCatching "ERROR: " + tr(
+                "表/库名只允许字母数字下划线，长度最多 64",
+                "table/database names allow only letters, digits and underscores, up to 64 characters",
+            )
+        }
         val safeName = dbName!!
         val f = file(safeName)
         if (name == "db_create") {
             val existed = f.isFile
             f.parentFile?.mkdirs()
             SQLiteDatabase.openOrCreateDatabase(f, null).use { }
-            return@runCatching buildJsonObject { put("path", f.path); put("existed", existed); put("message", if (existed) "已存在，直接可用" else "创建成功") }.toString()
+            return@runCatching buildJsonObject {
+                put("path", f.path)
+                put("existed", existed)
+                put("message", if (existed) tr("已存在，直接可用", "already exists and is ready") else tr("创建成功", "created"))
+            }.toString()
         }
-        if (existing(safeName) == null) return@runCatching "ERROR: 数据库不存在，请先调用 db_create"
+        if (existing(safeName) == null) {
+            return@runCatching "ERROR: " + tr("数据库不存在，请先调用 db_create", "database does not exist; call db_create first")
+        }
         if (name == "db_drop") {
-            if (args.boolArg("confirm") != true) return@runCatching "需要确认删除整个数据库 $safeName；确认后以 confirm=true 重试"
+            if (args.boolArg("confirm") != true) {
+                return@runCatching tr(
+                    "需要确认删除整个数据库 $safeName；确认后以 confirm=true 重试",
+                    "deleting the whole database $safeName needs confirmation; retry with confirm=true",
+                )
+            }
             val deleted = context.deleteDatabase(f.name)
             return@runCatching buildJsonObject { put("deleted", deleted); put("name", safeName) }.toString()
         }

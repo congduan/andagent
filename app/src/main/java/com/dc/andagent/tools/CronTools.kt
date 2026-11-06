@@ -5,6 +5,7 @@ import com.dc.andagent.cron.CronSchedule
 import com.dc.andagent.cron.CronScheduler
 import com.dc.andagent.cron.CronStore
 import com.dc.andagent.cron.CronTask
+import com.dc.andagent.i18n.tr
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -33,29 +34,39 @@ class CronTool(private val context: Context, override val name: String) : Tool {
         val store = CronStore(context)
         when (name) {
             "cron_create" -> {
-                val title = args.strArg("name")?.trim() ?: return "ERROR: 缺少 name"
-                val schedule = args.strArg("schedule")?.trim() ?: return "ERROR: 缺少 schedule"
-                val kind = args.strArg("kind") ?: return "ERROR: 缺少 kind"
-                val payload = args.strArg("payload") ?: return "ERROR: 缺少 payload"
-                require(title.length <= 80 && payload.length <= 4000) { "名称或 payload 过长" }
-                require(kind in setOf("script", "shell", "notify")) { "kind 只能为 script/shell/notify" }
+                val title = args.strArg("name")?.trim() ?: return "ERROR: " + tr("缺少 name", "missing name")
+                val schedule = args.strArg("schedule")?.trim() ?: return "ERROR: " + tr("缺少 schedule", "missing schedule")
+                val kind = args.strArg("kind") ?: return "ERROR: " + tr("缺少 kind", "missing kind")
+                val payload = args.strArg("payload") ?: return "ERROR: " + tr("缺少 payload", "missing payload")
+                require(title.length <= 80 && payload.length <= 4000) {
+                    tr("名称或 payload 过长", "name or payload is too long")
+                }
+                require(kind in setOf("script", "shell", "notify")) {
+                    tr("kind 只能为 script/shell/notify", "kind must be script/shell/notify")
+                }
                 val next = CronSchedule.parse(schedule).next(System.currentTimeMillis())
                 if (kind == "script") {
                     val root = File(requireNotNull(context.getExternalFilesDir(null)), "scripts")
-                    require(ScriptFiles.resolve(root, payload).isFile) { "脚本不存在：$payload" }
+                    require(ScriptFiles.resolve(root, payload).isFile) { tr("脚本不存在：$payload", "script not found: $payload") }
                 }
                 val task = CronTask(name = title, schedule = schedule, kind = kind, payload = payload, nextRun = next)
                 store.update { it.add(task) }
                 CronScheduler.rebuild(context)
                 buildJsonObject {
                     put("id", task.id); put("nextRun", next)
-                    if (!CronScheduler.exactAllowed(context)) put("warning", "请在系统设置授予『闹钟和提醒』以获得精确分钟调度；当前使用非精确闹钟")
+                    if (!CronScheduler.exactAllowed(context)) put(
+                        "warning",
+                        tr(
+                            "请在系统设置授予『闹钟和提醒』以获得精确分钟调度；当前使用非精确闹钟",
+                            "grant Alarms & reminders in system settings for exact scheduling; non-exact alarms are used for now",
+                        ),
+                    )
                 }.toString()
             }
             "cron_list" -> JsonArray(store.list().map { it.json() }).toString()
             "cron_toggle" -> {
-                val id = args.strArg("id") ?: return "ERROR: 缺少 id"
-                val enabled = args.boolArg("enabled") ?: return "ERROR: 缺少 enabled"
+                val id = args.strArg("id") ?: return "ERROR: " + tr("缺少 id", "missing id")
+                val enabled = args.boolArg("enabled") ?: return "ERROR: " + tr("缺少 enabled", "missing enabled")
                 var found = false
                 store.update { tasks ->
                     val index = tasks.indexOfFirst { it.id == id }
@@ -66,26 +77,28 @@ class CronTool(private val context: Context, override val name: String) : Tool {
                             nextRun = if (enabled) CronSchedule.parse(current.schedule).next(System.currentTimeMillis()) else null)
                     }
                 }
-                require(found) { "任务不存在：$id" }
+                require(found) { tr("任务不存在：$id", "task not found: $id") }
                 CronScheduler.rebuild(context)
                 "OK"
             }
             "cron_delete" -> {
-                val id = args.strArg("id") ?: return "ERROR: 缺少 id"
-                if (args.boolArg("confirm") != true) return "ERROR: 删除任务需 confirm=true"
+                val id = args.strArg("id") ?: return "ERROR: " + tr("缺少 id", "missing id")
+                if (args.boolArg("confirm") != true) {
+                    return "ERROR: " + tr("删除任务需 confirm=true", "deleting a task requires confirm=true")
+                }
                 var deleted = false
                 store.update { deleted = it.removeAll { task -> task.id == id } }
-                require(deleted) { "任务不存在：$id" }
+                require(deleted) { tr("任务不存在：$id", "task not found: $id") }
                 CronScheduler.rebuild(context)
                 "OK"
             }
             "cron_run_now" -> {
-                val id = args.strArg("id") ?: return "ERROR: 缺少 id"
-                require(store.list().any { it.id == id }) { "任务不存在：$id" }
+                val id = args.strArg("id") ?: return "ERROR: " + tr("缺少 id", "missing id")
+                require(store.list().any { it.id == id }) { tr("任务不存在：$id", "task not found: $id") }
                 CronScheduler.runNow(context, id)
-                "已加入执行队列"
+                tr("已加入执行队列", "Added to the run queue")
             }
-            else -> "ERROR: 未知定时任务工具"
+            else -> "ERROR: " + tr("未知定时任务工具", "unknown scheduled-task tool")
         }
     } catch (e: Exception) { "ERROR: ${e.message ?: e.javaClass.simpleName}" } }
 }
