@@ -9,7 +9,7 @@ An on-device AI assistant for Android. It calls device capabilities directly fro
 - **Frontend**: `web/` — React 19 + `@assistant-ui/react` + `@mariozechner/pi-ai`, bundled with Vite and shipped inside the APK for offline use.
 - **Native layer**: `app/` — a Kotlin full-screen WebView shell, the tool registry, and permission / system-API bridging.
 - **Model**: any OpenAI-compatible endpoint. Requests are proxied through native OkHttp (to bypass WebView CORS) and streamed back over SSE; a single turn allows up to 200 tool rounds.
-- **Version**: `0.28.5` (versionCode 42), `applicationId = com.dc.andagent`. `app/build.gradle.kts` is authoritative.
+- **Version**: `0.28.6` (versionCode 43), `applicationId = com.dc.andagent`. `app/build.gradle.kts` is authoritative.
 
 ## How it works
 

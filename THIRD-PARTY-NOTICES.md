@@ -86,16 +86,6 @@ AndAgent is licensed under Apache-2.0 (see [LICENSE](LICENSE)). The entries belo
 
 ## Android and bundled binaries
 
-### AndroidX Compose (BOM 2024.10.01), Material 3, and Material Icons
-- License: Apache-2.0
-- Source: https://developer.android.com/jetpack/compose
-- Copyright: The Android Open Source Project
-
-### AndroidX Navigation Compose 2.8.4
-- License: Apache-2.0
-- Source: https://developer.android.com/jetpack/androidx/releases/navigation
-- Copyright: The Android Open Source Project
-
 ### AndroidX Activity 1.9.3
 - License: Apache-2.0
 - Source: https://developer.android.com/jetpack/androidx/releases/activity

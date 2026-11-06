@@ -4,7 +4,7 @@
 
 AndAgent 是运行在 Android 设备上的开源 AI 助手。对话可直接调用设备功能，包括文件、相册、日历、蓝牙、Wi-Fi、传感器、NFC、屏幕、Shell、数据库和脚本；结果在聊天流中以图表、图片、表格、音视频等卡片展示。
 
-版本：**0.28.5**（versionCode 42），包名 `com.dc.andagent`。项目采用 [Apache-2.0](LICENSE) 协议，三方组件见 [开源组件声明](THIRD-PARTY-NOTICES.md)。
+版本：**0.28.6**（versionCode 43），包名 `com.dc.andagent`。项目采用 [Apache-2.0](LICENSE) 协议，三方组件见 [开源组件声明](THIRD-PARTY-NOTICES.md)。
 
 ## 主要能力
 
