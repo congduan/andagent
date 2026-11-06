@@ -23,7 +23,11 @@ cd .. && ./gradlew :app:assembleDebug :app:testDebugUnitTest
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-首次使用可在设置中填写 OpenAI 兼容接口的 Base URL、API Key 与模型 ID，或把 `config.json` 放入设备 `Download/`（Android 11+ 建议同步到 `/sdcard/Android/data/com.dc.andagent/files/config.json`）。密钥只保存在本机，不会编入 APK 源码。
+首次启动、尚未配置模型时，会打开「连接大模型」引导：选择服务商，填写 API Key，获取模型列表或手动输入模型 ID，再点「测试并保存」验证工具调用。支持 DeepSeek、通义千问、Kimi、智谱、硅基流动、OpenRouter、OpenAI、Ollama、LM Studio 和自定义 OpenAI 兼容端点；本地服务可不填 Key，连接电脑时请将 localhost 改为电脑的局域网 IP。
+
+可选择「稍后」跳过引导，或「不测试，直接保存」。之后随时点聊天页顶部的模型名称、未配置提示的「去配置」，或「设置 › 模型配置」重新连接。连接测试会发送一次简短请求，可能产生少量费用。密钥只保存在本机，不会编入 APK 源码。
+
+仍支持把 `config.json` 放入设备 `Download/`（Android 11+ 建议同步到 `/sdcard/Android/data/com.dc.andagent/files/config.json`）。文件中的字段在读取配置时会覆盖本机保存值；使用界面配置后，如不希望被覆盖，请同步修改或移除该文件。
 
 更多架构、权限、工具清单和配置细节见 [英文 README](README.md)。贡献前请读 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题通过 [GitHub Security Advisories](https://github.com/congduan/andagent/security/advisories/new) 私下报告。
 

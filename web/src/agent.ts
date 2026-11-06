@@ -12,6 +12,7 @@ import type { ThreadMessageLike } from "@assistant-ui/react";
 import { execTool, type Settings } from "./bridge";
 import { PERMISSION_GUIDE, PERMISSION_GUIDE_EN } from "./permissionGuide";
 import { currentLanguage } from "./i18n";
+import { isModelConfigured } from "./modelConfig";
 import { toModelMessages } from "./modelMessages";
 import { SessionStore, type SessionMeta } from "./sessions";
 import { EXTRA_TOOL_DEFS } from "./extraTools";
@@ -1000,6 +1001,11 @@ export class AgentEngine {
   async send(text: string): Promise<void> {
     const content = text.trim();
     if (!content || this.running) return;
+    if (!isModelConfigured(this.settings)) {
+      this.error = currentLanguage() === "zh" ? "还没有连接大模型，请点「去配置」。" : "Connect a model using Configure first.";
+      this.emit();
+      return;
+    }
 
     this.running = true;
     this.error = null;
@@ -1044,7 +1050,9 @@ export class AgentEngine {
             tools: [...TOOL_DEFS, ...extensionTools()],
           },
           {
-            apiKey: this.settings.apiKey,
+            // pi-ai's OpenAI client requires a nonempty key even when the
+            // local server has no authentication. This is only a placeholder.
+            apiKey: this.settings.apiKey.trim() || "andagent-local",
             baseUrl: model.baseUrl,
             signal: controller.signal,
             maxRetries: 0,

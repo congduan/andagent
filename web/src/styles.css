@@ -1155,6 +1155,22 @@ button:disabled {
   animation: fade-in 0.18s ease both;
 }
 
+.model-setup-overlay { z-index: 60; }
+.model-setup-panel { width: min(560px, 100%); }
+.model-intro h3 { margin: 14px 0 8px; font-size: 22px; }
+.model-intro p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.model-intro .empty-mark { width: 42px; height: 42px; font-size: 24px; }
+.model-key-row { display: flex; align-items: flex-end; gap: 8px; }
+.model-key-row .field { flex: 1; min-width: 0; }
+.model-key-row > button { min-height: 38px; }
+.model-setup-foot { flex-direction: column; gap: 8px; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+.model-setup-foot button { width: 100%; }
+.model-endpoint { overflow-wrap: anywhere; }
+.field select {
+  width: 100%; min-height: 42px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--input-bg); color: var(--text); font: inherit; font-size: 13px; padding: 10px 12px;
+}
+
 .settings-panel {
   width: min(520px, 100%);
   height: 100%;

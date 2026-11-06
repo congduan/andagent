@@ -106,8 +106,22 @@ Browser preview mode has no native bridge: tool execution and the LLM proxy are 
 
 ### First-run configuration
 
-No endpoint, model ID or API key is compiled into the app. Put them in
-`config.json` in the phone's `Download` directory:
+On first launch, if no model is configured, **Connect a model** opens automatically.
+Choose a provider preset or a custom OpenAI-compatible endpoint, enter your key,
+and fetch the model list or type a model ID. **Test and save** sends a short
+request to verify tool calling (a small provider charge may apply). If listing
+fails, enter the model ID manually and test again, or **Save without testing**.
+Ollama and LM Studio allow an empty key; replace `localhost` with your computer's
+LAN IP when connecting from the phone.
+
+Choose **Later** to skip the first-run guide. The chat header's model button,
+the unconfigured banner, and **Settings › Model configuration** always reopen it.
+Existing valid configurations bypass onboarding. Provider presets include public
+endpoint addresses; selected model settings and API keys are saved only on the device.
+This setup flow follows [Mika's model connection flow](https://github.com/wangzan101/Mika/blob/main/docs/models.en.md)
+and the local iOS-Agent implementation.
+
+Alternatively, put your settings in `config.json` in the phone's `Download` directory:
 
 ```json
 {
@@ -133,8 +147,10 @@ public `Download/` copy is usually unreadable without "All files access", so
 after editing it, re-run the second `adb push` to sync the private copy (or
 grant all-files access, which makes the public file authoritative). Keep
 `config.json` out of version control — it holds a plaintext credential. If no
-config is present, fill the fields in through the Settings panel instead;
+config is present, use the model setup guide instead;
 values are stored only in local `SharedPreferences`, never in web assets.
+If you switch to the in-app setup, update or remove an existing config file to
+prevent it from overriding your saved settings on the next settings read.
 
 | Field | Notes |
 |---|---|

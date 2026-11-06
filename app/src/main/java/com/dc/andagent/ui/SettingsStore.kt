@@ -13,7 +13,7 @@ import java.io.File
 /**
  * Settings persisted in SharedPreferences.
  *
- * No endpoint, model ID or API key is compiled into the app: they are loaded
+ * No active endpoint, model ID or API key is compiled into this store: they are loaded
  * at runtime from `Download/config.json` on the device (see
  * [reloadExternalConfig]). If that file is missing, the fields stay empty and
  * must be filled in through the Settings panel.

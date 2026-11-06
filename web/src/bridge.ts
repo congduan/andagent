@@ -120,8 +120,8 @@ export const DEFAULT_SYSTEM_PROMPT_EN = [
   "- List photo filenames in text or tables. Summarize long shell_exec or file_read output with key lines instead of pasting all of it.",
 ].join("\n");
 
-/** No endpoint, model ID or API key ships in the bundle: they come from
- *  Download/config.json through the native bridge (or from Settings). */
+/** Active settings start empty. Provider presets are offered by model setup;
+ * credentials come from Download/config.json or the setup form. */
 export const DEFAULT_SETTINGS: Settings = {
   baseUrl: "",
   apiKey: "",
@@ -171,6 +171,7 @@ interface AndroidBridge {
   cronExactAllowed(): boolean;
   cronOpenExactSettings(): string;
   llmFetchStart(id: string, url: string, headersJson: string, body: string): void;
+  llmRequestStart?(id: string, url: string, headersJson: string, body: string, method: string): void;
   llmCancel(id: string): void;
   toolExec(id: string, name: string, argsJson: string): void;
   extensionTools?(): string;
@@ -701,11 +702,16 @@ export function installLLMFetch(baseUrl: string): void {
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (bridge() && configuredBaseUrl && url.startsWith(configuredBaseUrl)) {
+    if (bridge() && configuredBaseUrl && (url === configuredBaseUrl || url.startsWith(configuredBaseUrl + "/"))) {
       return bridgeFetch(input as RequestInfo, init);
     }
     return nativeFetch(input as RequestInfo, init);
   }) as typeof window.fetch;
+}
+
+/** Explicit transport for setup requests, which may use a different endpoint from the active model. */
+export function modelFetch(url: string, init: RequestInit): Promise<Response> {
+  return bridge() ? bridgeFetch(url, init) : fetch(url, init);
 }
 
 async function bridgeFetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
@@ -773,7 +779,10 @@ async function bridgeFetch(input: RequestInfo, init?: RequestInit): Promise<Resp
     llmPending.set(id, entry);
 
     try {
-      bridge()!.llmFetchStart(id, url, JSON.stringify(headers), bodyText);
+      const b = bridge()!;
+      if (b.llmRequestStart) b.llmRequestStart(id, url, JSON.stringify(headers), bodyText, method);
+      else if (method.toUpperCase() === "POST") b.llmFetchStart(id, url, JSON.stringify(headers), bodyText);
+      else throw new Error("Model listing requires an updated Android bridge");
     } catch (e) {
       cleanupLlm(id, entry);
       reject(e);

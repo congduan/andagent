@@ -33,12 +33,14 @@ interface Props {
   settings: Settings;
   onClose: () => void;
   onSave: (settings: Settings) => void;
+  onModelSetup: () => void;
 }
 
-export function SettingsPanel({ settings, onClose, onSave }: Props) {
+export function SettingsPanel({ settings, onClose, onSave, onModelSetup }: Props) {
   const { t, mode, language } = useI18n();
   const [showNotices, setShowNotices] = useState(false);
   const [draft, setDraft] = useState<Settings>(settings);
+  useEffect(() => { setDraft(prev => ({ ...prev, baseUrl: settings.baseUrl, apiKey: settings.apiKey, model: settings.model })); }, [settings.baseUrl, settings.apiKey, settings.model]);
   useEffect(() => { setDraft(prev => !hasSavedSystemPrompt() && isDefaultSystemPrompt(prev.systemPrompt) ? { ...prev, systemPrompt: defaultSystemPrompt() } : prev); }, [language]);
   const [error, setError] = useState<string | null>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
@@ -121,23 +123,17 @@ export function SettingsPanel({ settings, onClose, onSave }: Props) {
         : t("notConfigured");
 
   const save = () => {
-    if (!draft.baseUrl.trim()) {
-      setError(t("baseRequired"));
-      return;
-    }
-    if (!/^https?:\/\//i.test(draft.baseUrl.trim())) {
-      setError(t("baseInvalid"));
-      return;
-    }
     const next: Settings = {
       ...draft,
       baseUrl: draft.baseUrl.trim().replace(/\/+$/, ""),
       model: draft.model.trim(),
       systemPrompt: draft.systemPrompt.trim(),
     };
-    persistSettings(next);
-    onSave(next);
-    onClose();
+    try {
+      persistSettings(next);
+      onSave(next);
+      onClose();
+    } catch { setError(t("modelSaveFailed")); }
   };
 
   return (
@@ -154,6 +150,13 @@ export function SettingsPanel({ settings, onClose, onSave }: Props) {
         </header>
 
         <div className="settings-body">
+          <div className="settings-card">
+            <div className="settings-card-head"><span>{t("modelSettings")}</span></div>
+            <p className="settings-card-note">{draft.model || t("modelNotConfigured")}</p>
+            <p className="settings-card-note model-endpoint">{draft.baseUrl}</p>
+            <button type="button" className="btn-primary" onClick={onModelSetup}>{t("modelConfigure")}</button>
+          </div>
+
           <div className="settings-card">
             <div className="settings-card-head"><span>{t("about")}</span></div>
             <p className="settings-card-note">{t("version")}: {getAppVersion()} · {t("built")}: {__BUILD_TIME__}</p>
@@ -190,44 +193,6 @@ export function SettingsPanel({ settings, onClose, onSave }: Props) {
             <p className="settings-card-note">{t("themeNote")}</p>
           </div>
 
-          <label className="field">
-            <span>Base URL</span>
-            <input
-              value={draft.baseUrl}
-              onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })}
-              placeholder="https://api.example.com/v1"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-            <em>{t("baseUrlHint")}</em>
-          </label>
-
-          <label className="field">
-            <span>API Key</span>
-            <input
-              type="password"
-              value={draft.apiKey}
-              onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-              placeholder={t("apiKeyPlaceholder")}
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-            <em>{t("apiKeyHint")}</em>
-          </label>
-
-          <label className="field">
-            <span>{t("modelId")}</span>
-            <input
-              value={draft.model}
-              onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-              placeholder="your-model-id"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-          </label>
 
           <label className="field">
             <span>{t("systemPrompt")}</span>

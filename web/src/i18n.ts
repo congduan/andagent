@@ -3,6 +3,20 @@ import { useSyncExternalStore } from "react";
 export type LanguageMode = "system" | "zh" | "en";
 const KEY = "andagent.language";
 const zh = {
+  connectModel: "连接大模型", modelLater: "稍后", modelSetupSubtitle: "选择服务商，连接你自己的模型",
+  modelSetupHeading: "先连接一个大模型", modelSetupNote: "AndAgent 使用你选择的模型服务。主模型需要支持工具调用；API Key 保存在本机，对话直接发给所填地址。测试会发送一次简短请求，可能产生少量费用。",
+  modelProvider: "模型服务商", modelCustom: "自定义 · OpenAI 兼容", modelOptionalKey: "API Key（可选）",
+  modelShowKey: "显示", modelHideKey: "隐藏", modelIdPlaceholder: "输入模型 ID，或获取模型列表",
+  modelManualHint: "可直接输入服务商提供的模型 ID；留空时测试会先获取列表并选择第一个模型。",
+  modelLocalHint: "localhost 指这台手机。连接电脑上的模型时，请改为电脑的局域网 IP，并确保手机与电脑在同一网络。",
+  modelFetchList: "获取 / 刷新模型列表", modelListCount: "已获取 {count} 个模型", modelSelect: "选择模型",
+  modelTesting: "正在连接并检查模型…", modelTestSave: "测试并保存", modelSaveDirect: "不测试，直接保存",
+  modelTestFailed: "连接失败：", modelTestTimeout: "连接超时，请检查地址和网络。",
+  modelListEmpty: "未获取到模型列表，请手动输入模型 ID。", modelNoTools: "连接成功，但未观察到工具调用。建议换用支持 Function Calling 的模型，或选择直接保存。",
+  modelFallbackHint: "可检查地址与密钥后重试；若服务不提供模型列表，请手动填写模型 ID 后测试，也可直接保存。",
+  modelUrlInvalid: "请输入有效的 HTTP(S) Base URL，不要包含账号、查询参数或 #。",
+  modelKeyRequired: "请填写 API Key。", modelIdRequired: "请填写模型 ID。", modelSaveFailed: "保存失败，请重试。",
+  modelNotConfigured: "还没有连接大模型。", modelConfigure: "去配置", modelInputUnconfigured: "先连接一个大模型…",
   settings: "设置", close: "关闭", cancel: "取消", save: "保存", appearance: "外观",
   system: "跟随系统", light: "日间", dark: "夜间", language: "语言 Language",
   chinese: "中文", english: "English", about: "关于 AndAgent", version: "版本",
@@ -328,6 +342,20 @@ const zh = {
 } as const;
 type Key = keyof typeof zh;
 const en: Record<Key, string> = {
+  connectModel: "Connect a model", modelLater: "Later", modelSetupSubtitle: "Choose a provider and connect your model",
+  modelSetupHeading: "Connect your first model", modelSetupNote: "AndAgent uses the provider you choose. The main model needs tool calling. Your API key stays on this device; chats go directly to the entered endpoint. Testing sends a short request and may incur a small charge.",
+  modelProvider: "Model provider", modelCustom: "Custom · OpenAI compatible", modelOptionalKey: "API Key (optional)",
+  modelShowKey: "Show", modelHideKey: "Hide", modelIdPlaceholder: "Enter a model ID or fetch the model list",
+  modelManualHint: "Enter a model ID from your provider. If blank, testing fetches the list and selects its first model.",
+  modelLocalHint: "localhost means this phone. For a model on your computer, use its LAN IP and connect both devices to the same network.",
+  modelFetchList: "Fetch / refresh models", modelListCount: "{count} models found", modelSelect: "Select a model",
+  modelTesting: "Connecting and checking the model…", modelTestSave: "Test and save", modelSaveDirect: "Save without testing",
+  modelTestFailed: "Connection failed:", modelTestTimeout: "Connection timed out. Check the address and network.",
+  modelListEmpty: "No models found. Enter a model ID manually.", modelNoTools: "Connected, but no tool call was observed. Choose a model with Function Calling, or save without testing.",
+  modelFallbackHint: "Check the address and key and retry. If model listing is unavailable, enter a model ID to test it, or save without testing.",
+  modelUrlInvalid: "Enter a valid HTTP(S) Base URL without credentials, query parameters or a fragment.",
+  modelKeyRequired: "Enter an API key.", modelIdRequired: "Enter a model ID.", modelSaveFailed: "Could not save. Please retry.",
+  modelNotConfigured: "No model connected yet.", modelConfigure: "Configure", modelInputUnconfigured: "Connect a model first…",
   settings: "Settings", close: "Close", cancel: "Cancel", save: "Save", appearance: "Appearance",
   system: "System", light: "Light", dark: "Dark", language: "Language 语言",
   chinese: "中文", english: "English", about: "About AndAgent", version: "Version",

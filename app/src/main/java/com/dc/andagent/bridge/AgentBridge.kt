@@ -741,6 +741,13 @@ class AgentBridge(
 
     @JavascriptInterface
     fun llmFetchStart(reqId: String, url: String, headersJson: String, body: String) {
+        llmRequestStart(reqId, url, headersJson, body, "POST")
+    }
+
+    /** Model setup also needs GET /models; keep the original streaming entry compatible. */
+    @JavascriptInterface
+    fun llmRequestStart(reqId: String, url: String, headersJson: String, body: String, method: String) {
+        require(method == "GET" || method == "POST") { "Unsupported model request method" }
         val headers = runCatching { json.parseToJsonElement(headersJson).jsonObject }.getOrNull()
         val builder = Request.Builder().url(url)
         headers?.forEach { (key, value) ->
@@ -748,7 +755,7 @@ class AgentBridge(
                 value.jsonPrimitive.contentOrNull?.let { builder.header(key, it) }
             }
         }
-        builder.post(body.toRequestBody(JSON_MEDIA))
+        if (method == "GET") builder.get() else builder.post(body.toRequestBody(JSON_MEDIA))
 
         val call = http.newCall(builder.build())
         calls[reqId] = call

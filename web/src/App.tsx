@@ -29,6 +29,8 @@ import { Drawer } from "./Drawer";
 import { conversationMarkdown } from "./exportConversation";
 import { MarkdownText } from "./Markdown";
 import { SettingsPanel } from "./Settings";
+import { ModelSetup } from "./ModelSetup";
+import { dismissModelSetup, isModelConfigured, needsModelSetup } from "./modelConfig";
 import { TEMPLATE_GROUPS } from "./templates";
 import { ToolCard } from "./ToolCard";
 import { fmtTokens } from "./usage";
@@ -405,7 +407,7 @@ function Composer({ hasKey }: { hasKey: boolean }) {
                 ? t("inputTranscribing")
                 : hasKey
                   ? t("inputPlaceholder")
-                  : t("inputNoKey")
+                  : t("modelInputUnconfigured")
           }
           minRows={1}
           maxRows={6}
@@ -449,27 +451,37 @@ export default function App() {
   const { t } = useI18n();
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [showSettings, setShowSettings] = useState(false);
+  const [showModelSetup, setShowModelSetup] = useState(false);
+  const [modelOnboarding, setModelOnboarding] = useState(false);
+  // Open after mount so StrictMode's initial effect cleanup cannot pop the
+  // onboarding history entry and accidentally mark the guide as dismissed.
+  useEffect(() => {
+    if (needsModelSetup(settings)) { setModelOnboarding(true); setShowModelSetup(true); }
+  }, []);
+  const openModelSetup = () => { setModelOnboarding(false); setShowModelSetup(true); };
+  const closeModelSetup = useCallback(() => { dismissModelSetup(); setShowModelSetup(false); setModelOnboarding(false); }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   // 返回键层级：覆盖层（设置/抽屉）打开时各占一条 history 记录——Android 返回
   // 手势/按键先收起覆盖层，而不是退出 App。depth 由 backLayers 模块持久持有，
   // effect 重跑只做 attach + sync，不会把已压入的记录丢在栈里。
   const layerMgrRef = useRef<ReturnType<typeof createBackLayerManager> | null>(null);
-  const overlayRef = useRef({ showSettings, drawerOpen });
-  overlayRef.current = { showSettings, drawerOpen };
+  const overlayRef = useRef({ showSettings, showModelSetup, drawerOpen });
+  overlayRef.current = { showSettings, showModelSetup, drawerOpen };
   const closeTop = useCallback((): boolean => {
+    if (overlayRef.current.showModelSetup) { closeModelSetup(); return true; }
     if (overlayRef.current.showSettings) { setShowSettings(false); return true; }
     if (overlayRef.current.drawerOpen) { setDrawerOpen(false); return true; }
     return false;
-  }, []);
+  }, [closeModelSetup]);
   const getLayerMgr = () =>
     layerMgrRef.current ?? (layerMgrRef.current = createBackLayerManager(closeTop));
   useEffect(() => {
     const mgr = getLayerMgr();
     mgr.attach();
-    mgr.sync((showSettings ? 1 : 0) + (drawerOpen ? 1 : 0));
+    mgr.sync((showModelSetup ? 1 : 0) + (showSettings ? 1 : 0) + (drawerOpen ? 1 : 0));
     return () => mgr.detach();
-  }, [showSettings, drawerOpen]);
+  }, [showSettings, showModelSetup, drawerOpen]);
   // 卸载（页面销毁 / StrictMode 双挂载）时清空 history 栈，避免残留记录。
   useEffect(() => {
     getLayerMgr().attach();
@@ -567,9 +579,9 @@ export default function App() {
             </div>
           </div>
           <div className="head-actions">
-            <span className="model-chip" title={settings.baseUrl}>
-              {settings.model}
-            </span>
+            <button type="button" className="model-chip" title={t("modelSettings")} onClick={openModelSetup}>
+              {settings.model || t("connectModel")}
+            </button>
             <button
               type="button"
               className="icon-btn"
@@ -613,11 +625,11 @@ export default function App() {
           </div>
         </header>
 
-        {!settings.apiKey && (
+        {!isModelConfigured(settings) && (
           <div className="banner">
-            <span>{t("missingKey")}</span>
-            <button type="button" onClick={() => setShowSettings(true)}>
-              {t("goSettings")}
+            <span>{t("modelNotConfigured")}</span>
+            <button type="button" onClick={openModelSetup}>
+              {t("modelConfigure")}
             </button>
           </div>
         )}
@@ -650,15 +662,18 @@ export default function App() {
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
 
-        <Composer hasKey={!!settings.apiKey} />
+        <Composer hasKey={isModelConfigured(settings)} />
 
         {showSettings && (
           <SettingsPanel
             settings={settings}
             onClose={() => setShowSettings(false)}
             onSave={saveSettings}
+            onModelSetup={openModelSetup}
           />
         )}
+
+        {showModelSetup && <ModelSetup settings={settings} onboarding={modelOnboarding} onClose={closeModelSetup} onSave={saveSettings} />}
 
         <Drawer
           open={drawerOpen}

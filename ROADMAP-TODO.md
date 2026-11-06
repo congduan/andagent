@@ -7,6 +7,9 @@
 > 引擎纪律：全部 Codex 实施，主控独立复测后才能标 ✅。
 
 ## 🔴 P0 — 用户已报问题/半成品收尾
+
+- DOING（已实现，待真机复测）：启动模型配置入口。参考 Mika 与 iOS-Agent，新增首次启动引导、聊天顶部 / 未配置提示 / 设置入口，服务商预设、模型列表、工具调用测试、手动保存、无 Key 本地服务及中英文文案；已通过 Web 50 项测试、TypeScript / Vite 构建、390px 界面预览与 Android Kotlin 编译；JVM 199/200，通过项之外的既有 FileOps 路径保护测试因 macOS 将 /system 规范化为 /System 而失败；待真机复测。
+
 | # | 事项 | 状态 | 备注 |
 |---|---|---|---|
 | 1 | WidgetConversationTools.kt 编译修复（imports） | ✅ | 全量编译通过（41a4b10 及后续） |
