@@ -795,6 +795,32 @@ const MEDIA_CONTEXT_GUIDE_EN = [
   "- For further image processing, pass the returned path or uri as the next tool source.",
 ].join("\n");
 
+const A2UI_GUIDE = [
+  "结构化表单卡（```a2ui 围栏）：",
+  "1. 需要用户多选、填写参数或确认选项时，输出 ```a2ui 围栏（合法 JSON）代替纯文字追问。",
+  '2. 顶层格式：{"title":"标题","submit_label":"提交","fields":[...]}；fields 必须是数组且非空。',
+  "3. 只能使用以下 catalog 组件：TEXT_INPUT（key,label,placeholder,required,max_length,validate 取 email|phone|regex,pattern）、NUMBER_SLIDER（min,max,step,default）、CHOICE（options 为字符串数组或 {value,label} 数组，multiple 可选）、DATE_PICK、SWITCH（default）、BUTTON_GROUP（buttons）、CARD（title,text）、ROW/COLUMN（children 递归嵌套）、LABEL（text）。",
+  "4. 每个字段 key 必须唯一；总节点数不超过 60；只适合 2-8 个字段的轻量表单，不要生成超大表单；ROW/COLUMN 最多嵌套 8 层。",
+  '5. 用户提交后，卡片会把表单值以 {"a2ui_submit":{...},"a2ui_title":"标题"} 回填到输入框；用户确认发送后你才会收到。收到后直接按其中的字段继续任务，不要重复追问。',
+  "6. 示例：",
+  "```a2ui",
+  '{"title":"导出设置","submit_label":"提交","fields":[{"type":"TEXT_INPUT","key":"email","label":"接收邮箱","placeholder":"you@example.com","required":true,"validate":"email"},{"type":"CHOICE","key":"format","label":"导出格式","options":["Markdown","PDF"]},{"type":"SWITCH","key":"include_images","label":"包含图片","default":true}]}',
+  "```",
+].join("\n");
+
+const A2UI_GUIDE_EN = [
+  "Structured form cards (```a2ui fence):",
+  "1. When the user must pick options, fill in parameters, or confirm choices, output an ```a2ui fence with valid JSON instead of asking in plain text.",
+  '2. Top-level shape: {"title":"Title","submit_label":"Submit","fields":[...]}; fields must be a non-empty array.',
+  "3. Use only these catalog components: TEXT_INPUT (key,label,placeholder,required,max_length,validate as email|phone|regex,pattern), NUMBER_SLIDER (min,max,step,default), CHOICE (options as a string array or {value,label} array, optional multiple), DATE_PICK, SWITCH (default), BUTTON_GROUP (buttons), CARD (title,text), ROW/COLUMN (nested children), LABEL (text).",
+  "4. Every field key must be unique; keep the total node count at or below 60; use this only for lightweight forms of 2-8 fields, never huge forms; ROW/COLUMN nesting is limited to 8 levels.",
+  '5. After the user submits, the card fills {"a2ui_submit":{...},"a2ui_title":"Title"} into the composer; you receive it only after the user presses send. Then continue the task using those fields and do not ask again.',
+  "6. Example:",
+  "```a2ui",
+  '{"title":"Export settings","submit_label":"Submit","fields":[{"type":"TEXT_INPUT","key":"email","label":"Email","placeholder":"you@example.com","required":true,"validate":"email"},{"type":"CHOICE","key":"format","label":"Format","options":["Markdown","PDF"]},{"type":"SWITCH","key":"include_images","label":"Include images","default":true}]}',
+  "```",
+].join("\n");
+
 const ZERO_USAGE = {
   input: 0,
   output: 0,
@@ -1161,6 +1187,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? SHORTCUT_GUIDE_EN : SHORTCUT_GUIDE,
               currentLanguage() === "en" ? STORAGE_MEDIA_GUIDE_EN : STORAGE_MEDIA_GUIDE,
               currentLanguage() === "en" ? MEDIA_CONTEXT_GUIDE_EN : MEDIA_CONTEXT_GUIDE,
+              currentLanguage() === "en" ? A2UI_GUIDE_EN : A2UI_GUIDE,
               currentLanguage() === "en" ? PERMISSION_GUIDE_EN : PERMISSION_GUIDE,
             ]
               .filter(Boolean)
