@@ -38,7 +38,7 @@ class IrToolsTest {
     }
 
     @Test fun patternValidationBounds() {
-        validatePattern(intArrayOf(560, 1690, 560)) // 合法：奇数项 on/off 交替、全正
+        validatePattern(intArrayOf(560, 1690, 560, 560)) // 合法：偶数项 on/off 交替、全正
         assertThrows(IllegalArgumentException::class.java) { validatePattern(intArrayOf(0)) }       // 非正时长
         assertThrows(IllegalArgumentException::class.java) { validatePattern(intArrayOf(-5)) }      // 负值
         assertThrows(IllegalArgumentException::class.java) { validatePattern(IntArray(0)) }         // 空
