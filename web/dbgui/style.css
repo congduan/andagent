@@ -93,30 +93,68 @@ dialog::backdrop{background:rgba(0,0,0,.65)}
 
 @media(max-width:719px){:root{font-size:14px}
 .app-header{height:64px;padding:8px 12px}
-.header-title{gap:8px;flex-wrap:wrap}
-.header-title strong{font-size:15px}
+.header-title{gap:8px;flex-wrap:wrap;min-width:0}
+.header-title strong{font-size:15px;overflow-wrap:anywhere}
 .mode-pill{font-size:11px;min-height:24px}
-main{display:flex;flex-direction:column;max-height:calc(100dvh - 64px)}
-.sidebar{flex:none;overflow:visible;padding:12px 0 10px;border-right:0;border-bottom:1px solid var(--border)}
+main{display:flex;flex-direction:column;min-width:0;max-height:calc(100dvh - 64px)}
+.sidebar{flex:none;overflow:visible;min-width:0;padding:12px 0 10px;border-right:0;border-bottom:1px solid var(--border)}
 .sidebar-head{padding:0 14px 8px}
 .sidebar h2{font-size:15px}
 .sidebar .eyebrow{display:none}
 #tables{display:flex;gap:7px;overflow-x:auto;padding:0 12px 4px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
 #tables::-webkit-scrollbar{display:none}
-.table{width:auto;flex:none;min-height:44px;max-width:210px;padding:6px 10px;border-radius:10px}
+.table{width:auto;flex:none;min-height:44px;max-width:210px;padding:6px 10px;border-radius:var(--radius-btn)}
 .table-icon{width:26px;height:26px;font-size:16px}
-.table-name{font-size:14px}
-.workspace{flex:1;padding:14px 12px;gap:14px}
-.toolbar{align-items:start;flex-wrap:wrap}
-.toolbar h2{font-size:16px}
+.table-name{font-size:14px;overflow-wrap:anywhere}
+.workspace{flex:1;min-width:0;max-width:100%;padding:14px 12px;gap:14px}
+.toolbar{align-items:start;flex-wrap:wrap;min-width:0}
+.toolbar>div{min-width:0}
+.toolbar h2{font-size:16px;overflow-wrap:anywhere}
 .pager{width:100%;justify-content:flex-end}
-.pager button{min-height:44px}
-.gridjs-th,.gridjs-td{padding:10px 12px!important;font-size:14px!important}
-.gridjs-td{max-width:200px!important}
-.query-card{padding:14px;gap:10px}
-.query-head{align-items:start}
-.query-hint{max-width:130px;text-align:right}
-.query-card>button{width:100%;justify-self:stretch}
-.sql-editor pre,.sql-editor textarea{font-size:14px;min-height:88px}
+.pager button{min-height:44px;min-width:44px}
+.grid-panel{min-width:0;max-width:100%}
+.gridjs-th,.gridjs-td{padding:10px 12px!important;font-size:14px!important;overflow-wrap:anywhere!important}
+.gridjs-td{max-width:200px!important;height:auto!important;min-height:44px!important;white-space:normal!important;overflow:visible!important}
+#status{overflow-wrap:anywhere}
+.query-card{min-width:0;max-width:100%;padding:14px;gap:10px}
+.query-head{align-items:start;min-width:0}
+.query-head>div{min-width:0}
+.query-hint{max-width:130px;text-align:right;overflow-wrap:anywhere}
+.query-card>button{width:100%;justify-self:stretch;min-height:44px}
+.sql-editor pre,.sql-editor textarea{font-size:14px;min-height:88px;overflow-wrap:anywhere}
 dialog{width:94vw;padding:14px}
+#detail-text{overflow-wrap:anywhere}
+}
+
+/* R94 C: 320/375px hardening — same techniques as 99c77af (website mobile
+   hardening): clamp() type scale, overflow-wrap guards, min-width:0 on grid
+   children, and table cells that wrap instead of overflowing. */
+@media(max-width:480px){
+  :root{font-size:clamp(13px,4vw,14px)}
+  body,#app{overflow-x:hidden;max-width:100%}
+  .app-header{height:auto;min-height:56px;padding:8px 10px;gap:8px}
+  #back{width:44px;height:44px;min-width:44px}
+  .header-title{flex:1;min-width:0}
+  .header-title strong{font-size:clamp(13px,4vw,15px);overflow-wrap:anywhere}
+  .mode-pill{max-width:46vw;font-size:10px;white-space:normal;overflow-wrap:anywhere}
+  .sidebar-head{padding:0 10px 8px}
+  .sidebar h2,.toolbar h2{font-size:clamp(14px,4.4vw,16px);overflow-wrap:anywhere}
+  #tables{padding:0 10px 4px}
+  .table{min-height:44px;max-width:min(70vw,210px)}
+  .workspace{padding:12px 10px;gap:12px}
+  .pager{flex-wrap:wrap;gap:6px}
+  .pager button{min-height:44px;min-width:44px;padding:8px 12px}
+  #page{min-width:44px}
+  .grid-panel{overflow-x:auto}
+  #grid{overflow-x:auto;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .gridjs-th,.gridjs-td{padding:8px 10px!important;font-size:13px!important;white-space:normal!important;overflow-wrap:anywhere!important;max-width:min(52vw,200px)!important}
+  .gridjs-td{height:auto!important;min-height:44px!important}
+  .query-card{padding:12px}
+  .query-head label{font-size:clamp(14px,4.4vw,16px);overflow-wrap:anywhere}
+  .query-hint{max-width:42vw;font-size:10px}
+  .query-card>button{min-height:44px;width:100%}
+  .sql-editor pre,.sql-editor textarea{font-size:13px;min-height:88px;overflow-wrap:anywhere;word-break:break-word}
+  dialog{width:min(94vw,320px);padding:12px}
+  .detail-head button{min-height:44px;min-width:44px}
+  #detail-text{font-size:12px;overflow-wrap:anywhere;word-break:break-word}
 }
