@@ -53,4 +53,24 @@ class SshTransferRulesTest {
             catch (_: IllegalArgumentException) { }
         }
     }
+
+    @Test fun notificationRequiresTwoSecondsAndTenPercentWhileLinesContinue() {
+        var time = 0L
+        val reports = mutableListOf<Int>()
+        val progress = SshProgress(1_000_000, 1_000_000, reports::add) { time }
+        assertTrue(progress.count(100_000))
+        assertEquals(1, progress.lines.size)
+        assertTrue(reports.isEmpty())
+        time = 2_000
+        assertTrue(progress.count(100_000))
+        assertEquals(listOf(20), reports)
+        time = 2_100
+        assertTrue(progress.count(100_000))
+        assertEquals(3, progress.lines.size)
+        assertEquals(listOf(20), reports)
+        time = 4_100
+        assertTrue(progress.count(100_000))
+        assertEquals(listOf(20, 40), reports)
+        assertFalse(SshTransferRules.shouldNotify(4_100, 40, 6_100, 49))
+    }
 }

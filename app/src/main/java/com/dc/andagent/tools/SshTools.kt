@@ -3,6 +3,7 @@ package com.dc.andagent.tools
 import android.content.Context
 import com.jcraft.jsch.ChannelExec
 import com.jcraft.jsch.JSch
+import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.JSchException
 import com.jcraft.jsch.Session
 import kotlinx.coroutines.Dispatchers
@@ -274,6 +275,8 @@ class SshTool(
         session.setConfig("ConnectTimeout", "10000")
         session.setConfig("ServerAliveInterval", "15000")
         session.setConfig("ServerAliveCountMax", "3")
+        session.setConfig("compression.s2c", "zlib@openssh.com,zlib,none")
+        session.setConfig("compression.c2s", "zlib@openssh.com,zlib,none")
         try {
             session.connect(10_000)
         } catch (e: JSchException) {
@@ -497,7 +500,9 @@ class SshSessionRegistry(private val clock: () -> Long = System::currentTimeMill
  * 断开时同时清理两者；外部掉线的会话在 list/exec 时惰性剔除。
  */
 object SshSessionPool {
-    data class Live(val session: Session)
+    data class Live(val session: Session) {
+        var sftpChannel: ChannelSftp? = null
+    }
 
     val registry = SshSessionRegistry()
     private val live = LinkedHashMap<String, Live>()
@@ -517,7 +522,13 @@ object SshSessionPool {
     @Synchronized fun remove(id: String): Live? {
         registry.remove(id)
         val removed = live.remove(id)
-        removed?.let { SshTransferTool.forgetHome(it.session) }
+        removed?.let {
+            synchronized(it.session) {
+                it.sftpChannel?.disconnect()
+                it.sftpChannel = null
+                SshTransferTool.forgetHome(it.session)
+            }
+        }
         if (presence.remove(id)) appContext?.let(SshKeepAliveService::stop)
         return removed
     }

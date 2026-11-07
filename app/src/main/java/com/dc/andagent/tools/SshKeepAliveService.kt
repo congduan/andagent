@@ -11,6 +11,8 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.provider.DocumentsContract
+import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.dc.andagent.MainActivity
@@ -70,6 +72,8 @@ class SshKeepAliveService : Service() {
     companion object {
         private const val CHANNEL = "ssh_keep_alive"
         private const val ID = 9210
+        private const val COMPLETE_CHANNEL = "ssh_download_complete"
+        private const val COMPLETE_ID = 9211
         private fun notification(context: Context, file: String?, percent: Int?) =
             NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
@@ -83,6 +87,26 @@ class SshKeepAliveService : Service() {
         fun progress(context: Context, file: String?, percent: Int?) {
             (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .notify(ID, notification(context, file, percent))
+        }
+        fun downloadComplete(context: Context, file: String) {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            if (manager.getNotificationChannel(COMPLETE_CHANNEL) == null) {
+                manager.createNotificationChannel(NotificationChannel(COMPLETE_CHANNEL, "SSH 下载完成", NotificationManager.IMPORTANCE_DEFAULT))
+            }
+            val folder = Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload%2FAndAgentSsh")
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, folder)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val pending = PendingIntent.getActivity(context, COMPLETE_ID, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            manager.notify(COMPLETE_ID, NotificationCompat.Builder(context, COMPLETE_CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("SSH 下载完成")
+                .setContentText("$file · 点击打开 Download/AndAgentSsh")
+                .setContentIntent(pending)
+                .setAutoCancel(true)
+                .build())
         }
         fun ensureStarted(context: Context) {
             val intent = Intent(context, SshKeepAliveService::class.java)

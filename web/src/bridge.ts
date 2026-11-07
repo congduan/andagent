@@ -1,4 +1,5 @@
 import { currentLanguage } from "./i18n";
+const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload"]);
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
  *
@@ -503,6 +504,7 @@ export function execTool(
   name: string,
   args: unknown,
   callId?: string,
+  timeoutMs = LONG_TASK_TOOLS.has(name) ? 1_800_000 : 65_000,
 ): Promise<{ ok: boolean; result: string }> {
   if (name === "widget_generate") {
     return Promise.resolve({ ok: true, result: "请根据 spec_description 生成符合 WidgetSpec v2 的完整 JSON，然后调用 widget_save_and_pin({spec_json: JSON.stringify(spec)})。" });
@@ -519,8 +521,9 @@ export function execTool(
   return new Promise((resolve) => {
     const timer = window.setTimeout(() => {
       toolPending.delete(id);
-      resolve({ ok: false, result: "ERROR: 工具执行超时（60s）" });
-    }, 65_000);
+      if (callId) toolReqByCallId.delete(callId);
+      resolve({ ok: false, result: LONG_TASK_TOOLS.has(name) ? "ERROR: 长任务超时（30min）" : "ERROR: 工具执行超时（60s）" });
+    }, timeoutMs);
     toolPending.set(id, { resolve, timer });
     try {
       b.toolExec(id, name, JSON.stringify(args ?? {}));

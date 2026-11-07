@@ -14,6 +14,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import java.io.File
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.ConcurrentHashMap
@@ -22,6 +24,8 @@ val SSH_TRANSFER_TOOLS = listOf("ssh_download", "ssh_upload", "ssh_remote_ls")
 
 /** Path and progress decisions are pure so they can be checked without Android or a server. */
 object SshTransferRules {
+    fun shouldNotify(lastAt: Long, lastPercent: Int, now: Long, percent: Int): Boolean =
+        now - lastAt >= 2_000 && percent - lastPercent >= 10
     fun maxMb(value: Int?): Int = (value ?: 512).coerceIn(1, 4096)
     fun remotePath(path: String, home: String): String {
         require(path.isNotBlank() && !path.contains('\u0000') && !path.contains('\n')) { "远程路径无效" }
@@ -42,10 +46,12 @@ object SshTransferRules {
     }
 }
 
-class SshProgress(private val total: Long, private val maxBytes: Long, private val onReport: (Int) -> Unit = {}) : SftpProgressMonitor {
+class SshProgress(private val total: Long, private val maxBytes: Long, private val onReport: (Int) -> Unit = {}, private val now: () -> Long = System::currentTimeMillis) : SftpProgressMonitor {
     private var done = 0L
     private var lastReported = 0L
     private var lastPercent = 0
+    private var lastNotifiedAt = now()
+    private var lastNotifiedPercent = 0
     val lines = ArrayList<String>()
     var exceeded = false
         private set
@@ -58,6 +64,11 @@ class SshProgress(private val total: Long, private val maxBytes: Long, private v
             lines.add("进度: $done/$total 字节${if (total > 0) " ($percent%)" else ""}")
             lastReported = done
             lastPercent = percent
+        }
+        val time = now()
+        if (SshTransferRules.shouldNotify(lastNotifiedAt, lastNotifiedPercent, time, percent)) {
+            lastNotifiedAt = time
+            lastNotifiedPercent = percent
             onReport(percent)
         }
         return true
@@ -106,15 +117,33 @@ class SshTransferTool(private val context: Context, override val name: String) :
             synchronized(session) {
                 val home = homeFor(session)
                 val remote = SshTransferRules.remotePath(args.strArg("remote_path") ?: if (name == "ssh_remote_ls") "~" else return@withContext "ERROR: 缺少 remote_path", home)
-                val sftp = session.openChannel("sftp") as ChannelSftp
+                val sftp = live.sftpChannel.let { existing ->
+                    if (existing?.isConnected == true) existing else {
+                        existing?.disconnect()
+                        live.sftpChannel = null
+                        (session.openChannel("sftp") as ChannelSftp).also {
+                            try {
+                                it.setBulkRequests(128)
+                                it.connect(10_000)
+                                live.sftpChannel = it
+                            } catch (e: Exception) {
+                                it.disconnect()
+                                throw e
+                            }
+                        }
+                    }
+                }
                 try {
-                    sftp.connect(10_000)
                     when (name) {
                         "ssh_download" -> download(sftp, remote, args)
                         "ssh_upload" -> upload(sftp, remote, args)
                         else -> list(sftp, remote)
                     }
-                } finally { sftp.disconnect() }
+                } catch (e: Exception) {
+                    sftp.disconnect()
+                    live.sftpChannel = null
+                    throw e
+                }
             }
         } catch (e: Exception) {
             if (!session.isConnected) SshSessionPool.removeByRef(ref)
@@ -142,12 +171,12 @@ class SshTransferTool(private val context: Context, override val name: String) :
         val name = SshTransferRules.safeName(args.strArg("filename") ?: remote.substringAfterLast('/'))
         val dir = args.strArg("dir") ?: "downloads"
         if (dir !in listOf("downloads", "app_private")) return "ERROR: dir 只能是 downloads 或 app_private"
-        val progress = SshProgress(attrs.size, max) { percent ->
+        val progress = SshProgress(attrs.size, max, onReport = { percent ->
             runCatching { SshKeepAliveService.progress(context, name, percent) }
-        }
+        })
         val temp = File.createTempFile("ssh-", ".part", context.cacheDir)
         try {
-            temp.outputStream().use { output -> sftp.get(remote, output, progress) }
+            BufferedOutputStream(temp.outputStream(), 131_072).use { output -> sftp.get(remote, output, progress) }
             if (progress.exceeded) return "ERROR: 下载超过大小上限"
             val saved = if (dir == "app_private") {
                 val root = File(context.filesDir, "ssh_downloads").apply { mkdirs() }
@@ -156,6 +185,7 @@ class SshTransferTool(private val context: Context, override val name: String) :
                 temp.copyTo(target)
                 target.absolutePath
             } else saveToDownloads(temp, name)
+            if (dir == "downloads") runCatching { SshKeepAliveService.downloadComplete(context, name) }
             return "savedPath=$saved\nbytes=${temp.length()}\n" + progress.lines.joinToString("\n")
         } finally {
             temp.delete()
@@ -217,7 +247,7 @@ class SshTransferTool(private val context: Context, override val name: String) :
             val tmp = "$remote.andagent-tmp-${java.util.UUID.randomUUID().toString().take(8)}"
             val progress = SshProgress(file.length(), max)
             try {
-                file.inputStream().use { sftp.put(it, tmp, progress, ChannelSftp.OVERWRITE) }
+                BufferedInputStream(file.inputStream(), 131_072).use { sftp.put(it, tmp, progress, ChannelSftp.OVERWRITE) }
                 if (progress.exceeded) return "ERROR: 上传超过大小上限"
                 try {
                     sftp.rename(tmp, remote)
@@ -230,7 +260,7 @@ class SshTransferTool(private val context: Context, override val name: String) :
             return "uploadedPath=$remote\nbytes=${file.length()}\n" + progress.lines.joinToString("\n")
         }
         val progress = SshProgress(file.length(), max)
-        file.inputStream().use { sftp.put(it, remote, progress, ChannelSftp.OVERWRITE) }
+        BufferedInputStream(file.inputStream(), 131_072).use { sftp.put(it, remote, progress, ChannelSftp.OVERWRITE) }
         if (progress.exceeded) return "ERROR: 上传超过大小上限"
         return "uploadedPath=$remote\nbytes=${file.length()}\n" + progress.lines.joinToString("\n")
     }
