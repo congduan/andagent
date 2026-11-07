@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#0e1014" />
+    <title>AndAgent</title>
+    <script>
+      // pi-ai probes process.versions lazily; provide a minimal shim so the
+      // browser bundle never touches a missing global.
+      window.process = window.process || { env: {}, versions: {} };
+    </script>
+    <script type="module" crossorigin src="./assets/index-0-3-ipHj.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-B_emfh-E.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

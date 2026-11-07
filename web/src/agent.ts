@@ -10,6 +10,7 @@ import type {
 } from "@mariozechner/pi-ai";
 import type { ThreadMessageLike } from "@assistant-ui/react";
 import { cancelAgentWork, execTool, STOPPED_RESULT, type Settings } from "./bridge";
+import { appConfirm } from "./ConfirmDialog";
 import { PERMISSION_GUIDE, PERMISSION_GUIDE_EN } from "./permissionGuide";
 import { currentLanguage } from "./i18n";
 import { isModelConfigured } from "./modelConfig";
@@ -1514,13 +1515,27 @@ export class AgentEngine {
         for (const call of toolCalls) {
           if (controller.signal.aborted) break;
           // signal 让工具在停止时立刻结算，而不是等 60s/30min 超时。
-          const result = await execTool(
+          let result = await execTool(
             call.name,
             call.arguments ?? {},
             call.id,
             undefined,
             controller.signal,
           );
+          // F3: CONFIRM_REQUIRED → 真 UI 弹窗。Kotlin 侧参数闸返回确认请求时，
+          // 弹 ConfirmDialog 展示危险摘要；用户允许 → 同参数 + confirm=true 自动重试；
+          // 拒绝 → 结果改写为「用户拒绝」，AI 不再自作主张重试。
+          if (result.result.startsWith("CONFIRM_REQUIRED:") && !controller.signal.aborted) {
+            const summary = result.result.slice("CONFIRM_REQUIRED:".length).trim().slice(0, 300);
+            const args = { ...(call.arguments ?? {}) };
+            const ok = await appConfirm(`危险操作确认${summary ? "：" + summary : ""}`);
+            if (ok) {
+              args.confirm = true;
+              result = await execTool(call.name, args, call.id, undefined, controller.signal);
+            } else {
+              result = { ok: false, result: `用户在确认弹窗中拒绝了本次操作。${summary ? `（${summary}）` : ""}` };
+            }
+          }
           if (sessionChanged()) return; // 会话已删除/切换：本轮作废
           const aborted = controller.signal.aborted;
           this.recordToolResult(call, aborted ? STOPPED_RESULT : result.result, aborted || !result.ok);

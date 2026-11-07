@@ -469,6 +469,6 @@ class AdbClient(
         const val HANDSHAKE_MAX_MESSAGES = 8
         const val AUTH_WAIT_MS = 3000
         /** 建连后的读超时：shell/文件传输可能长时间无输出，不沿用 connect 的短超时。 */
-        const val SESSION_TIMEOUT_MS = 30_000
+        const val SESSION_TIMEOUT_MS = 90_000
     }
 }

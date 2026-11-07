@@ -3,7 +3,7 @@ import { appConfirm, cancelConfirmDialog } from "./ConfirmDialog";
 import { loadConfirmMode } from "./confirmMode";
 import { TOOL_DESTRUCTIVE, TOOL_META } from "./toolMeta";
 // significant_motion (R84) 会主动阻塞等待硬件触发，最长 300s，必须走长任务超时。
-const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "significant_motion"]);
+const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "significant_motion", "adb_shell", "adb_pull", "adb_push", "adb_screencap", "adb_screencast", "adb_record", "otg_transfer"]);
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
  *
