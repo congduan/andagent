@@ -233,7 +233,14 @@ class SshTransferTool(private val context: Context, override val name: String,
         val temp = File.createTempFile("ssh-", ".part", context.cacheDir)
         try {
             track(sftp, progress)
-            sftp.get(remote, temp.absolutePath)
+            // R97b: read-ahead 1MB——sshj 默认 32KB 在途窗口在广域网 RTT 30-50ms 下
+            // 理论吞吐只有 ~800KB/s（32KB/RTT），是用户实测 <1MB/s 的根因。
+            // 1MB 在途覆盖 100Mbps@100ms 带宽时延积；localhost PoC（RTT~0）测不出该问题。
+            val remoteFile = sftp.open(remote)
+            val remoteIn = remoteFile.ReadAheadRemoteFileInputStream(1 shl 20)
+            remoteIn.use { input ->
+                temp.outputStream().buffered(1 shl 20).use { output -> input.copyTo(output, 1 shl 20) }
+            }
             if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
             if (progress.exceeded) return "ERROR: 下载超过大小上限"
             val saved = if (dir == "app_private") {
@@ -307,7 +314,14 @@ class SshTransferTool(private val context: Context, override val name: String,
             val progress = uploadProgress(file, remote, max, key)
             try {
                 track(sftp, progress)
-                sftp.put(file.absolutePath, tmp)
+                // R97b: write-ahead 1MB（对照 read-ahead 同理——广域网 RTT 下默认窗口限制吞吐）
+                val tmpFile = sftp.open(tmp, java.util.EnumSet.of(net.schmizz.sshj.sftp.OpenMode.CREAT, net.schmizz.sshj.sftp.OpenMode.WRITE))
+                tmpFile.use { rf ->
+                    java.io.BufferedInputStream(file.inputStream().buffered(1 shl 20), 1 shl 20).use { input ->
+                        val out = rf.RemoteFileOutputStream(1L shl 20) as java.io.OutputStream
+                        out.use { output -> input.copyTo(output, 1 shl 20) }
+                    }
+                }
                 if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
                 if (progress.exceeded) return "ERROR: 上传超过大小上限"
                 try {
@@ -322,7 +336,13 @@ class SshTransferTool(private val context: Context, override val name: String,
         }
         val progress = uploadProgress(file, remote, max, key)
         track(sftp, progress)
-        sftp.put(file.absolutePath, remote)
+        val remoteFile = sftp.open(remote, java.util.EnumSet.of(net.schmizz.sshj.sftp.OpenMode.CREAT, net.schmizz.sshj.sftp.OpenMode.WRITE))
+        remoteFile.use { rf ->
+            java.io.BufferedInputStream(file.inputStream().buffered(1 shl 20), 1 shl 20).use { input ->
+                val out = rf.RemoteFileOutputStream(1L shl 20) as java.io.OutputStream
+                out.use { output -> input.copyTo(output, 1 shl 20) }
+            }
+        }
         if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
         if (progress.exceeded) return "ERROR: 上传超过大小上限"
         return "uploadedPath=$remote\nbytes=${file.length()}\n" + progress.lines.joinToString("\n")
