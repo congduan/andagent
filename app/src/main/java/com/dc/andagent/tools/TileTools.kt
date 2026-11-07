@@ -80,8 +80,18 @@ class TileTool(private val context: android.content.Context, override val name: 
         // Codex R77 must-fix #4: clear unconditionally so a corrupted config
         // can always be repaired via tile_clear.
         val had = runCatching { TileStore(context).read() != null }.getOrDefault(false)
+        // Codex R77-closeout review must-fix #2: a failed commit must not be
+        // reported as success — the old prompt would still fire on the next
+        // tile tap while the agent believes the tile was reset.
         TileStore(context).clearUnchecked()
+        val gone = runCatching { TileStore(context).read() == null }.getOrDefault(true)
         AndagentTileService.requestRefresh(context)
+        if (!gone) {
+            return "ERROR: " + tr(
+                "磁贴配置清除失败，请重试或在系统设置清除应用数据",
+                "Failed to clear the tile config; retry or clear app data in system settings",
+            )
+        }
         return if (had) {
             tr("磁贴配置已清除；磁贴点击回落为打开主界面", "Tile config cleared; tapping the tile now opens the main screen")
         } else {

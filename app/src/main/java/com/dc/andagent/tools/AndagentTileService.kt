@@ -35,10 +35,13 @@ internal class TileStore(context: Context) {
         // Codex R77 must-fix #4: a corrupted prefs entry (wrong value type,
         // e.g. after a backup/restore) throws ClassCastException — treat it as
         // unconfigured instead of crashing the tile or the tool.
+        // Codex R77-closeout review must-fix #1: updatedAt (Long) is equally
+        // exposed to type corruption — fail soft on it too.
         val label = runCatching { prefs.getString("label", null) }.getOrNull() ?: return null
         val prompt = runCatching { prefs.getString("prompt", null) }.getOrNull() ?: return null
         if (!TileConfig.validLabel(label) || !TileConfig.validPrompt(prompt)) return null
-        return Config(label, prompt, prefs.getLong("updatedAt", 0L))
+        val updatedAt = runCatching { prefs.getLong("updatedAt", 0L) }.getOrDefault(0L)
+        return Config(label, prompt, updatedAt)
     }
 
     fun write(label: String, prompt: String) {

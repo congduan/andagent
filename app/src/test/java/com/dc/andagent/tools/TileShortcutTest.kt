@@ -3,6 +3,7 @@ package com.dc.andagent.tools
 import android.content.Context
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -72,6 +73,23 @@ class TileShortcutTest {
         assertEquals("pb", config.prompt)
         store.clear()
         assertNull(store.read())
+    }
+
+    @Test
+    fun storeReadToleratesCorruptedUpdatedAt() {
+        // Codex R77-closeout review must-fix #1: a wrong-typed updatedAt
+        // (e.g. after backup/restore) must not throw — degrade to 0L.
+        val store = TileStore(context)
+        store.write("a", "pa")
+        assertTrue(
+            context.getSharedPreferences("andagent_tiles", Context.MODE_PRIVATE)
+                .edit().putString("updatedAt", "not-a-long").commit(),
+        )
+        val config = store.read()
+        assertNotNull(config)
+        assertEquals("a", config!!.label)
+        assertEquals("pa", config.prompt)
+        assertEquals(0L, config.updatedAt)
     }
 
     // ---- TileTool string results ----
