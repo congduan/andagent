@@ -11,10 +11,16 @@ plugins {
  */
 // 关于页 git commit 编译期注入：Gradle 打包时把实际 HEAD 传给 Vite（否则 Vite
 // 自己 rev-parse 出的是构建时 HEAD，APK 内资产可能滞后于发布提交）。
-val webGitCommit = providers.exec {
-    commandLine("git", "rev-parse", "--short", "HEAD")
-    ignoreExitValue = true
-}.standardOutput.asText.orNull?.trim().takeUnless { it.isNullOrEmpty() } ?: "unknown"
+val webGitCommit: String = try {
+    val p = ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+        .directory(rootProject.projectDir)
+        .start()
+    val out = p.inputStream.bufferedReader().readText().trim()
+    p.waitFor()
+    out.ifEmpty { "unknown" }
+} catch (_: Exception) {
+    "unknown"
+}
 
 val buildWeb by tasks.registering(Exec::class) {
     group = "build"
