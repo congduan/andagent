@@ -68,6 +68,8 @@ import com.dc.andagent.tools.KvTool
 import com.dc.andagent.tools.KV_TOOLS
 import com.dc.andagent.tools.SHORTCUT_TOOLS
 import com.dc.andagent.tools.ShortcutTool
+import com.dc.andagent.tools.TILE_TOOLS
+import com.dc.andagent.tools.TileTool
 import com.dc.andagent.tools.DbGuiTool
 import com.dc.andagent.tools.TermuxTool
 import com.dc.andagent.tools.SSH_TOOLS
@@ -488,6 +490,8 @@ class MainActivity : ComponentActivity() {
         // R51: Android KV 持久化底座（namespace + key，JSON 值 + 可选 TTL）。
         tools.putAll(KV_TOOLS.associateWith { KvTool(appContext, it) })
         tools.putAll(SHORTCUT_TOOLS.associateWith { ShortcutTool(appContext, it) })
+        // R77: quick-settings tile config tools.
+        tools.putAll(TILE_TOOLS.associateWith { TileTool(appContext, it) })
         tools.putAll(IR_TOOLS.associateWith { IrTool(appContext, it) })
         tools.putAll(com.dc.andagent.events.EVENT_TOOLS.associateWith { com.dc.andagent.events.EventTool(appContext, it) })
         tools.putAll(com.dc.andagent.pods.PODS_TOOLS.associateWith { com.dc.andagent.pods.PodsTool(appContext, permissionBroker, it) })

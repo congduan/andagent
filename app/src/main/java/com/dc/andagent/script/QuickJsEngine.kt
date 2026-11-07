@@ -59,7 +59,11 @@ class QuickJsEngine(
         val task = FutureTask(Callable { runScript(script, 500, null, null, null, onResult) })
         if (!handler.post(task)) return "ERROR: QuickJS 线程不可用"
         return try { task.get(1500, TimeUnit.MILLISECONDS) }
-        catch (e: Exception) { task.cancel(true); "ERROR: live tick 超时或失败：${e.message ?: e.javaClass.simpleName}" }
+        catch (e: Exception) {
+            task.cancel(true)
+            val original = (e as? ExecutionException)?.cause ?: e
+            "ERROR: ${original.message ?: original.toString()}"
+        }
     }
 
     /** Execute one skill in a fresh QuickJS context with its declared tool allowlist. */
@@ -231,7 +235,7 @@ class QuickJsEngine(
                 """.trimIndent(), "andagent-memory.js")
                 // No Java Class object or reflection bridge is exposed to JS.
                 val program = if (allow == null) {
-                    "JSON.stringify((0,eval)(${JsonPrimitive(script)}))"
+                    "try { JSON.stringify((0,eval)(${JsonPrimitive(script)})) } catch (e) { 'ERROR: ' + (e && e.stack ? e.stack : String(e)) }"
                 } else {
                     val invocation = if (skillHandler == null)
                         "exports.tools.map(function(t) { return {name:t.name,description:t.description,params:t.params || {type:'object',properties:{}}}; })"
@@ -245,8 +249,8 @@ class QuickJsEngine(
             }
         }
     } catch (e: Throwable) {
-        val detail = if (e is ExecutionException) e.cause?.message else e.message
-        "ERROR: QuickJS 加载或执行失败：${detail ?: e.javaClass.simpleName}"
+        val original = (e as? ExecutionException)?.cause ?: e
+        "ERROR: ${original.message ?: original.toString()}"
     }
 
     /* ------------------------ R10.7 sandboxed fs ------------------------ */

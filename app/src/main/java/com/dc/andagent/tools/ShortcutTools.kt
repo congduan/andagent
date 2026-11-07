@@ -117,6 +117,7 @@ class ShortcutTool(private val context: Context, override val name: String) : To
             "name" to strParam("桌面显示名"),
             "prompt" to strParam("点击图标后自动发送的指令"),
             "emoji" to strParam("可选：图标上的单个 emoji 字符"),
+            "mode" to strParam("可选：pin（默认，请求固定到桌面，启动器弹确认框）或 dynamic（动态快捷方式，无需启动器确认，槽位有限会被挤掉）"),
             required = listOf("name", "prompt"),
         )
         "shortcut_delete" -> schemaOf("id" to strParam("shortcut_list 返回的 ID"), required = listOf("id"))
@@ -136,12 +137,12 @@ class ShortcutTool(private val context: Context, override val name: String) : To
         val label = args.strArg("name")?.trim() ?: return "ERROR: " + tr("缺少 name", "missing name")
         val prompt = args.strArg("prompt") ?: return "ERROR: " + tr("缺少 prompt", "missing prompt")
         val emoji = args.strArg("emoji")?.trim().orEmpty()
+        val mode = args.strArg("mode")?.trim().orEmpty()
+        if (mode.isNotEmpty() && mode != "pin" && mode != "dynamic") {
+            return "ERROR: " + tr("mode 仅支持 pin 或 dynamic", "mode must be pin or dynamic")
+        }
         val manager = context.getSystemService(ShortcutManager::class.java)
             ?: return "ERROR: " + tr("当前设备没有快捷方式服务", "no shortcut service on this device")
-        if (!manager.isRequestPinShortcutSupported) {
-            return "ERROR: " + tr("启动器不支持 pin，请手动创建", "the launcher does not support pinning; create it manually")
-        }
-
         val id = ShortcutFactory.id(label, prompt)
         val icon = if (emoji.isEmpty()) Icon.createWithResource(context, R.mipmap.ic_launcher)
             else Icon.createWithBitmap(ShortcutFactory.emojiBitmap(emoji))
@@ -152,18 +153,68 @@ class ShortcutTool(private val context: Context, override val name: String) : To
             .build()
         val store = ShortcutStore(context)
         val existing = store.list().firstOrNull { it.id == id }
+        val saved = {
+            store.save(TaskShortcut(id, label, prompt, emoji, existing?.createdAt ?: System.currentTimeMillis()))
+        }
+        if (mode == "dynamic") {
+            return createDynamic(manager, shortcut, id, label, saved)
+        }
+
+        if (!manager.isRequestPinShortcutSupported) {
+            return "ERROR: " + tr("启动器不支持 pin，请手动创建", "the launcher does not support pinning; create it manually")
+        }
         if (manager.pinnedShortcuts.any { it.id == id }) {
             check(manager.updateShortcuts(listOf(shortcut))) { tr("更新快捷方式失败", "failed to update the shortcut") }
-            store.save(TaskShortcut(id, label, prompt, emoji, existing?.createdAt ?: System.currentTimeMillis()))
+            saved()
             return tr("已更新桌面快捷方式「$label」（id=$id）", "Home screen shortcut \"$label\" updated (id=$id)")
         }
         if (!manager.requestPinShortcut(shortcut, null)) {
             return "ERROR: " + tr("启动器未接受 pin 请求，请手动创建", "the launcher rejected the pin request; create it manually")
         }
-        store.save(TaskShortcut(id, label, prompt, emoji, existing?.createdAt ?: System.currentTimeMillis()))
+        saved()
         return tr(
             "已请求添加桌面快捷方式「$label」（id=$id）；请在启动器确认",
             "Requested to add home screen shortcut \"$label\" (id=$id); confirm it in the launcher",
+        )
+    }
+
+    /** R77: dynamic shortcut path — no launcher confirmation needed. */
+    private fun createDynamic(
+        manager: ShortcutManager,
+        shortcut: ShortcutInfo,
+        id: String,
+        label: String,
+        saved: () -> Unit,
+    ): String {
+        val dynamicIds = manager.dynamicShortcuts.map { it.id }
+        if (id in dynamicIds) {
+            check(manager.updateShortcuts(listOf(shortcut))) { tr("更新快捷方式失败", "failed to update the shortcut") }
+            saved()
+            return tr("已更新动态快捷方式「$label」（id=$id）", "Dynamic shortcut \"$label\" updated (id=$id)")
+        }
+        // Slot full → drop the oldest dynamic shortcut to make room.
+        val max = manager.maxShortcutCountPerActivity
+        val current = manager.dynamicShortcuts
+        var evicted: ShortcutInfo? = null
+        if (current.size >= max) {
+            // ShortcutInfo has no per-shortcut creation time; lastChangedTimestamp (API 25+) is the closest stable ordering.
+            val evict: ShortcutInfo? = current.minByOrNull { it: ShortcutInfo -> it.lastChangedTimestamp }
+            if (evict == null) {
+                return "ERROR: " + tr("动态快捷方式槽位已满且无法腾位", "dynamic shortcut slots are full and cannot be freed")
+            }
+            manager.removeDynamicShortcuts(listOf(evict.id))
+            evicted = evict
+        }
+        if (!manager.addDynamicShortcuts(listOf(shortcut))) {
+            // Codex R77 must-fix: the slot was already freed above — restore the
+            // evicted shortcut best-effort so a rate-limited add doesn't lose it.
+            evicted?.let { runCatching { manager.addDynamicShortcuts(listOf(it)) } }
+            return "ERROR: " + tr("动态快捷方式添加失败（速率限制或槽位不足）", "failed to add the dynamic shortcut (rate limit or no free slot)")
+        }
+        saved()
+        return tr(
+            "已添加动态快捷方式「$label」（id=$id）；无需启动器确认，长按应用图标可见",
+            "Dynamic shortcut \"$label\" added (id=$id); no launcher confirmation needed — visible via long-press on the app icon",
         )
     }
 

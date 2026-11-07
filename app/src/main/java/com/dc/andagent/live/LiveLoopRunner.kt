@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
@@ -29,8 +30,11 @@ class LiveLoopRunner(
         @Volatile var failures = 0
         @Volatile var ticks = 0L
         @Volatile var error: String? = null
+        @Volatile var firstTickFailed = false
+        @Volatile var firstTickError: String? = null
         @Volatile var future: ScheduledFuture<*>? = null
         val results = ArrayDeque<JsonElement>()
+        val errorHistory = ArrayDeque<String>()
         fun state(): String = when { stopped -> "stopped"; paused -> "paused"; else -> "running" }
     }
 
@@ -45,7 +49,8 @@ class LiveLoopRunner(
             val oldest = loops.entries.firstOrNull { it.value.stopped } ?: break
             loops.remove(oldest.key)
         }
-        schedule(loop, 0)
+        // Surface syntax/runtime failures in live_start itself.
+        tick(loop)
         return snapshot(loop)
     }
 
@@ -99,6 +104,11 @@ class LiveLoopRunner(
             else {
                 loop.failures++
                 loop.error = failure
+                if (loop.ticks == 1L) { loop.firstTickFailed = true; loop.firstTickError = failure }
+                synchronized(loop) {
+                    loop.errorHistory.addFirst("#${loop.ticks} · ${java.time.Instant.now()} · $failure")
+                    while (loop.errorHistory.size > 5) loop.errorHistory.removeLast()
+                }
                 if (loop.failures >= 5) {
                     loop.stopped = true
                     onStop(loop.id)
@@ -113,8 +123,13 @@ class LiveLoopRunner(
         put("id", loop.id); put("name", loop.name); put("state", loop.state())
         put("consumer", loop.consumer); put("interval_ms", loop.intervalMs)
         put("ticks", loop.ticks); put("failures", loop.failures)
+        put("firstTickFailed", loop.firstTickFailed)
+        loop.firstTickError?.let { put("warning", "首次 tick 失败：$it") }
         loop.error?.let { put("error", it) }
-        synchronized(loop) { put("results", kotlinx.serialization.json.JsonArray(loop.results.toList())) }
+        synchronized(loop) {
+            put("results", JsonArray(loop.results.toList()))
+            put("errorHistory", JsonArray(loop.errorHistory.map(::JsonPrimitive)))
+        }
     }
 
     @Synchronized fun shutdown() {

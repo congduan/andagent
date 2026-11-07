@@ -1,1 +1,2 @@
-<resources><string name="refresh">刷新</string><string name="refresh_description">刷新小组件数据</string><string name="widget_description">AndAgent 桌面小组件</string><string name="hce_description">AndAgent 测试卡模拟</string></resources>
+<resources><string name="refresh">刷新</string><string name="refresh_description">刷新小组件数据</string><string name="widget_description">AndAgent 桌面小组件</string><string name="hce_description">AndAgent 测试卡模拟</string><!-- R77: TileService manifest label -->
+<string name="tile_label">AndAgent 任务磁贴</string></resources>

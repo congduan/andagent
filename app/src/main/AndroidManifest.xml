@@ -142,6 +142,16 @@
             android:foregroundServiceType="camera" />
         <service android:name=".tools.SshKeepAliveService" android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- R77: 快捷磁贴（下拉栏一键触发常用对话）。BIND_QUICK_SETTINGS_TILE 是系统绑定的
+             service 权限，不是 uses-permission。exported=true 为 TileService 标配。 -->
+        <service android:name=".tools.AndagentTileService" android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
         <service android:name=".events.EventMonitorService" android:exported="false"
             android:foregroundServiceType="connectedDevice" />
         <service android:name=".events.EventNotificationListener"

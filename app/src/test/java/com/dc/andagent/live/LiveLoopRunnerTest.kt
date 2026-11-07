@@ -1,6 +1,8 @@
 package com.dc.andagent.live
 
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -31,7 +33,7 @@ class LiveLoopRunnerTest {
         val release = CountDownLatch(1)
         val calls = AtomicInteger()
         val runner = LiveLoopRunner({ _, result ->
-            calls.incrementAndGet(); entered.countDown(); release.await(2, TimeUnit.SECONDS)
+            if (calls.incrementAndGet() > 1) { entered.countDown(); release.await(2, TimeUnit.SECONDS) }
             result("1"); "null"
         }, { _, _, _ -> }, {})
         try {
@@ -40,7 +42,7 @@ class LiveLoopRunnerTest {
             assertEquals("stopped", runner.stop(id)["state"]!!.jsonPrimitive.content)
             release.countDown()
             Thread.sleep(450)
-            assertEquals(1, calls.get())
+            assertEquals(2, calls.get())
         } finally { release.countDown(); runner.shutdown() }
     }
 
@@ -56,6 +58,24 @@ class LiveLoopRunnerTest {
             assertTrue(state.contains(id))
             assertTrue(state.contains("stopped"))
             assertEquals(5, calls.get())
+        } finally { runner.shutdown() }
+    }
+
+    @Test fun firstFailureIsReturnedAndHistoryKeepsFiveLatestTicks() {
+        val runner = LiveLoopRunner({ _, _ -> "ERROR: ReferenceError: missing at line 2" }, { _, _, _ -> }, {})
+        try {
+            val started = runner.start("errors", "missing", 200, "dialog")
+            assertEquals("true", started["firstTickFailed"]!!.jsonPrimitive.content)
+            assertTrue(started["warning"]!!.jsonPrimitive.content.contains("ReferenceError"))
+            val id = started["id"]!!.jsonPrimitive.content
+            assertTrue(runner.pause(id, true)["warning"]!!.jsonPrimitive.content.contains("ReferenceError"))
+            runner.pause(id, false)
+            Thread.sleep(1100)
+            val listed = runner.list()["loops"]!!.jsonArray.first().jsonObject
+            val history = listed["errorHistory"]!!.jsonArray
+            assertEquals(5, history.size)
+            assertTrue(history.first().jsonPrimitive.content.contains("#5"))
+            assertTrue(history.last().jsonPrimitive.content.contains("#1"))
         } finally { runner.shutdown() }
     }
 }

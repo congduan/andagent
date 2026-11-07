@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- R77: TileService manifest label（中文限定值目录）。 -->
+<resources>
+    <string name="tile_label">AndAgent 任务磁贴</string>
+</resources>
