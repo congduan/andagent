@@ -1,3 +1,5 @@
+import { Icon } from "./icons";
+
 type Props = {
   /** 标题文案（调用方负责 i18n）。 */
   title: string;
@@ -15,7 +17,9 @@ type Props = {
 export function SettingsHead({ title, backLabel, onBack, id }: Props) {
   return (
     <header className="settings-head">
-      <button type="button" className="icon-btn" onClick={onBack} aria-label={backLabel}>←</button>
+      <button type="button" className="icon-btn" onClick={onBack} aria-label={backLabel}>
+        <Icon name="arrow-left" size={19} />
+      </button>
       <h2 id={id}>{title}</h2>
     </header>
   );

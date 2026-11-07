@@ -2,6 +2,7 @@ import { useI18n } from "./i18n";
 import { useEffect, useRef, useState } from "react";
 import { openEmbeddedWebview } from "./bridge";
 import { showError } from "./toast";
+import { Icon } from "./icons";
 
 /**
  * Web page card rendered inside the conversation flow (#8).
@@ -43,7 +44,7 @@ export function WebViewCard({ uri, local }: { uri: string; local?: boolean }) {
     return (
       <div className="webview-card">
         <div className="webview-bar">
-          <span className="webview-uri">🌐 {uri}</span>
+          <span className="webview-uri"><Icon name="globe" size={13} /> {uri}</span>
           <button type="button" onClick={openExternal} title={t("openExternal")}>{t("externalWindow")}</button>
         </div>
         <div className="webview-uri" style={{ padding: 12 }}>
@@ -53,13 +54,13 @@ export function WebViewCard({ uri, local }: { uri: string; local?: boolean }) {
     );
   }
 
-  if (!allowed) return <div className="webview-card"><div className="webview-uri">🌐 {uri}</div><div className="webview-error">{t("httpsOnly")}</div></div>;
+  if (!allowed) return <div className="webview-card"><div className="webview-uri"><Icon name="globe" size={13} /> {uri}</div><div className="webview-error">{t("httpsOnly")}</div></div>;
 
   return (
     <div className={`webview-card${fullscreen ? " fullscreen" : ""}`}>
       <div className="webview-bar">
-        <span className="webview-uri">🌐 {uri}</span>
-        {visible && <button type="button" onClick={() => setNonce((v) => v + 1)} title={t("refresh")}>↻</button>}
+        <span className="webview-uri"><Icon name="globe" size={13} /> {uri}</span>
+        {visible && <button type="button" onClick={() => setNonce((v) => v + 1)} title={t("refresh")}><Icon name="refresh" size={13} /></button>}
         <button type="button" onClick={() => setFullscreen((v) => !v)}>{fullscreen ? t("exitFullscreen") : t("fullscreen")}</button>
         <button type="button" onClick={openExternal} title={t("openExternal")}>{t("externalWindow")}</button>
         <button type="button" onClick={() => { setFullscreen(false); setVisible((v) => !v); }}>{visible ? t("close") : t("expand")}</button>

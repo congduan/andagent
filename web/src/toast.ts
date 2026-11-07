@@ -1,4 +1,5 @@
 import { translate } from "./i18n";
+import { iconMarkup } from "./icons";
 
 /**
  * 顶部 toast（统一错误/状态提示）。
@@ -27,9 +28,13 @@ let seq = 0;
 const timers = new Map<number, number>();
 
 /** 上滑超过该距离即消除；小于它则回弹。 */
-const SWIPE_DISMISS_PX = 48;
+const SWIPE_DISMISS_Y_PX = 48;
+/** 左右滑动超过该距离即消除（横向容错更大，避免误触）。 */
+const SWIPE_DISMISS_X_PX = 96;
 /** 判定手势方向前允许的抖动。 */
 const SWIPE_SLOP_PX = 8;
+
+type SwipeAxis = "x" | "y";
 
 function ensureHost(): HTMLDivElement {
   if (host?.isConnected) return host;
@@ -64,23 +69,29 @@ export function dismissToast(id: number): void {
   window.setTimeout(() => el.remove(), 180);
 }
 
-/** 跟手滑出：不再走 toast-out（那只上移 8px），直接推出屏幕。 */
-function swipeAway(el: HTMLElement, id: number): void {
+/** 跟手滑出：不再走 toast-out（那只上移 8px），直接沿手势方向推出屏幕。 */
+function swipeAway(el: HTMLElement, id: number, axis: SwipeAxis, offset: number): void {
   clearTimer(id);
   el.style.transition = "transform 0.18s ease-out, opacity 0.18s ease-out";
-  el.style.transform = "translateY(-140%)";
+  el.style.transform =
+    axis === "x"
+      ? `translateX(${offset < 0 ? "-140%" : "140%"})`
+      : "translateY(-140%)";
   el.style.opacity = "0";
   window.setTimeout(() => el.remove(), 190);
 }
 
 /**
- * 上滑消除：拖动时跟手位移（只允许向上），松手时超过阈值则滑出，
- * 否则回弹。横向手势（文本选择、外部滑动手势）直接放弃，交给默认行为。
+ * 滑动消除：拖动时跟手位移。手势方向在越过抖动阈值时锁定——上滑与
+ * 左右滑动都生效（竖向只允许向上，向下不跟随），松手时超过各自阈值
+ * 则沿手势方向滑出，否则回弹。锁定后不再改变轴向，避免斜向抖动。
  */
 function attachSwipe(el: HTMLElement, id: number): void {
   let startX = 0;
   let startY = 0;
+  let offsetX = 0;
   let offsetY = 0;
+  let axis: SwipeAxis | null = null;
   let tracking = false;
   let swiped = false;
   let pointerId: number | null = null;
@@ -97,7 +108,9 @@ function attachSwipe(el: HTMLElement, id: number): void {
     pointerId = event.pointerId;
     startX = event.clientX;
     startY = event.clientY;
+    offsetX = 0;
     offsetY = 0;
+    axis = null;
     tracking = true;
     swiped = false;
   });
@@ -108,19 +121,23 @@ function attachSwipe(el: HTMLElement, id: number): void {
     const dy = event.clientY - startY;
     if (!swiped) {
       if (Math.abs(dx) < SWIPE_SLOP_PX && Math.abs(dy) < SWIPE_SLOP_PX) return;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        tracking = false;
-        pointerId = null;
-        return;
-      }
+      axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
       swiped = true;
       // 拖拽期间交给 inline transform，避免入场动画覆盖跟手位移。
       el.style.animation = "none";
       el.setPointerCapture(event.pointerId);
     }
     event.preventDefault();
-    offsetY = Math.min(0, dy);
     el.style.transition = "none";
+    if (axis === "x") {
+      offsetX = dx;
+      offsetY = 0;
+      el.style.transform = `translateX(${offsetX}px)`;
+      el.style.opacity = String(Math.max(0.3, 1 - Math.abs(offsetX) / 260));
+      return;
+    }
+    offsetX = 0;
+    offsetY = Math.min(0, dy);
     el.style.transform = `translateY(${offsetY}px)`;
     el.style.opacity = String(Math.max(0.3, 1 + offsetY / 160));
   });
@@ -128,14 +145,21 @@ function attachSwipe(el: HTMLElement, id: number): void {
   const finish = (event: PointerEvent) => {
     if (!tracking || event.pointerId !== pointerId) return;
     tracking = false;
-    const distance = offsetY;
+    const distanceX = offsetX;
+    const distanceY = offsetY;
     if (pointerId !== null && el.hasPointerCapture(pointerId)) {
       el.releasePointerCapture(pointerId);
     }
     pointerId = null;
-    if (!swiped) return;
-    if (distance <= -SWIPE_DISMISS_PX) {
-      swipeAway(el, id);
+    if (!swiped || !axis) return;
+    const swipeAxis: SwipeAxis = axis;
+    axis = null;
+    const dismissed =
+      swipeAxis === "x"
+        ? Math.abs(distanceX) >= SWIPE_DISMISS_X_PX
+        : distanceY <= -SWIPE_DISMISS_Y_PX;
+    if (dismissed) {
+      swipeAway(el, id, swipeAxis, swipeAxis === "x" ? distanceX : distanceY);
       return;
     }
     el.style.transition = "transform 0.16s ease-out, opacity 0.16s ease-out";
@@ -200,7 +224,11 @@ export function showToast(message: string, options: ToastOptions = {}): number {
   const icon = document.createElement("span");
   icon.className = "toast-icon";
   icon.setAttribute("aria-hidden", "true");
-  icon.textContent = tone === "error" ? "!" : tone === "success" ? "✓" : "i";
+  icon.innerHTML = iconMarkup(
+    tone === "error" ? "alert" : tone === "success" ? "check" : "info",
+    12,
+    2.6,
+  );
 
   const body = document.createElement("span");
   body.className = "toast-text";
@@ -210,7 +238,7 @@ export function showToast(message: string, options: ToastOptions = {}): number {
   close.type = "button";
   close.className = "toast-close";
   close.setAttribute("aria-label", translate("close"));
-  close.textContent = "×";
+  close.innerHTML = iconMarkup("x", 13, 2.2);
   close.addEventListener("click", (event) => {
     event.stopPropagation();
     dismissToast(id);

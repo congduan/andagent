@@ -1059,13 +1059,51 @@ button:disabled {
   text-align: left;
 }
 
-.copy-menu-item:hover {
+.copy-menu-item:hover:not(:disabled) {
   background: var(--wash-3);
+}
+
+/* 置灰项（空会话禁止导出）：不可点、不参与 hover。 */
+.copy-menu-item:disabled {
+  opacity: 0.38;
+  pointer-events: none;
 }
 
 .copy-menu-icon {
   color: var(--muted);
   font-size: 13px;
+}
+
+/* 菜单顶部只读信息区（Token 用量）：小字等宽，右对齐数值。 */
+.copy-menu-info {
+  padding: 2px 0 4px;
+}
+.copy-menu-info-title {
+  padding: 4px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.copy-menu-info-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.copy-menu-info-value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.copy-menu-sep {
+  height: 1px;
+  margin: 6px 6px 2px;
+  background: var(--border);
 }
 
 /* ---------------- Tool cards ---------------- */
@@ -2530,14 +2568,6 @@ button:disabled {
   }
 }
 
-/* 主题切换时只对颜色类属性做一次短过渡，避免整屏瞬变。 */
-html.theme-transition *,
-html.theme-transition *::before,
-html.theme-transition *::after {
-  transition: background-color 0.26s ease, border-color 0.26s ease,
-    color 0.22s ease, fill 0.22s ease, stroke 0.22s ease, box-shadow 0.26s ease;
-}
-
 @media (max-width: 520px) {
   .viewport {
     padding-left: 14px;
@@ -3417,11 +3447,10 @@ html.theme-transition *::after {
 .about-hero-mark {
   flex: none; width: 46px; height: 46px;
   display: grid; place-items: center;
-  border-radius: 13px;
-  font-size: 17px; color: #fff;
-  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  border-radius: 13px; overflow: hidden;
   box-shadow: 0 6px 16px rgba(127, 155, 255, 0.3);
 }
+.about-hero-mark > svg { display: block; width: 100%; height: 100%; }
 .about-hero-main { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .about-hero-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .about-hero-title h3 { margin: 0; font-size: 17px; color: var(--text-strong); letter-spacing: 0.01em; }
@@ -3445,8 +3474,14 @@ html.theme-transition *::after {
 .about-link-label { min-width: 0; overflow-wrap: anywhere; }
 .about-link-chevron { flex: none; color: var(--faint); font-size: 12px; }
 .about-link:hover .about-link-chevron { color: var(--accent); }
-.about-notices { margin-top: 2px; }
-.about-notices .settings-notices { margin-top: 8px; }
+/* 「开源组件协议」是子页入口而不是外链：抹掉按钮默认样式，其余行样式复用 .about-link。 */
+.about-link-action {
+  width: 100%; border: 0; border-top: 1px solid var(--wash-3);
+  background: none; font-family: inherit; font-weight: inherit;
+  text-align: left; cursor: pointer;
+}
+/* 子页正文占满整屏滚动，不再用弹层里的 45vh 限高。 */
+.settings-notices-page { max-height: none; margin-top: 0; }
 
 /* ===== R63 设置首页宫格 + 子页导航 ===== */
 .settings-home-item {
@@ -3681,6 +3716,21 @@ html.theme-transition *::after {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.confirm-input {
+  width: 100%;
+  margin: 0 0 18px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--wash-1);
+  color: var(--text);
+  font-size: 14.5px;
+  font-family: inherit;
+}
+.confirm-input:focus {
+  outline: none;
+  border-color: var(--accent-strong);
+}
 .confirm-actions {
   display: flex;
   justify-content: flex-end;
@@ -3762,3 +3812,40 @@ html.theme-transition *::after {
   font-size: 12px;
 }
 .ssh-transfer-dismiss:active { transform: scale(0.94); }
+
+/* ---------------- SVG 图标对齐（icons.tsx） ----------------
+   所有 UI 图标都是内联 SVG：容器统一成 flex/grid 居中，
+   行内出现的图标用 vertical-align 贴合文字基线。 */
+.template-icon,
+.copy-menu-icon,
+.settings-home-chevron,
+.about-link-chevron,
+.provider-check,
+.wp-refresh,
+.settings-home-badge,
+.toast-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drawer-item-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.webview-uri svg,
+.media-title svg,
+.media-error svg {
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
+.webview-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}

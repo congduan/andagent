@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { addUsage, emptyUsage, fmtTokens, sumMessageUsage } from "./usage";
+import { addUsage, emptyUsage, fmtTokens, sumMessageUsage, sumUsageBreakdown } from "./usage";
 
 // R40: token 消耗格式化与会话级累加纯逻辑。
 
@@ -75,6 +75,36 @@ describe("sumMessageUsage", () => {
       input: 0,
       output: 0,
       totalTokens: 0,
+    });
+  });
+});
+
+describe("sumUsageBreakdown", () => {
+  it("also accumulates cache read/write and counts turns", () => {
+    const messages = [
+      { role: "user", content: "hi" },
+      { role: "assistant", usage: { input: 100, output: 10, cacheRead: 400, cacheWrite: 20, totalTokens: 530 } },
+      { role: "assistant", usage: { input: 50, output: 5 }, stopReason: "toolUse" },
+      { role: "assistant", usage: { input: 999, output: 999 }, stopReason: "aborted" },
+    ];
+    expect(sumUsageBreakdown(messages)).toEqual({
+      input: 150,
+      output: 15,
+      cacheRead: 400,
+      cacheWrite: 20,
+      totalTokens: 530,
+      turns: 2,
+    });
+  });
+
+  it("is all zeros for an empty conversation", () => {
+    expect(sumUsageBreakdown([])).toEqual({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      turns: 0,
     });
   });
 });

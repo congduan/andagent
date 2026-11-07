@@ -15,6 +15,7 @@ import { SessionStore } from "./sessions";
 import noticesText from "../../THIRD-PARTY-NOTICES.md?raw";
 import { loadThemeMode, setTheme, type ThemeMode } from "./theme";
 import { setLanguageMode, useI18n, type LanguageMode } from "./i18n";
+import { Icon, type IconName } from "./icons";
 import { appConfirm } from "./ConfirmDialog";
 import { loadConfirmMode, setConfirmMode, type ConfirmMode } from "./confirmMode";
 import { ModelFields } from "./ModelFields";
@@ -39,7 +40,7 @@ type Props = {
 
 export type SettingsPage =
   | "home" | "model" | "prompt" | "appearance" | "memory" | "automation"
-  | "ssh" | "skills" | "extensions" | "storage" | "data" | "about";
+  | "ssh" | "skills" | "extensions" | "storage" | "data" | "about" | "notices";
 
 type ShizukuStatus = ReturnType<typeof getShizukuStatus>;
 type ProjectionStatus = ReturnType<typeof getProjectionStatus>;
@@ -210,18 +211,18 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   };
 
   // ===== 设置首页（宫格导航）=====
-  const homeItems: Array<{ key: SettingsPage; icon: string; tint: string; title: string; sub: string; badge?: string; badgeTone?: "ok" | "warn" | "count" }> = [
-    { key: "model", icon: "⚡", tint: "#3b82f6", title: t("modelSettings"), sub: draft.model || t("modelNotConfigured"), badge: draft.apiKey || settings.apiKey ? t("connected") : t("modelNotConfigured"), badgeTone: (draft.apiKey || settings.apiKey) ? "ok" : "warn" },
-    { key: "prompt", icon: "📝", tint: "#e11d48", title: t("promptGroup"), sub: t("promptSub") },
-    { key: "appearance", icon: "🎨", tint: "#8b5cf6", title: t("appearanceLang"), sub: `${t(themeMode)} · ${language === "zh" ? t("chinese") : t("english")}` },
-    { key: "memory", icon: "🧠", tint: "#a855f7", title: t("memory"), sub: t("memoryNote"), badge: memoriesLoaded ? `${memories.length}` : undefined, badgeTone: "count" },
-    { key: "automation", icon: "⏱️", tint: "#f59e0b", title: t("cron"), sub: t("cronNote"), badge: cronLoaded ? `${cronTasks.length}` : undefined, badgeTone: "count" },
-    { key: "skills", icon: "🧩", tint: "#10b981", title: t("skills"), sub: `${t("install")} · ${t("enabled")} · ${t("search")}`, badge: skillsLoaded ? `${skills.length}` : undefined, badgeTone: "count" },
-    { key: "ssh", icon: "🔑", tint: "#f43f5e", title: t("sshCredentials"), sub: t("sshCredentialsGroupSub"), badge: credsLoaded ? `${creds.length}` : undefined, badgeTone: "count" },
-    { key: "storage", icon: "💾", tint: "#14b8a6", title: t("storageGroup"), sub: external.degraded ? t("storageModeDegraded") : t("storageModePublic"), badge: external.hasSnapshot ? "✓" : undefined, badgeTone: external.hasSnapshot ? "ok" : "warn" },
-    { key: "extensions", icon: "🧰", tint: "#0ea5e9", title: t("extensionsGroup"), sub: "Shizuku · Termux · DevTools" },
-    { key: "data", icon: "📊", tint: "#06b6d4", title: t("dataGroup"), sub: `${t("health")} · ${t("projection")}` },
-    { key: "about", icon: "ℹ️", tint: "#64748b", title: t("about"), sub: `${t("version")} ${getAppVersion()}` },
+  const homeItems: Array<{ key: SettingsPage; icon: IconName; tint: string; title: string; sub: string; badge?: string; badgeTone?: "ok" | "warn" | "count" }> = [
+    { key: "model", icon: "zap", tint: "#3b82f6", title: t("modelSettings"), sub: draft.model || t("modelNotConfigured"), badge: draft.apiKey || settings.apiKey ? t("connected") : t("modelNotConfigured"), badgeTone: (draft.apiKey || settings.apiKey) ? "ok" : "warn" },
+    { key: "prompt", icon: "pencil", tint: "#e11d48", title: t("promptGroup"), sub: t("promptSub") },
+    { key: "appearance", icon: "palette", tint: "#8b5cf6", title: t("appearanceLang"), sub: `${t(themeMode)} · ${language === "zh" ? t("chinese") : t("english")}` },
+    { key: "memory", icon: "brain", tint: "#a855f7", title: t("memory"), sub: t("memoryNote"), badge: memoriesLoaded ? `${memories.length}` : undefined, badgeTone: "count" },
+    { key: "automation", icon: "timer", tint: "#f59e0b", title: t("cron"), sub: t("cronNote"), badge: cronLoaded ? `${cronTasks.length}` : undefined, badgeTone: "count" },
+    { key: "skills", icon: "puzzle", tint: "#10b981", title: t("skills"), sub: `${t("install")} · ${t("enabled")} · ${t("search")}`, badge: skillsLoaded ? `${skills.length}` : undefined, badgeTone: "count" },
+    { key: "ssh", icon: "key", tint: "#f43f5e", title: t("sshCredentials"), sub: t("sshCredentialsGroupSub"), badge: credsLoaded ? `${creds.length}` : undefined, badgeTone: "count" },
+    { key: "storage", icon: "hard-drive", tint: "#14b8a6", title: t("storageGroup"), sub: external.degraded ? t("storageModeDegraded") : t("storageModePublic"), badge: external.hasSnapshot ? "ok" : undefined, badgeTone: external.hasSnapshot ? "ok" : "warn" },
+    { key: "extensions", icon: "toolbox", tint: "#0ea5e9", title: t("extensionsGroup"), sub: "Shizuku · Termux · DevTools" },
+    { key: "data", icon: "bar-chart", tint: "#06b6d4", title: t("dataGroup"), sub: `${t("health")} · ${t("projection")}` },
+    { key: "about", icon: "info", tint: "#64748b", title: t("about"), sub: `${t("version")} ${getAppVersion()}` },
   ];
 
   // ===== 子页公共骨架（顶栏与首页、模型向导共用 SettingsHead）=====
@@ -351,7 +352,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
                   <span>{t("enabled")}</span>
                 </label>
                 <button type="button" className="icon-btn settings-list-remove" aria-label={t("delete")}
-                  onClick={async () => { if (await appConfirm(t("deleteCronConfirm", { name: task.name }))) { showResult(cronDelete(task.id)); refreshCron(); } }}>✕</button>
+                  onClick={async () => { if (await appConfirm(t("deleteCronConfirm", { name: task.name }))) { showResult(cronDelete(task.id)); refreshCron(); } }}><Icon name="x" size={13} /></button>
               </div>
               {cronDetail === task.id && (
                 <dl className="settings-rows">
@@ -644,7 +645,26 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
 
   const aboutPage = sub(t("about"), <>
     <div className="about-hero">
-      <div className="about-hero-mark" aria-hidden="true">◆</div>
+      {/* 与启动图标同一份画稿（design/andagent-icon.svg）：渐变底 + 六边形 + 四角星。 */}
+      <div className="about-hero-mark" aria-hidden="true">
+        <svg viewBox="0 0 108 108" width="46" height="46" focusable="false">
+          <defs>
+            <linearGradient id="aboutLogoBg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="108" y2="108">
+              <stop offset="0" stopColor="#3B5BFF" />
+              <stop offset="1" stopColor="#A855F7" />
+            </linearGradient>
+          </defs>
+          <rect x="0" y="0" width="108" height="108" fill="url(#aboutLogoBg)" />
+          <path
+            d="M60.05,30.53 L71.95,37.47 Q78,41 78,48 L78,60 Q78,67 71.95,70.53 L60.05,77.47 Q54,81 47.95,77.47 L36.05,70.53 Q30,67 30,60 L30,48 Q30,41 36.05,37.47 L47.95,30.53 Q54,27 60.05,30.53 Z"
+            fill="none" stroke="#FFFFFF" strokeWidth="6" strokeLinejoin="round" strokeLinecap="round"
+          />
+          <path
+            d="M54,39 C55.4,47.6 60.4,52.6 69,54 C60.4,55.4 55.4,60.4 54,69 C52.6,60.4 47.6,55.4 39,54 C47.6,52.6 52.6,47.6 54,39 Z"
+            fill="#FFFFFF"
+          />
+        </svg>
+      </div>
       <div className="about-hero-main">
         <div className="about-hero-title">
           <h3>AndAgent</h3>
@@ -667,24 +687,31 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
       <div className="about-links">
         <a className="about-link" href="https://github.com/congduan/andagent" target="_blank" rel="noreferrer">
           <span className="about-link-label">{t("repository")}</span>
-          <span className="about-link-chevron" aria-hidden="true">↗</span>
+          <span className="about-link-chevron" aria-hidden="true"><Icon name="arrow-up-right" size={13} /></span>
         </a>
         <a className="about-link" href="https://github.com/congduan/andagent/stargazers" target="_blank" rel="noreferrer">
           <span className="about-link-label">{t("star")}</span>
-          <span className="about-link-chevron" aria-hidden="true">↗</span>
+          <span className="about-link-chevron" aria-hidden="true"><Icon name="arrow-up-right" size={13} /></span>
         </a>
+        {/* 组件声明独立成一页：正文很长，内联展开会把关于页其它信息挤到屏幕外。 */}
+        <button type="button" className="about-link about-link-action" onClick={() => onNavigate("notices")}>
+          <span className="about-link-label">{t("notices")}</span>
+          <span className="about-link-chevron" aria-hidden="true"><Icon name="chevron-right" size={13} /></span>
+        </button>
       </div>
-      <details className="settings-details about-notices">
-        <summary>{t("notices")}</summary>
-        <div className="settings-notices"><pre>{noticesText || t("noticesUnavailable")}</pre></div>
-      </details>
     </>)}
   </>);
+
+  const noticesPage = sub(t("notices"),
+    <div className="settings-notices settings-notices-page">
+      <pre>{noticesText || t("noticesUnavailable")}</pre>
+    </div>,
+  );
 
   const subPages: Record<SettingsPage, React.ReactNode> = {
     home: null, model: modelPage, prompt: promptPage, appearance: appearancePage, memory: memoryPage,
     automation: automationPage, skills: skillsPage, ssh: sshPage, extensions: extensionsPage,
-    storage: storagePage, data: dataPage, about: aboutPage,
+    storage: storagePage, data: dataPage, about: aboutPage, notices: noticesPage,
   };
 
   return (
@@ -697,13 +724,19 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
             <div className="settings-body settings-body-home">
               {homeItems.map((item) => (
                 <button key={item.key} type="button" className="settings-home-item" onClick={() => onNavigate(item.key)}>
-                  <span className="settings-home-icon" style={{ background: item.tint + "22", color: item.tint }}>{item.icon}</span>
+                  <span className="settings-home-icon" style={{ background: item.tint + "22", color: item.tint }}>
+                    <Icon name={item.icon} size={16} />
+                  </span>
                   <span className="settings-home-text">
                     <span className="settings-home-title">{item.title}</span>
                     <span className="settings-home-sub">{item.sub}</span>
                   </span>
-                  {item.badge && <span className={`settings-home-badge badge-${item.badgeTone ?? "count"}`}>{item.badge}</span>}
-                  <span className="settings-home-chevron">›</span>
+                  {item.badge && (
+                    <span className={`settings-home-badge badge-${item.badgeTone ?? "count"}`}>
+                      {item.badge === "ok" ? <Icon name="check" size={11} strokeWidth={2.6} /> : item.badge}
+                    </span>
+                  )}
+                  <span className="settings-home-chevron"><Icon name="chevron-right" size={13} /></span>
                 </button>
               ))}
             </div>

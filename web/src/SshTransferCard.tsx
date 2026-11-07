@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { cancelSshTransfer } from "./bridge";
 import { useI18n } from "./i18n";
+import { Icon } from "./icons";
 
 export type TransferEvent = {
   type: "ssh.transfer.progress" | "ssh.transfer.done";
@@ -86,7 +87,7 @@ export function SshTransferHost() {
       const failed = done && !row.ok;
       return <div className={`ssh-transfer-card${failed ? " failed" : ""}`} key={row.key}>
         <div className="ssh-transfer-heading">
-          <span aria-hidden="true">{row.direction === "download" ? "⬇" : "⬆"}</span>
+          <span aria-hidden="true"><Icon name={row.direction === "download" ? "arrow-down" : "arrow-up"} size={13} /></span>
           <strong title={row.name}>{row.name}</strong>
           <b>{row.percent}%</b>
         </div>
@@ -103,7 +104,7 @@ export function SshTransferHost() {
           }}>{t(row.cancelling ? "sshTransferCancelling" : "sshTransferCancel")}</button>}
           {done && <button type="button" className="ssh-transfer-dismiss" aria-label={t("close")} onClick={() => {
             setRows(previous => previous.filter(item => item.key !== row.key));
-          }}>✕</button>}
+          }}><Icon name="x" size={13} /></button>}
         </div>
         {done && row.savedPath && <div className="ssh-transfer-path">
           <span title={row.savedPath}>{row.savedPath}</span>

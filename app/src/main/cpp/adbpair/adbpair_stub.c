@@ -30,9 +30,10 @@ Java_com_dc_andagent_tools_AdbPairNative_nativeSelfTest(JNIEnv* env, jobject thi
 JNIEXPORT jstring JNICALL
 Java_com_dc_andagent_tools_AdbPairNative_nativeTlsConnect(JNIEnv* env, jobject thiz,
                                                           jstring host, jint port,
-                                                          jint timeout_ms, jobjectArray pinned) {
-    (void)thiz; (void)host; (void)port; (void)timeout_ms; (void)pinned;
-    return (*env)->NewStringUTF(env, "ERROR\nREASON=UNSUPPORTED_ABI\nFP=\n");
+                                                          jint timeout_ms, jobjectArray pinned,
+                                                          jbyteArray client_key_pkcs8) {
+    (void)thiz; (void)host; (void)port; (void)timeout_ms; (void)pinned; (void)client_key_pkcs8;
+    return (*env)->NewStringUTF(env, "ERROR\nREASON=UNSUPPORTED_ABI\nFP=\nERR=\n");
 }
 
 JNIEXPORT jint JNICALL

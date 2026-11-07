@@ -11,7 +11,7 @@ import kotlinx.serialization.json.put
 
 /**
  * R100 ② / R103 A：ADB 目标元数据（纯 JVM，可脱离 Android 单测）。key 固定 "host:port"。
- * [tls] 标记该目标主端口需 TLS 1.3 传输；[fingerprint] 是配对时锁定的设备证书
+ * [tls] 标记该目标主端口需 TLS 1.3 传输；[fingerprint] 是配对时记录的设备证书
  * SHA-256 hex（64 位小写），连接期由原生层做 pin 校验。两者缺省值保证旧 KV
  * 记录（只有 host/port）向后兼容。
  */

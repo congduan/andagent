@@ -35,8 +35,11 @@ object AdbPairNative : TlsNative {
     private external fun nativeSelfTest(): String
 
     // ---- R103 A：TLS 1.3 传输层（cpp/adbpair/tls_client.cpp）----
+    // clientKeyPkcs8 = 本机 ADB 私钥：adbd 在握手期要求客户端证书（AOSP
+    // client/auth.cpp adb_tls_set_certificate），证书必须由这把钥匙签发。
     private external fun nativeTlsConnect(
         host: String, port: Int, timeoutMs: Int, pinned: Array<String>,
+        clientKeyPkcs8: ByteArray,
     ): String
 
     private external fun nativeTlsRead(handle: Long, buf: ByteArray): Int
@@ -71,14 +74,26 @@ object AdbPairNative : TlsNative {
                 fingerprint = fields["FP"]?.takeIf { it.isNotBlank() },
             )
         } else {
-            TlsConnectResult(reason = fields["REASON"] ?: "UNKNOWN")
+            TlsConnectResult(
+                reason = fields["REASON"] ?: "UNKNOWN",
+                detail = fields["ERR"]?.takeIf { it.isNotBlank() },
+            )
         }
     }
 
-    override fun connect(host: String, port: Int, timeoutMs: Int, pinned: List<String>): TlsConnectResult =
+    override fun connect(
+        host: String,
+        port: Int,
+        timeoutMs: Int,
+        pinned: List<String>,
+        clientKeyPkcs8: ByteArray,
+    ): TlsConnectResult =
         if (!loaded) TlsConnectResult(reason = "UNAVAILABLE")
-        else runCatching { parseTlsConnect(nativeTlsConnect(host, port, timeoutMs, pinned.toTypedArray())) }
-            .getOrDefault(TlsConnectResult(reason = "JNI_EXCEPTION"))
+        else runCatching {
+            parseTlsConnect(
+                nativeTlsConnect(host, port, timeoutMs, pinned.toTypedArray(), clientKeyPkcs8),
+            )
+        }.getOrDefault(TlsConnectResult(reason = "JNI_EXCEPTION"))
 
     override fun read(handle: Long, buf: ByteArray): Int =
         if (!loaded) TLS_READ_ERROR
@@ -144,12 +159,13 @@ object AdbPairTool {
             raw.startsWith("OK") -> buildString {
                 append("✅ 配对成功：目标设备 GUID=${fields["GUID"].orEmpty()}，本机名称=$deviceName。")
                 appendLine()
-                append("设备已记住本机 ADB 公钥，并已锁定目标证书指纹，下一步用 adb_connect(host=\"$host\", port=<adb_port>) 直连：")
+                append("设备已记住本机 ADB 公钥（adbd 在 TLS 握手中会用该公钥校验本机客户端证书），下一步用 adb_connect(host=\"$host\", port=<adb_port>) 直连：")
                 appendLine()
                 append("adb_port 是手机「无线调试」页显示的主端口（通常 5555 或随机端口），与本次配对端口 $pairingPort 不同，请勿混用。")
                 appendLine()
-                append("本机已记录该 host 的配对指纹：adb_connect 会自动尝试 TLS 1.3 传输（配对过的 Android 11+ 主端口要求 TLS）；")
-                append("若连到的是传统明文 adbd，可显式传 tls=false。TLS 直连本环境未做真机联调（见战报清单）。")
+                append("本机已记录该 host 已配对：adb_connect 会自动走 TLS 1.3（明文 CNXN → STLS → 握手）；")
+                append("若连到的是传统明文 adbd，可显式传 tls=false。真机已验证：主端口每次连接都会换服务端证书，")
+                append("所以身份只靠本机客户端证书，不能做指纹锁定。")
             }
             else -> when (fields["REASON"]) {
                 "WRONG_CODE" ->

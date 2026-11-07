@@ -2,6 +2,7 @@ import { currentLanguage, translate, useI18n } from "./i18n";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { execTool, hasBridge, widgetSave } from "./bridge";
 import { showError, showResult } from "./toast";
+import { Icon } from "./icons";
 
 /**
  * ```widget fence: an in-conversation WYSIWYG preview of a WidgetSpec v2.
@@ -654,7 +655,7 @@ export function WidgetPreviewCard({ code }: { code: string }) {
           <NodeView node={spec.root} battery={battery} sources={sources} />
           <div className="wp-footer">
             <span className="wp-status">{t("updated")} {updated}</span>
-            <span className="wp-refresh" aria-hidden="true">↻</span>
+            <span className="wp-refresh" aria-hidden="true"><Icon name="refresh" size={12} /></span>
           </div>
         </div>
       </div>

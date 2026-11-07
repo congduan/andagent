@@ -39,6 +39,12 @@ export function conversationMarkdown(id: string, title: string): string {
   return lines.join("\n").trimEnd() + "\n";
 }
 
+/** 会话里是否还有可导出的对话消息：空会话禁止导出（只有标题的 md 没有意义）。 */
+export function hasExportableMessages(id: string): boolean {
+  const messages = SessionStore.load(id) as Message[];
+  return messages.some((message) => message.role === "user" || message.role === "assistant");
+}
+
 export function batchConversationMarkdown(sessions: SessionMeta[]): string {
   return sessions.map((session) => conversationMarkdown(session.id, session.title).trimEnd()).join("\n\n---\n\n") + "\n";
 }

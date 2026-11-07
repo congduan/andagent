@@ -7,6 +7,7 @@ import { WebViewCard } from "./WebViewCard";
 import { MediaCard, mediaFromResult } from "./MediaCard";
 import { PhotosCard } from "./RichCards";
 import { TOOL_META } from "./toolMeta";
+import { Icon } from "./icons";
 
 const COLLAPSE_LINES = 15;
 
@@ -123,7 +124,7 @@ export function ToolCard(props: ToolCallMessagePartProps) {
     setOpen(running);
   }, [running]);
 
-  const meta = TOOL_META[props.toolName] ?? { label: props.toolName, icon: "⚙️" };
+  const meta = TOOL_META[props.toolName] ?? { label: props.toolName, icon: "settings" as const };
   const raw = String(props.result ?? "");
   const interrupted = raw.includes("已被用户中断");
   const formatted = useMemo(() => formatResult(raw), [raw]);
@@ -164,7 +165,7 @@ export function ToolCard(props: ToolCallMessagePartProps) {
         }}
       >
         <span className="tool-icon" aria-hidden="true">
-          {meta.icon}
+          <Icon name={meta.icon} size={14} />
         </span>
         <span className="tool-name">{language === "en" ? meta.labelEn ?? meta.label : meta.label}</span>
         {meta.destructive && <span className="tool-badge">{t("toolWriting")}</span>}
@@ -206,7 +207,7 @@ export function ToolCard(props: ToolCallMessagePartProps) {
 
       {written && !failed && !running && (
         <div className="tool-confirm">
-          <span aria-hidden="true">✓</span>
+          <Icon name="check" size={13} />
           <span>{t("toolWritten")}</span>
         </div>
       )}

@@ -8,9 +8,18 @@
  * Design decision (see battle report): TLS is a pure transport-layer swap.
  * The ADB wire protocol (CNXN/AUTH/OPEN/WRTE/CLSE/sync:) is unchanged from
  * the plaintext path and stays in Kotlin (AdbClient/AdbProtocol/AdbSync), so
- * this file contains only: TCP connect, TLS 1.3 handshake, peer-certificate
- * SHA-256 fingerprint pinning, and byte-stream read/write. We deliberately do
- * NOT reimplement the ADB session in C++ (that was the discarded "option B").
+ * this file contains only: TCP connect, the plaintext CNXN/STLS prelude,
+ * TLS 1.3 handshake with the ADB key certificate, peer-certificate SHA-256
+ * fingerprint pinning, and byte-stream read/write. We deliberately do NOT
+ * reimplement the ADB session in C++ (that was the discarded "option B").
+ *
+ * Wire reality (verified against a real adbd and AOSP sources):
+ *   adb/adb.cpp handle_packet(A_STLS)  -> send_tls_request + adb_auth_tls_handshake
+ *   adb/transport.cpp BlockingConnectionAdapter -> read thread stops on STLS
+ *   adb/client/auth.cpp adb_tls_set_certificate -> client cert from the ADB key
+ * The wireless-debugging main port is therefore NOT TLS-from-byte-zero:
+ *   TCP -> CNXN(plaintext) -> STLS <- -> STLS echo -> TLS 1.3 (mTLS) -> CNXN
+ * Sending a ClientHello first makes adbd reset the socket (reason "STLS").
  */
 #pragma once
 
@@ -29,18 +38,32 @@ constexpr size_t kFingerprintHexSize = 64;
 /** Result of a TLS connect attempt. handle == 0 means failure. */
 struct TlsConnectResult {
     uint64_t handle = 0;
-    std::string reason;       // machine-readable failure code (empty on success)
-    std::string fingerprint;  // SHA-256 hex of the peer leaf certificate
+    /// Machine-readable failure code (empty on success). "STLS" = prelude,
+    /// "NO_TLS" = plaintext adbd, "TLS" = handshake, "CERT" = local key/cert,
+    /// "NETWORK" = TCP connect.
+    std::string reason;
+    std::string fingerprint;  // SHA-256 hex of the peer leaf cert (per-connection)
+    std::string detail;       // BoringSSL error string (diagnostics only)
 };
 
 /**
  * One TLS 1.3 connection over a blocking TCP socket.
  *
- * Certificate verification policy: skip the system CA chain (self-signed adbd
- * environment) and instead pin the peer leaf certificate's SHA-256 digest to
- * the list captured at pairing time. An empty pinned list means "trust all"
- * (still TLS 1.3, but no identity binding) - used when a caller forces TLS on
- * a host that was never paired through adb_pair.
+ * Certificate verification policy: accept any server certificate, exactly like
+ * AOSP (transport.cpp FdConnection::DoTlsHandshake, ADB_HOST branch:
+ * "Allow any server certificate"). adbd mints a fresh self-signed certificate
+ * per connection from a per-process RSA key (daemon/auth.cpp
+ * adbd_auth_tls_handshake + X509_gmtime_adj), so the peer leaf digest changes
+ * on every connect and can NOT be used as a stable identity binding. The
+ * pinned_fingerprints argument is therefore accepted for diagnostics only.
+ * Identity is one-way: adbd verifies OUR client certificate against its
+ * authorized-key list (daemon/auth.cpp adbd_tls_verify_cert).
+ *
+ * Client authentication: the certificate adbd asks for must be derived from
+ * the same ADB key registered during pairing, so connect() takes the PKCS#8
+ * DER of that key and builds AOSP's self-signed cert from it
+ * (crypto/x509_generator.cpp). Without it adbd answers
+ * "certificate_required (116)".
  */
 class TlsClient {
 public:
@@ -51,6 +74,7 @@ public:
 
     bool connect(const std::string& host, int port, int timeout_ms,
                  const std::vector<std::string>& pinned_fingerprints,
+                 const std::vector<uint8_t>& client_key_pkcs8,
                  TlsConnectResult* out);
 
     /** >0: bytes read; 0: clean EOF; -1: read timeout; -2: fatal error. */
@@ -67,9 +91,7 @@ private:
     bssl::UniquePtr<SSL_CTX> ctx_;
     bssl::UniquePtr<SSL> ssl_;
     int fd_ = -1;
-    std::vector<std::string> pinned_;
     std::string peer_fingerprint_;
-    bool pin_mismatch_ = false;
     bool connected_ = false;
 };
 
@@ -79,7 +101,8 @@ private:
  * A hard cap prevents unbounded growth if a caller forgets nativeTlsClose. */
 
 TlsConnectResult TlsConnect(const std::string& host, int port, int timeout_ms,
-                             const std::vector<std::string>& pinned);
+                             const std::vector<std::string>& pinned,
+                             const std::vector<uint8_t>& client_key_pkcs8);
 int TlsRead(uint64_t handle, uint8_t* buf, int len);
 int TlsWrite(uint64_t handle, const uint8_t* buf, int len);
 void TlsSetReadTimeout(uint64_t handle, int ms);

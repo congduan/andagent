@@ -1,5 +1,6 @@
 import { translate, useI18n } from "./i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Icon } from "./icons";
 
 /**
  * ```shader fence: live WebGL2 fragment shader (Shadertoy-style).
@@ -127,7 +128,7 @@ export function ShaderCard({ code }: { code: string }) {
   return (
     <div className={`shader-card${fullscreen ? " fullscreen" : ""}`}>
       <div className="webview-bar">
-        <span className="webview-uri">✨ {spec.title}</span>
+        <span className="webview-uri"><Icon name="sparkles" size={13} /> {spec.title}</span>
         <button type="button" onClick={() => setPaused((v) => !v)}>{paused ? t("resume") : t("pause")}</button>
         <button type="button" onClick={() => setFullscreen((v) => !v)}>{fullscreen ? t("exitFullscreen") : t("fullscreen")}</button>
       </div>

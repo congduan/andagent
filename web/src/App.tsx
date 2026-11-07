@@ -35,10 +35,11 @@ import {
   type Settings,
 } from "./bridge";
 import { CopyMenu, selectedText, useLongPress, type CopyMenuAction } from "./CopyMenu";
+import { Icon } from "./icons";
 import { SshTransferHost } from "./SshTransferCard";
 import { Drawer } from "./Drawer";
-import { appConfirm, ConfirmDialog } from "./ConfirmDialog";
-import { batchConversationMarkdown, conversationMarkdown } from "./exportConversation";
+import { appConfirm, appPrompt, ConfirmDialog, PromptDialog } from "./ConfirmDialog";
+import { batchConversationMarkdown, conversationMarkdown, hasExportableMessages } from "./exportConversation";
 import { exportConversationImage } from "./exportImage";
 import { MarkdownText } from "./Markdown";
 import { MessageNav, type MessageNavItem } from "./MessageNav";
@@ -47,7 +48,8 @@ import { ModelSetup } from "./ModelSetup";
 import { dismissModelSetup, isModelConfigured, needsModelSetup } from "./modelConfig";
 import { TEMPLATE_GROUPS } from "./templates";
 import { ToolCard } from "./ToolCard";
-import { fmtTokens } from "./usage";
+import { fmtTokens, sumUsageBreakdown } from "./usage";
+import { SessionStore } from "./sessions";
 import { useI18n } from "./i18n";
 import { showError, showInfo, showResult, showSuccess } from "./toast";
 import { usePresence } from "./usePresence";
@@ -238,9 +240,9 @@ function UserMessage() {
   const actions: CopyMenuAction[] =
     engine && !running
       ? [
-          { icon: "✎", label: t("editMessage"), onClick: () => setEditing(text) },
+          { icon: "pencil", label: t("editMessage"), onClick: () => setEditing(text) },
           {
-            icon: "↻",
+            icon: "refresh",
             label: t("retryMessage"),
             onClick: () => {
               void (async () => {
@@ -459,7 +461,7 @@ function TemplateGrid() {
                 }
               >
                 <span className="template-icon" aria-hidden="true">
-                  {t.icon}
+                  <Icon name={t.icon} size={15} />
                 </span>
                 <span className="template-title">{t.title[language]}</span>
               </button>
@@ -667,6 +669,8 @@ export default function App() {
   // 不退场期间改 onboarding 标记：标题在滑出过程中不能变；下次打开由 openModelSetup 重置。
   const closeModelSetup = useCallback(() => { dismissModelSetup(); setShowModelSetup(false); }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // 顶栏「更多」菜单的位置（点按钮时按按钮矩形定位，点空白处收起）。
+  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
   // 设置内部的子页也由 App 记账：子页多占一条 history 记录，返回时先回设置列表。
   const [settingsPage, setSettingsPage] = useState<SettingsPage>("home");
   const settingsOnSubpage = showSettings && settingsPage !== "home";
@@ -790,13 +794,76 @@ export default function App() {
     installLLMFetch(next.baseUrl);
   };
 
-  const hasMessages = snapshot.messages.length > 0;
   // R95: 会话导出长图（相册 + 可选直接分享）。标题取自会话索引，缺省用「新对话」。
   const exportLongImage = (id: string, share = false) => {
     const title = snapshot.sessions.find((item) => item.id === id)?.title ?? t("newChat");
     showInfo(t(share ? "longImageSharing" : "longImageExporting"));
     void exportConversationImage(id, title, { share }).then((result) => showResult(result));
   };
+  // 导出数据（Markdown）：抽屉条目菜单与顶栏「更多」共用。空会话禁止导出。
+  const exportSessionMarkdown = (id: string) => {
+    const session = snapshot.sessions.find((item) => item.id === id);
+    if (!session || !hasExportableMessages(id)) return;
+    const result = exportConversation(session.title, conversationMarkdown(id, session.title));
+    if (result.startsWith("ERROR:")) showError(result);
+  };
+  // 顶栏「更多」：当前会话的导出数据 / 导出长图 / 编辑（改标题）/ 删除，收回同一个菜单。
+  // 空会话没有任何可操作内容：四项全部置灰，发出第一条消息后自动恢复。
+  const hasMessages = snapshot.messages.length > 0;
+  const currentTitle =
+    snapshot.sessions.find((item) => item.id === snapshot.sessionId)?.title ?? t("newChat");
+  // 「更多」顶部的 Token 明细：读原始 transcript（UI 消息的 metadata 只带 input/output）。
+  const tokenBreakdown = useMemo(
+    () => sumUsageBreakdown(SessionStore.load(snapshot.sessionId)),
+    [snapshot.sessionId, snapshot.messages],
+  );
+  const tokenInfo = useMemo(() => {
+    const num = (value: number) => value.toLocaleString();
+    const total = tokenBreakdown.totalTokens || tokenBreakdown.input + tokenBreakdown.output;
+    return [
+      { label: t("input"), value: num(tokenBreakdown.input) },
+      { label: t("output"), value: num(tokenBreakdown.output) },
+      { label: t("tokenCacheRead"), value: num(tokenBreakdown.cacheRead) },
+      { label: t("tokenCacheWrite"), value: num(tokenBreakdown.cacheWrite) },
+      { label: t("tokenTotal"), value: num(total) },
+      { label: t("tokenTurns"), value: num(tokenBreakdown.turns) },
+    ];
+  }, [tokenBreakdown, t]);
+  const moreActions: CopyMenuAction[] = [
+    {
+      icon: "download",
+      label: t("exportMarkdown"),
+      disabled: !hasMessages,
+      onClick: () => exportSessionMarkdown(snapshot.sessionId),
+    },
+    {
+      icon: "image",
+      label: t("exportLongImage"),
+      disabled: !hasMessages,
+      onClick: () => exportLongImage(snapshot.sessionId),
+    },
+    {
+      icon: "pencil",
+      label: t("rename"),
+      disabled: !hasMessages,
+      onClick: () => {
+        void appPrompt(t("renameSession", { name: currentTitle }), currentTitle).then((title) => {
+          const next = title?.trim();
+          if (next && next !== currentTitle) engine.renameSession(snapshot.sessionId, next);
+        });
+      },
+    },
+    {
+      icon: "trash",
+      label: t("delete"),
+      disabled: !hasMessages,
+      onClick: () => {
+        void appConfirm(t("confirmDeleteSession", { name: currentTitle })).then((ok) => {
+          if (ok) engine.deleteSession(snapshot.sessionId);
+        });
+      },
+    },
+  ];
   // 「对话记录」列表：本次会话里输入过的每一条消息（保持发送顺序）。
   const userInputs = useMemo<MessageNavItem[]>(() => {
     const items: MessageNavItem[] = [];
@@ -854,42 +921,43 @@ export default function App() {
               <MessageNav key={snapshot.sessionId} items={userInputs} />
               <button
                 type="button"
-                className="head-chip"
-                title={t("exportLongImage")}
-                aria-label={t("exportLongImage")}
-                disabled={!hasMessages || !hasBridge() || snapshot.running}
-                onClick={() => exportLongImage(snapshot.sessionId)}
+                className={`head-chip ${moreMenu ? "open" : ""}`}
+                title={t("more")}
+                aria-label={t("more")}
+                aria-haspopup="menu"
+                aria-expanded={moreMenu !== null}
+                onClick={(event) => {
+                  if (moreMenu) {
+                    setMoreMenu(null);
+                    return;
+                  }
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setMoreMenu({ x: rect.right - 150, y: rect.bottom + 6 });
+                }}
               >
-                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                {/* 横向三点「更多」：与顶栏其它图标同一套描边圆头笔触（纯图标，无文案）。 */}
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none">
                   <path
-                    d="M4 6.5A2.5 2.5 0 016.5 4h11A2.5 2.5 0 0120 6.5v11a2.5 2.5 0 01-2.5 2.5h-11A2.5 2.5 0 014 17.5v-11z"
+                    d="M6 12h.01M12 12h.01M18 12h.01"
                     stroke="currentColor"
-                    strokeWidth="1.7"
-                    fill="none"
-                  />
-                  <path d="M4 15.5l4.2-4 3.4 3.1 2.6-2.3 5.8 5.2" stroke="currentColor" strokeWidth="1.7" fill="none" strokeLinecap="round" />
-                  <circle cx="9" cy="8.6" r="1.5" fill="currentColor" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className="head-chip"
-                title={t("newChat")}
-                aria-label={t("newChat")}
-                disabled={!hasMessages || snapshot.running}
-                onClick={() => engine.newSession()}
-              >
-                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-                  <path
-                    d="M12 5v14M5 12h14"
-                    stroke="currentColor"
-                    strokeWidth="2"
+                    strokeWidth="2.8"
                     strokeLinecap="round"
                   />
                 </svg>
               </button>
             </div>
           </header>
+
+          {moreMenu && (
+            <CopyMenu
+              x={moreMenu.x}
+              y={moreMenu.y}
+              onClose={() => setMoreMenu(null)}
+              actions={moreActions}
+              info={tokenInfo}
+              infoTitle={t("tokenUsageTitle")}
+            />
+          )}
 
           {!isModelConfigured(settings) && (
             <div className="banner">
@@ -950,6 +1018,7 @@ export default function App() {
           )}
 
           <ConfirmDialog />
+          <PromptDialog />
 
           <Drawer
             open={drawerOpen}
@@ -984,12 +1053,7 @@ export default function App() {
               const result = exportConversation(title, markdown);
               if (result.startsWith("ERROR:")) showError(result);
             }}
-            onExport={(id) => {
-              const session = snapshot.sessions.find((s) => s.id === id);
-              if (!session) return;
-              const result = exportConversation(session.title, conversationMarkdown(id, session.title));
-              if (result.startsWith("ERROR:")) showError(result);
-            }}
+            onExport={exportSessionMarkdown}
             onExportImage={(id) => exportLongImage(id)}
             onShareImage={(id) => exportLongImage(id, true)}
           />

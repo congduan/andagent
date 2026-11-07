@@ -33,7 +33,13 @@ class AdbTransportTest {
         var lastTimeoutMs: Int? = null
             private set
 
-        override fun connect(host: String, port: Int, timeoutMs: Int, pinned: List<String>): TlsConnectResult {
+        override fun connect(
+            host: String,
+            port: Int,
+            timeoutMs: Int,
+            pinned: List<String>,
+            clientKeyPkcs8: ByteArray,
+        ): TlsConnectResult {
             pinnedSeen += pinned
             val s = Socket()
             s.connect(InetSocketAddress(host, port), timeoutMs)
@@ -117,23 +123,73 @@ class AdbTransportTest {
     }
 
     @Test
-    fun tlsConnectPinMismatchGuidesRepairing() {
-        val msg = TlsTransport.formatConnectError("PIN_MISMATCH")
-        assertTrue(msg.contains("指纹不匹配"))
-        assertTrue(msg.contains("重新执行 adb_pair"))
-        assertTrue(msg.contains("adb_connect"))
-        assertFalse("不应是泛化 ERROR", msg.trim() == "ERROR")
+    fun tlsConnectFailuresHaveActionableText() {
+        // 主端口不是 TLS-from-byte-zero：STLS 前导失败要能指向端口/会话占用而不是泛化报错
+        val stls = TlsTransport.formatConnectError("STLS")
+        assertTrue(stls.contains("主端口"))
+        assertTrue(stls.contains("无线调试"))
+        assertFalse("不应是泛化 ERROR", stls.trim() == "ERROR")
+        // 明文 adbd 要引导 tls=false
+        assertTrue(TlsTransport.formatConnectError("NO_TLS").contains("tls=false"))
+        // 私钥不可用要指出证书签发失败
+        assertTrue(TlsTransport.formatConnectError("CERT").contains("客户端证书"))
         // 其它失败码各有专属文案
-        for (reason in listOf("NETWORK", "TLS", "UNAVAILABLE", "UNSUPPORTED_ABI", "JNI_EXCEPTION", "BUSY", "INVALID_ARGS", null)) {
+        for (reason in listOf("NETWORK", "TLS", "STLS", "NO_TLS", "CERT", "UNAVAILABLE", "UNSUPPORTED_ABI", "JNI_EXCEPTION", "BUSY", "INVALID_ARGS", null)) {
             assertTrue("reason=$reason", TlsTransport.formatConnectError(reason).startsWith("❌"))
         }
     }
 
+    /**
+     * R103 A：adbd 的 TLS 握手要求客户端证书，原生层必须拿到本机 ADB 私钥才能签发，
+     * 因此 open() 要把 PKCS#8 私钥原样透传给 JNI。
+     */
     @Test
-    fun adbClientSurfacesPinMismatchInsteadOfGenericError() {
+    fun tlsTransportForwardsAdbPrivateKeyToNative() {
+        var seenKey: ByteArray? = null
         val native = object : TlsNative {
-            override fun connect(host: String, port: Int, timeoutMs: Int, pinned: List<String>) =
-                TlsConnectResult(reason = "PIN_MISMATCH")
+            override fun connect(
+                host: String,
+                port: Int,
+                timeoutMs: Int,
+                pinned: List<String>,
+                clientKeyPkcs8: ByteArray,
+            ): TlsConnectResult {
+                seenKey = clientKeyPkcs8
+                return TlsConnectResult(handle = 1L)
+            }
+
+            override fun read(handle: Long, buf: ByteArray): Int = TLS_READ_EOF
+            override fun write(handle: Long, data: ByteArray): Int = data.size
+            override fun setReadTimeout(handle: Long, ms: Int) {}
+            override fun close(handle: Long) {}
+        }
+        val key = byteArrayOf(0x30, 0x01, 0x02, 0x03)
+        TlsTransport(emptyList(), native, key).open("h", 1, 1000)
+        assertTrue("私钥应透传到原生层，实际=${seenKey?.toList()}", key.contentEquals(seenKey))
+    }
+
+    /** 失败文案要带上 BoringSSL 原始错误串，否则真机复测只能看到泛化「握手失败」。 */
+    @Test
+    fun tlsConnectErrorAppendsNativeDetail() {
+        val withDetail = TlsTransport.formatConnectError("TLS", "alert certificate_required")
+        assertTrue(withDetail.contains("握手失败"))
+        assertTrue(withDetail.contains("alert certificate_required"))
+        // 无 detail 时保持原样，不出现空尾巴
+        assertFalse(TlsTransport.formatConnectError("TLS", "").contains("原生错误"))
+        assertFalse(TlsTransport.formatConnectError("TLS").contains("原生错误"))
+    }
+
+    @Test
+    fun adbClientSurfacesStlsPreludeFailureInsteadOfGenericError() {
+        val native = object : TlsNative {
+            override fun connect(
+                host: String,
+                port: Int,
+                timeoutMs: Int,
+                pinned: List<String>,
+                clientKeyPkcs8: ByteArray,
+            ) =
+                TlsConnectResult(reason = "STLS")
             override fun read(handle: Long, buf: ByteArray): Int = TLS_READ_ERROR
             override fun write(handle: Long, data: ByteArray): Int = TLS_READ_ERROR
             override fun setReadTimeout(handle: Long, ms: Int) {}
@@ -142,12 +198,17 @@ class AdbTransportTest {
         val client = AdbClient(transport = TlsTransport(emptyList(), native))
         val r = client.connect("127.0.0.1", 5555)
         assertTrue(r.startsWith("ERROR"))
-        assertTrue("应引导重新配对，实际=$r", r.contains("重新执行 adb_pair"))
+        assertTrue("应指向主端口/无线调试，实际=$r", r.contains("无线调试"))
     }
 
     private fun nativeWithReadCode(code: Int, writeCode: Int? = null): TlsNative = object : TlsNative {
-        override fun connect(host: String, port: Int, timeoutMs: Int, pinned: List<String>) =
-            TlsConnectResult(handle = 1L)
+        override fun connect(
+            host: String,
+            port: Int,
+            timeoutMs: Int,
+            pinned: List<String>,
+            clientKeyPkcs8: ByteArray,
+        ) = TlsConnectResult(handle = 1L)
         override fun read(handle: Long, buf: ByteArray): Int = code
         override fun write(handle: Long, data: ByteArray): Int = writeCode ?: data.size
         override fun setReadTimeout(handle: Long, ms: Int) {}
@@ -170,7 +231,13 @@ class AdbTransportTest {
     fun tlsInputStreamBulkReadCopiesIntoOffset() {
         val payload = "OK\nHANDLE=7\n".toByteArray()
         val native = object : TlsNative {
-            override fun connect(host: String, port: Int, timeoutMs: Int, pinned: List<String>) =
+            override fun connect(
+                host: String,
+                port: Int,
+                timeoutMs: Int,
+                pinned: List<String>,
+                clientKeyPkcs8: ByteArray,
+            ) =
                 TlsConnectResult(handle = 1L)
             override fun read(handle: Long, buf: ByteArray): Int {
                 payload.copyInto(buf, 0, 0, minOf(payload.size, buf.size))
@@ -192,7 +259,13 @@ class AdbTransportTest {
     fun tlsOutputStreamRejectsPartialWriteAndClosesHandle() {
         val closed = mutableListOf<Long>()
         val native = object : TlsNative {
-            override fun connect(host: String, port: Int, timeoutMs: Int, pinned: List<String>) =
+            override fun connect(
+                host: String,
+                port: Int,
+                timeoutMs: Int,
+                pinned: List<String>,
+                clientKeyPkcs8: ByteArray,
+            ) =
                 TlsConnectResult(handle = 9L)
             override fun read(handle: Long, buf: ByteArray): Int = TLS_READ_EOF
             override fun write(handle: Long, data: ByteArray): Int = data.size - 1 // 故意短写

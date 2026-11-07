@@ -1,5 +1,6 @@
 import { translate, useI18n } from "./i18n";
 import { useState } from "react";
+import { Icon } from "./icons";
 
 export type MediaKind = "audio" | "video";
 
@@ -50,9 +51,9 @@ export function MediaCard({ kind, uri, title, poster }: { kind: MediaKind; uri: 
   const onError = (event: React.SyntheticEvent<HTMLMediaElement>) =>
     setError(describeMediaError(event.currentTarget.error?.code, src));
   return <div className="media-card">
-    <div className="media-title">{kind === "audio" ? "🎵" : "🎬"} {filename}{time && <span className="media-duration">{time}</span>}</div>
+    <div className="media-title"><Icon name={kind === "audio" ? "music" : "video"} size={13} /> {filename}{time && <span className="media-duration">{time}</span>}</div>
     {error
-      ? <div className="media-error">⚠️ {error}</div>
+      ? <div className="media-error"><Icon name="alert" size={12} /> {error}</div>
       : kind === "audio"
         ? <audio controls preload="metadata" src={src} onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} onError={onError} />
         : <video controls preload="metadata" src={src} poster={poster ? mediaSource(poster) || undefined : undefined} onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)} onError={onError} />}

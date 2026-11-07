@@ -6,6 +6,7 @@ import {
   type ProviderPreset,
 } from "./modelConfig";
 import { showError } from "./toast";
+import { Icon } from "./icons";
 
 /**
  * 模型连接表单（服务商选择 + Base URL + API Key + 模型 ID + 拉取模型列表）。
@@ -93,7 +94,7 @@ export function ModelFields({ settings, onChange, disabled }: Props) {
                     >
                       <span className="provider-mark" aria-hidden="true">{providerMark(p)}</span>
                       <span className="provider-name">{p.name || t("modelCustom")}</span>
-                      {selected && <span className="provider-check" aria-hidden="true">✓</span>}
+                      {selected && <span className="provider-check" aria-hidden="true"><Icon name="check" size={12} strokeWidth={2.6} /></span>}
                     </button>
                   );
                 })}

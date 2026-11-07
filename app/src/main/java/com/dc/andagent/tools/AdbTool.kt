@@ -40,7 +40,7 @@ val ADB_TOOLS = listOf(
 object AdbSessionHub {
     private const val NS = "adb"
     private const val KEY = "targets"
-    /** R103 A：配对时锁定的设备证书指纹（host -> SHA-256 hex，null = 已配对但未取到指纹）。 */
+    /** R103 A：配对时记录的设备证书指纹（host -> SHA-256 hex，null = 已配对但未取到）。仅记录用途。 */
     private const val PAIRINGS_KEY = "pairings"
     const val RECONNECT_TIMEOUT_MS = 3000
 
@@ -91,14 +91,23 @@ object AdbSessionHub {
         return kp
     }
 
-    /** 按目标元数据构造传输：TLS 目标走 TlsTransport（JNI 桥），否则明文 TcpTransport。 */
+    /**
+     * 按目标元数据构造传输：TLS 目标走 TlsTransport（JNI 桥），否则明文 TcpTransport。
+     * TLS 分支必须带上本机 ADB 私钥（PKCS#8 DER）——adbd 在握手期要客户端证书。
+     */
     private fun newClientFor(t: AdbTarget): AdbClient =
         AdbClient(
             keyPair,
-            if (t.tls) TlsTransport(listOfNotNull(t.fingerprint), AdbPairNative) else TcpTransport(),
+            if (t.tls) {
+                TlsTransport(listOfNotNull(t.fingerprint), AdbPairNative, keyPair.private.encoded)
+            } else TcpTransport(),
         )
 
-    /** R103 A：配对成功后由 AdbPairTool 回调，把 host + 设备证书指纹写入 KV。 */
+    /**
+     * R103 A：配对成功后由 AdbPairTool 回调，把 host + 设备证书指纹写入 KV。
+     * 指纹只作记录（adbd 每次连接的证书都不同，无法当身份绑定，AOSP 客户端也
+     * 直接 "Allow any server certificate"）；真正的凭据是本机 ADB 私钥。
+     */
     fun rememberPairing(host: String, fingerprint: String?) {
         synchronized(lock) {
             pairings[host] = fingerprint
@@ -114,7 +123,7 @@ object AdbSessionHub {
     /** 该 host 是否曾配对成功（决定 adb_connect 是否自动尝试 TLS）。 */
     fun isPaired(host: String): Boolean = synchronized(lock) { pairings.containsKey(host) }
 
-    /** 该 host 锁定的设备证书指纹（null = 已配对但未取到，TLS 走信任自签的降级路径）。 */
+    /** 该 host 访问时抓到的设备证书指纹（仅记录；adbd 每次连接都换证书，不参与校验）。 */
     fun fingerprintFor(host: String): String? = synchronized(lock) { pairings[host] }
 
     /** 解析目标引用，供 scrcpy 等独立会话取 host/port。 */
@@ -128,7 +137,9 @@ object AdbSessionHub {
                 return "ERROR: 已保存目标数达上限 ${AdbToolRules.MAX_TARGETS}，请先 adb_disconnect"
             }
             val transport: AdbTransport =
-                if (tls) TlsTransport(listOfNotNull(pinnedFp), AdbPairNative) else TcpTransport()
+                if (tls) {
+                    TlsTransport(listOfNotNull(pinnedFp), AdbPairNative, keyPair.private.encoded)
+                } else TcpTransport()
             val c = AdbClient(keyPair, transport)
             val r = c.connect(host, port)
             if (r.startsWith("OK")) {
@@ -217,7 +228,7 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
 
     override val description = when (name) {
         "adb_connect" ->
-            "连接目标手机的 adbd（无线调试主端口）。host 必填；port 默认 5555。tls 可选：默认自动——用 adb_pair 配对过的 host 自动走 TLS 1.3 传输（Android 11+ 配对后主端口强制 TLS，并用配对时锁定的设备证书指纹校验），未配对或传统明文 adbd 走明文 TCP + AUTH RSA；也可显式传 tls=true/false 覆盖。首次连接会向手机发送本机公钥并弹「允许调试」授权框，点「允许」后重新调用本工具一次即握手成功。adb_pair 用的是「配对端口」，与这里的主端口不同。"
+            "连接目标手机的 adbd（无线调试主端口）。host 必填；port 默认 5555。tls 可选：默认自动——用 adb_pair 配对过的 host 自动走 TLS 1.3 传输（Android 11+ 配对后主端口要求 TLS：先明文 CNXN→STLS 升级，再做带客户端证书的 mTLS，身份由本机 ADB 密钥保证），未配对或传统明文 adbd 走明文 TCP + AUTH RSA；也可显式传 tls=true/false 覆盖。首次连接会向手机发送本机公钥并弹「允许调试」授权框，点「允许」后重新调用本工具一次即握手成功。adb_pair 用的是「配对端口」，与这里的主端口不同。"
         "adb_devices" ->
             "列出已保存的 ADB 目标（host/port/状态）；app 重启后仍能看到，并对离线目标尝试重连。"
         "adb_disconnect" -> "断开并移除已保存的 ADB 目标（host 或 host:port）。"

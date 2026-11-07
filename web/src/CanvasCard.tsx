@@ -1,6 +1,7 @@
 import { useI18n } from "./i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { kvCall } from "./bridge";
+import { Icon } from "./icons";
 
 /**
  * ```canvas fence: scripted 2D drawing inside a sandboxed iframe.
@@ -155,10 +156,10 @@ export function CanvasCard({ code, data }: { code: string; data?: unknown }) {
   return (
     <div className={`canvas-card${fullscreen ? " fullscreen" : ""}`}>
       <div className="webview-bar canvas-bar">
-        <span className="webview-uri">🎨 {spec.title ?? `Canvas ${spec.width}×${spec.height}`}</span>
-        <button type="button" onClick={rerun} title={t("rerun")}>↻</button>
-        <button type="button" onClick={() => setFullscreen((v) => !v)} title={fullscreen ? t("exitFullscreen") : t("fullscreen")}>⛶</button>
-        <button type="button" onClick={() => { setFullscreen(false); setVisible(false); }} title={t("close")}>✕</button>
+        <span className="webview-uri"><Icon name="palette" size={13} /> {spec.title ?? `Canvas ${spec.width}×${spec.height}`}</span>
+        <button type="button" onClick={rerun} title={t("rerun")}><Icon name="refresh" size={13} /></button>
+        <button type="button" onClick={() => setFullscreen((v) => !v)} title={fullscreen ? t("exitFullscreen") : t("fullscreen")}><Icon name={fullscreen ? "minimize" : "maximize"} size={13} /></button>
+        <button type="button" onClick={() => { setFullscreen(false); setVisible(false); }} title={t("close")}><Icon name="x" size={13} /></button>
       </div>
       <iframe
         key={runNonce}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "./i18n";
+import { Icon } from "./icons";
 
 /**
  * R94: ```html 围栏——直接在对话流里渲染 AI 生成的完整 HTML 文档。
@@ -35,10 +36,10 @@ export function HtmlCard({ code }: { code: string }) {
   return (
     <div className={`html-card${fullscreen ? " fullscreen" : ""}`}>
       <div className="webview-bar">
-        <span className="webview-uri">🧩 {t("htmlCard")}</span>
-        <button type="button" onClick={() => setRunNonce((v) => v + 1)} title={t("rerun")}>↻</button>
-        <button type="button" onClick={() => setFullscreen((v) => !v)} title={fullscreen ? t("exitFullscreen") : t("fullscreen")}>⛶</button>
-        <button type="button" onClick={() => { setFullscreen(false); setVisible(false); }} title={t("close")}>✕</button>
+        <span className="webview-uri"><Icon name="puzzle" size={13} /> {t("htmlCard")}</span>
+        <button type="button" onClick={() => setRunNonce((v) => v + 1)} title={t("rerun")}><Icon name="refresh" size={13} /></button>
+        <button type="button" onClick={() => setFullscreen((v) => !v)} title={fullscreen ? t("exitFullscreen") : t("fullscreen")}><Icon name={fullscreen ? "minimize" : "maximize"} size={13} /></button>
+        <button type="button" onClick={() => { setFullscreen(false); setVisible(false); }} title={t("close")}><Icon name="x" size={13} /></button>
       </div>
       <iframe
         key={runNonce}

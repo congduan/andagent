@@ -437,3 +437,8 @@ html[lang="zh-CN"] .hero h1, html[lang="zh-CN"] .page-hero h1 { line-height: 1.2
 html[lang="zh-CN"] .lede, html[lang="zh-CN"] .page-hero p, html[lang="zh-CN"] .panel p,
 html[lang="zh-CN"] .panel li, html[lang="zh-CN"] .play-effect { letter-spacing: .015em; }
 html[lang="zh-CN"] .brand { letter-spacing: -.02em; }
+
+/* SVG 图标：跟随按钮字号缩放，替代 emoji */
+.ico { width: 1em; height: 1em; display: inline-block; vertical-align: -0.14em; flex: none; }
+.play-icon .ico { width: 1.05em; height: 1.05em; }
+.activity-check .ico { vertical-align: -0.1em; }

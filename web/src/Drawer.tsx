@@ -4,7 +4,8 @@ import { resolvedTheme, toggleTheme } from "./theme";
 import { useI18n } from "./i18n";
 import { fmtTokens, type UsageSum } from "./usage";
 import { appConfirm } from "./ConfirmDialog";
-import { CopyMenu, useLongPress } from "./CopyMenu";
+import { CopyMenu, useLongPress, type CopyMenuAction } from "./CopyMenu";
+import { Icon } from "./icons";
 
 /* --------------------------- 时间分组折叠 --------------------------- */
 
@@ -106,13 +107,13 @@ function SessionRow({
     if (editing || managing) return;
     openMenu(x, y);
   });
-  const menuActions = [
-    { icon: "🖼", label: t("exportLongImage"), onClick: () => onExportImage(s.id) },
-    { icon: "↗", label: t("shareLongImage"), onClick: () => onShareImage(s.id) },
-    { icon: "⤓", label: t("exportMarkdown"), onClick: () => onExport(s.id) },
-    { icon: "✏️", label: t("rename"), onClick: () => startEdit() },
+  const menuActions: CopyMenuAction[] = [
+    { icon: "image", label: t("exportLongImage"), onClick: () => onExportImage(s.id) },
+    { icon: "arrow-up-right", label: t("shareLongImage"), onClick: () => onShareImage(s.id) },
+    { icon: "download", label: t("exportMarkdown"), onClick: () => onExport(s.id) },
+    { icon: "pencil", label: t("rename"), onClick: () => startEdit() },
     {
-      icon: "🗑",
+      icon: "trash",
       label: t("delete"),
       onClick: () => {
         void appConfirm(t("confirmDeleteSession", { name: s.title })).then((ok) => {
@@ -171,7 +172,7 @@ function SessionRow({
         }
       }}
     >
-      {managing && <span className="drawer-item-check" aria-hidden="true">{selected ? "✓" : ""}</span>}
+      {managing && <span className="drawer-item-check" aria-hidden="true">{selected && <Icon name="check" size={11} strokeWidth={3} />}</span>}
       {editing ? (
         <input
           className="drawer-item-rename"
@@ -382,7 +383,7 @@ export function Drawer({
               title={theme === "dark" ? t("lightMode") : t("darkMode")}
               onClick={toggleTheme}
             >
-              {theme === "dark" ? "☀️" : "🌙"}
+              <Icon name={theme === "dark" ? "sun" : "moon"} size={17} />
             </button>
           </div>
         </div>

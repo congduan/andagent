@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "./i18n";
 import { createPortal } from "react-dom";
 import { hasBridge, uiShare } from "./bridge";
+import { Icon, type IconName } from "./icons";
 
 /** Clipboard write with a legacy fallback for WebViews without async clipboard. */
 export async function copyText(text: string): Promise<boolean> {
@@ -118,9 +119,17 @@ export function useLongPress(onLongPress: (x: number, y: number) => void, ms = 6
 
 /** 菜单里的额外动作项（例如消息的「编辑」「重试」）。 */
 export interface CopyMenuAction {
-  icon: string;
+  icon: IconName;
   label: string;
   onClick: () => void;
+  /** 置灰不可点：例如空会话禁止导出。 */
+  disabled?: boolean;
+}
+
+/** 菜单顶部的只读信息行（例如 Token 用量明细），不参与点击。 */
+export interface CopyMenuInfo {
+  label: string;
+  value: string;
 }
 
 interface CopyMenuProps {
@@ -130,13 +139,17 @@ interface CopyMenuProps {
   y: number;
   onClose: () => void;
   actions?: CopyMenuAction[];
+  /** 只读信息区：显示在动作项之上，带分隔线。 */
+  info?: CopyMenuInfo[];
+  /** 信息区标题（可选）。 */
+  infoTitle?: string;
 }
 
 const MENU_ITEM_HEIGHT = 33;
 const MENU_PADDING = 8;
 
 /** Context menu anchored at the long-press point: actions + 复制全文 + 分享. */
-export function CopyMenu({ text = "", x, y, onClose, actions = [] }: CopyMenuProps) {
+export function CopyMenu({ text = "", x, y, onClose, actions = [], info = [], infoTitle = "" }: CopyMenuProps) {
   const { t } = useI18n();
   const [state, setState] = useState<"idle" | "done" | "failed">("idle");
   const [shareFailed, setShareFailed] = useState(false);
@@ -144,7 +157,13 @@ export function CopyMenu({ text = "", x, y, onClose, actions = [] }: CopyMenuPro
   const exitRef = useRef<number | null>(null);
   const nativeBridge = hasBridge();
   const hasText = text.trim().length > 0;
-  const rows = actions.length + (hasText ? 1 : 0) + (nativeBridge && hasText ? 1 : 0);
+  // 信息区按同样的行高估算，保证菜单贴边时不被裁掉。
+  const rows =
+    actions.length +
+    info.length +
+    (infoTitle ? 1 : 0) +
+    (hasText ? 1 : 0) +
+    (nativeBridge && hasText ? 1 : 0);
   const menuHeight = MENU_PADDING + rows * MENU_ITEM_HEIGHT;
   const left = Math.max(8, Math.min(x, window.innerWidth - 132));
   const top = Math.max(8, Math.min(y, window.innerHeight - menuHeight));
@@ -199,7 +218,7 @@ export function CopyMenu({ text = "", x, y, onClose, actions = [] }: CopyMenuPro
 
   // 动作项：先播退场动画再执行，避免气泡在菜单还挂着时突然变形。
   const runAction = (action: CopyMenuAction) => {
-    if (closing) return;
+    if (closing || action.disabled) return;
     setClosing(true);
     exitRef.current = window.setTimeout(() => {
       exitRef.current = null;
@@ -216,16 +235,30 @@ export function CopyMenu({ text = "", x, y, onClose, actions = [] }: CopyMenuPro
         onPointerDown={(event) => event.stopPropagation()}
         role="menu"
       >
+        {(info.length > 0 || infoTitle) && (
+          <div className="copy-menu-info">
+            {infoTitle && <div className="copy-menu-info-title">{infoTitle}</div>}
+            {info.map((row) => (
+              <div className="copy-menu-info-row" key={row.label}>
+                <span className="copy-menu-info-label">{row.label}</span>
+                <span className="copy-menu-info-value">{row.value}</span>
+              </div>
+            ))}
+            <div className="copy-menu-sep" aria-hidden="true" />
+          </div>
+        )}
         {actions.map((action) => (
           <button
             type="button"
             className="copy-menu-item"
             key={action.label}
+            disabled={action.disabled}
+            aria-disabled={action.disabled || undefined}
             onClick={() => runAction(action)}
             role="menuitem"
           >
             <span className="copy-menu-icon" aria-hidden="true">
-              {action.icon}
+              <Icon name={action.icon} size={13} />
             </span>
             {action.label}
           </button>
@@ -233,7 +266,7 @@ export function CopyMenu({ text = "", x, y, onClose, actions = [] }: CopyMenuPro
         {hasText && (
           <button type="button" className="copy-menu-item" onClick={copy} role="menuitem">
             <span className="copy-menu-icon" aria-hidden="true">
-              ⧉
+              <Icon name="copy" size={13} />
             </span>
             {state === "idle" ? t("copyAll") : state === "done" ? t("copied") : t("copyFailed")}
           </button>
@@ -241,7 +274,7 @@ export function CopyMenu({ text = "", x, y, onClose, actions = [] }: CopyMenuPro
         {nativeBridge && hasText && (
           <button type="button" className="copy-menu-item" onClick={share} role="menuitem">
             <span className="copy-menu-icon" aria-hidden="true">
-              ↗
+              <Icon name="arrow-up-right" size={13} />
             </span>
             {shareFailed ? t("copyFailed") : t("share")}
           </button>

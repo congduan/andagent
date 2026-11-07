@@ -64,28 +64,9 @@ function reportToNative(isDark: boolean): void {
   }
 }
 
-let themeTransitionTimer: number | undefined;
-
-/**
- * 主题切换时给颜色加一小段过渡（约 300ms），避免整屏瞬间反色。
- * 只在真的切换配色时挂 class，启动首次 applyTheme 不会造成闪烁。
- */
-function armThemeTransition(root: HTMLElement, resolved: "light" | "dark"): void {
-  if (root.dataset.theme === resolved) return;
-  root.classList.add("theme-transition");
-  // 强制一次样式计算，确保过渡从旧配色开始。
-  void root.offsetHeight;
-  if (themeTransitionTimer !== undefined) window.clearTimeout(themeTransitionTimer);
-  themeTransitionTimer = window.setTimeout(() => {
-    root.classList.remove("theme-transition");
-    themeTransitionTimer = undefined;
-  }, 320);
-}
-
 /** Apply the current mode to the DOM and notify listeners. */
 export function applyTheme(mode: ThemeMode = loadThemeMode()): "light" | "dark" {
   const resolved = resolvedTheme(mode);
-  armThemeTransition(document.documentElement, resolved);
   document.documentElement.dataset.theme = resolved;
   let meta = document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]');
   if (!meta) {

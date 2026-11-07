@@ -140,7 +140,9 @@ class AdbPairToolTest {
 
     @Test
     fun `jvm tls connect degrades to structured error`() {
-        val r = AdbPairNative.connect("192.168.1.5", 5555, 5000, listOf("ab".repeat(32)))
+        val r = AdbPairNative.connect(
+            "192.168.1.5", 5555, 5000, listOf("ab".repeat(32)), ByteArray(0),
+        )
         if (!AdbPairNative.available) {
             assertEquals("UNAVAILABLE", r.reason)
             assertNull(r.handle)
