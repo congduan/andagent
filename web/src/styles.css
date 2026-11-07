@@ -3056,6 +3056,8 @@ html.theme-transition *::after {
 .live-errors summary { cursor: pointer; margin-top: 6px; min-height: 28px; color: var(--text); }
 .live-errors ol { margin: 4px 0 0; padding-left: 22px; }
 .live-errors li + li { margin-top: 8px; }
+.live-error-label { display: block; }
+.live-error-stack { margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--code-bg); color: var(--muted); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; }
 .photos-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; margin: 10px 0; }
 .photos-grid button { min-width: 0; padding: 0; overflow: hidden; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; }
 .photos-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }

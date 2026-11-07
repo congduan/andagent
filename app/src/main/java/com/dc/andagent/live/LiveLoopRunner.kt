@@ -1,9 +1,9 @@
 package com.dc.andagent.live
 
+import com.dc.andagent.script.ScriptError
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -11,6 +11,26 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+
+/**
+ * R94: ring buffer of the most recent live-tick failures. Each entry carries
+ * the tick number, an ISO timestamp and a structured [ScriptError], so the
+ * card can show the QuickJS native location instead of an opaque string.
+ */
+class ErrorHistory(private val capacity: Int = 5) {
+    private val entries = ArrayDeque<JsonObject>()
+
+    @Synchronized fun add(tick: Long, error: ScriptError) {
+        entries.addFirst(buildJsonObject {
+            put("tick", tick)
+            put("timestamp", java.time.Instant.now().toString())
+            put("error", error.toJson())
+        })
+        while (entries.size > capacity) entries.removeLast()
+    }
+
+    @Synchronized fun snapshot(): List<JsonObject> = entries.toList()
+}
 
 /** Process-local live loops. Each tick gets a fresh QuickJS context. */
 class LiveLoopRunner(
@@ -34,7 +54,7 @@ class LiveLoopRunner(
         @Volatile var firstTickError: String? = null
         @Volatile var future: ScheduledFuture<*>? = null
         val results = ArrayDeque<JsonElement>()
-        val errorHistory = ArrayDeque<String>()
+        val errorHistory = ErrorHistory()
         fun state(): String = when { stopped -> "stopped"; paused -> "paused"; else -> "running" }
     }
 
@@ -106,16 +126,14 @@ class LiveLoopRunner(
             if (failure == null) { loop.failures = 0; loop.error = null }
             else {
                 loop.failures++
-                loop.error = failure
-                if (loop.ticks == 1L) { loop.firstTickFailed = true; loop.firstTickError = failure }
-                synchronized(loop) {
-                    loop.errorHistory.addFirst("#${loop.ticks} · ${java.time.Instant.now()} · $failure")
-                    while (loop.errorHistory.size > 5) loop.errorHistory.removeLast()
-                }
+                val error = ScriptError.fromErrorResult(failure)
+                loop.error = error.display()
+                if (loop.ticks == 1L) { loop.firstTickFailed = true; loop.firstTickError = error.display() }
+                loop.errorHistory.add(loop.ticks, error)
                 if (loop.failures >= 5) {
                     loop.stopped = true
                     onStop(loop.id)
-                    notify("实时循环「${loop.name}」连续 5 次失败，已自动停止：$failure")
+                    notify("实时循环「${loop.name}」连续 5 次失败，已自动停止：${error.display()}")
                 }
             }
         }
@@ -131,7 +149,7 @@ class LiveLoopRunner(
         loop.error?.let { put("error", it) }
         synchronized(loop) {
             put("results", JsonArray(loop.results.toList()))
-            put("errorHistory", JsonArray(loop.errorHistory.map(::JsonPrimitive)))
+            put("errorHistory", JsonArray(loop.errorHistory.snapshot()))
         }
     }
 

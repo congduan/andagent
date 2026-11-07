@@ -95,11 +95,50 @@ class LiveLoopRunnerTest {
             assertEquals(frozenTicks, resumed["ticks"]!!.jsonPrimitive.content)
             val history = resumed["errorHistory"]!!.jsonArray
             assertTrue(history.size in 1..5)
-            assertTrue(history.last().jsonPrimitive.content.contains("#1"))
+            val oldest = history.last().jsonObject
+            assertEquals(1L, oldest["tick"]!!.jsonPrimitive.content.toLong())
+            assertEquals("ReferenceError: missing at line 2", oldest["error"]!!.jsonObject["message"]!!.jsonPrimitive.content)
             // History never grows past the 5-entry cap while running.
             Thread.sleep(1200)
             val listed = runner.list()["loops"]!!.jsonArray.first().jsonObject
             assertTrue(listed["errorHistory"]!!.jsonArray.size in 1..5)
+        } finally { runner.shutdown() }
+    }
+
+    @Test fun errorHistoryRollsAcrossNonConsecutiveFailures() {
+        // Alternate success/failure so the 5-consecutive-failure auto-stop never
+        // fires and more than 5 errors flow through the ring buffer.
+        val calls = AtomicInteger()
+        val failures = AtomicInteger()
+        val enough = CountDownLatch(1)
+        val runner = LiveLoopRunner({ _, result ->
+            val n = calls.incrementAndGet()
+            if (n % 2 == 0) {
+                if (failures.incrementAndGet() >= 6) enough.countDown()
+                "ERROR: failure #$n"
+            } else { result("1"); "null" }
+        }, { _, _, _ -> }, {})
+        try {
+            runner.start("roll", "live.result(1)", 200, "dialog")
+            assertTrue("expected 6+ failures", enough.await(5, TimeUnit.SECONDS))
+            // The 6th failure is counted inside evaluate(), before its tick has
+            // recorded the error — settle until that snapshot is visible.
+            var history = emptyList<Long>()
+            val deadline = System.currentTimeMillis() + 2000
+            while (System.currentTimeMillis() < deadline) {
+                history = runner.list()["loops"]!!.jsonArray.first().jsonObject["errorHistory"]!!.jsonArray
+                    .map { it.jsonObject["tick"]!!.jsonPrimitive.content.toLong() }
+                if (history.size == 5 && history.first() >= 12) break
+                Thread.sleep(25)
+            }
+            assertEquals(5, history.size)
+            assertEquals(history.sortedDescending(), history)
+            assertTrue("newest failure must be recorded", history.first() >= 12)
+            assertTrue("oldest entries must be evicted", history.last() > 2)
+            runner.list()["loops"]!!.jsonArray.first().jsonObject["errorHistory"]!!.jsonArray.forEach { entry ->
+                val error = entry.jsonObject["error"]!!.jsonObject
+                assertTrue(error["message"]!!.jsonPrimitive.content.startsWith("failure"))
+            }
         } finally { runner.shutdown() }
     }
 }

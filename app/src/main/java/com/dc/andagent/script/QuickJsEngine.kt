@@ -58,11 +58,19 @@ class QuickJsEngine(
         if (script.length > 100_000) return "ERROR: 脚本超过 100KB"
         val task = FutureTask(Callable { runScript(script, 500, null, null, null, onResult) })
         if (!handler.post(task)) return "ERROR: QuickJS 线程不可用"
-        return try { task.get(1500, TimeUnit.MILLISECONDS) }
+        // R94: live errors are surfaced as structured objects (message/stack/
+        // scriptName/line/col) rather than a bare message string, so the live
+        // card can display the QuickJS native location. The "ERROR: " prefix is
+        // kept so LiveLoopRunner and other callers keep detecting failures.
+        return try {
+            val output = task.get(1500, TimeUnit.MILLISECONDS)
+            if (output.startsWith("ERROR:")) "ERROR: " + ScriptError.fromErrorResult(output).toJson()
+            else output
+        }
         catch (e: Exception) {
             task.cancel(true)
             val original = (e as? ExecutionException)?.cause ?: e
-            "ERROR: ${original.message ?: original.toString()}"
+            "ERROR: " + ScriptError.fromThrowable(original).toJson()
         }
     }
 
@@ -249,8 +257,11 @@ class QuickJsEngine(
             }
         }
     } catch (e: Throwable) {
+        // R94: preserve the full stack (and any QuickJS scriptName:line:col)
+        // instead of flattening the failure to a single message line.
         val original = (e as? ExecutionException)?.cause ?: e
-        "ERROR: ${original.message ?: original.toString()}"
+        val error = ScriptError.fromThrowable(original)
+        "ERROR: ${error.stack ?: error.display()}"
     }
 
     /* ------------------------ R10.7 sandboxed fs ------------------------ */

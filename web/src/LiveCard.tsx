@@ -5,7 +5,16 @@ import { CanvasCard } from "./CanvasCard";
 import { showError } from "./toast";
 
 type LiveSpec = { name: string; code: string; interval_ms?: number; render?: string; width?: number; height?: number };
-type LiveState = { id: string; name: string; state: string; ticks: number; failures: number; error?: string; warning?: string; errorHistory?: string[]; results: unknown[] };
+type LiveError = { message: string; stack?: string; scriptName?: string; line?: number; col?: number };
+type LiveErrorEntry = { tick: number; timestamp: string; error: LiveError };
+type LiveState = { id: string; name: string; state: string; ticks: number; failures: number; error?: string; warning?: string; errorHistory?: LiveErrorEntry[]; results: unknown[] };
+
+const locationOf = (error: LiveError) => error.scriptName && error.line != null
+  ? `${error.scriptName}:${error.line}:${error.col ?? 1}` : null;
+const labelOf = (entry: LiveErrorEntry) => {
+  const location = locationOf(entry.error);
+  return `#${entry.tick}${location ? ` · ${location}` : ""} · ${entry.error.message}`;
+};
 
 const DEFAULT_RENDER = `
 ctx.fillStyle='#0b0d11';ctx.fillRect(0,0,w,h);
@@ -79,10 +88,13 @@ export function LiveCard({ code }: { code: string }) {
       </>}
     </div>
     {(state?.errorHistory?.length || state?.error) ? <div className="live-errors">
-      <div className="live-error-current" role="alert">{state?.errorHistory?.[0] ?? state?.error}</div>
+      <div className="live-error-current" role="alert">{state?.errorHistory?.[0] ? labelOf(state.errorHistory[0]) : state?.error}</div>
       {!!state?.errorHistory?.length && <details>
         <summary>最近错误 ({state.errorHistory.length})</summary>
-        <ol>{state.errorHistory.map((entry, index) => <li key={`${index}-${entry}`}>{entry}</li>)}</ol>
+        <ol>{state.errorHistory.map((entry, index) => <li key={`${entry.tick}-${index}`}>
+          <span className="live-error-label">{labelOf(entry)}</span>
+          {entry.error.stack && <pre className="live-error-stack">{entry.error.stack}</pre>}
+        </li>)}</ol>
       </details>}
     </div> : null}
     <CanvasCard code={canvasCode} data={data} />
