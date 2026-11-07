@@ -5,11 +5,14 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import com.jcraft.jsch.ChannelExec
-import com.jcraft.jsch.ChannelSftp
-import com.jcraft.jsch.Session
-import com.jcraft.jsch.SftpException
-import com.jcraft.jsch.SftpProgressMonitor
+import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.sftp.SFTPClient
+import net.schmizz.sshj.sftp.SFTPException
+import net.schmizz.sshj.sftp.Response
+import net.schmizz.sshj.sftp.FileMode
+import net.schmizz.sshj.xfer.TransferListener
+import net.schmizz.sshj.common.StreamCopier
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -46,7 +49,7 @@ object SshTransferRules {
     }
 }
 
-class SshProgress(private val total: Long, private val maxBytes: Long, private val onReport: (Int) -> Unit = {}, private val now: () -> Long = System::currentTimeMillis) : SftpProgressMonitor {
+class SshProgress(private val total: Long, private val maxBytes: Long, private val onReport: (Int) -> Unit = {}, private val now: () -> Long = System::currentTimeMillis) {
     private var done = 0L
     private var lastReported = 0L
     private var lastPercent = 0
@@ -55,8 +58,8 @@ class SshProgress(private val total: Long, private val maxBytes: Long, private v
     val lines = ArrayList<String>()
     var exceeded = false
         private set
-    override fun init(op: Int, src: String?, dest: String?, max: Long) = Unit
-    override fun count(count: Long): Boolean {
+    fun init(op: Int, src: String?, dest: String?, max: Long) = Unit
+    fun count(count: Long): Boolean {
         done += count
         if (done > maxBytes) { exceeded = true; return false }
         val percent = if (total > 0) ((done * 100 / total).coerceAtMost(100)).toInt() else 0
@@ -73,7 +76,7 @@ class SshProgress(private val total: Long, private val maxBytes: Long, private v
         }
         return true
     }
-    override fun end() = Unit
+    fun end() = Unit
 }
 
 class SshTransferTool(private val context: Context, override val name: String) : Tool {
@@ -118,19 +121,10 @@ class SshTransferTool(private val context: Context, override val name: String) :
                 val home = homeFor(session)
                 val remote = SshTransferRules.remotePath(args.strArg("remote_path") ?: if (name == "ssh_remote_ls") "~" else return@withContext "ERROR: 缺少 remote_path", home)
                 val sftp = live.sftpChannel.let { existing ->
-                    if (existing?.isConnected == true) existing else {
-                        existing?.disconnect()
+                    if (existing != null) existing else {
+                        runCatching { existing?.close() }
                         live.sftpChannel = null
-                        (session.openChannel("sftp") as ChannelSftp).also {
-                            try {
-                                it.setBulkRequests(128)
-                                it.connect(10_000)
-                                live.sftpChannel = it
-                            } catch (e: Exception) {
-                                it.disconnect()
-                                throw e
-                            }
-                        }
+                        session.newSFTPClient().also { live.sftpChannel = it }
                     }
                 }
                 try {
@@ -140,7 +134,7 @@ class SshTransferTool(private val context: Context, override val name: String) :
                         else -> list(sftp, remote)
                     }
                 } catch (e: Exception) {
-                    sftp.disconnect()
+                    sftp.close()
                     live.sftpChannel = null
                     throw e
                 }
@@ -151,21 +145,33 @@ class SshTransferTool(private val context: Context, override val name: String) :
         }
     }
 
-    private fun homeFor(session: Session): String = homes.getOrPut(session) {
-        val channel = session.openChannel("exec") as ChannelExec
-        try {
-            channel.setCommand("printf %s \"\$HOME\"")
-            val input = channel.inputStream
-            channel.connect(10_000)
-            val value = input.bufferedReader().use { it.readText().take(4096) }.trim()
-            require(value.startsWith('/')) { "无法获取远程 HOME" }
-            value
-        } finally { channel.disconnect() }
+    private fun homeFor(session: SSHClient): String = homes.getOrPut(session) {
+        session.startSession().use { channel ->
+            channel.exec("printf %s \"\$HOME\"").use { command ->
+                val value = command.inputStream.bufferedReader().use { it.readText().take(4096) }.trim()
+                command.join()
+                require(value.startsWith('/')) { "无法获取远程 HOME" }
+                value
+            }
+        }
     }
 
-    private fun download(sftp: ChannelSftp, remote: String, args: JsonObject): String {
+    private fun track(sftp: SFTPClient, progress: SshProgress) {
+        sftp.fileTransfer.transferListener = object : TransferListener {
+            override fun directory(name: String): TransferListener = this
+            override fun file(name: String, size: Long): StreamCopier.Listener = object : StreamCopier.Listener {
+                var previous = 0L
+                override fun reportProgress(transferred: Long) {
+                    if (!progress.count(transferred - previous)) throw IOException("传输超过大小上限")
+                    previous = transferred
+                }
+            }
+        }
+    }
+
+    private fun download(sftp: SFTPClient, remote: String, args: JsonObject): String {
         val attrs = sftp.stat(remote)
-        if (attrs.isDir) return "ERROR: 不支持目录下载；可先用 ssh_exec 打包为 tar 文件"
+        if (attrs.type == FileMode.Type.DIRECTORY) return "ERROR: 不支持目录下载；可先用 ssh_exec 打包为 tar 文件"
         val max = SshTransferRules.maxMb(args.intArg("max_mb")).toLong() * 1_048_576
         if (attrs.size > max) return "ERROR: 文件 ${attrs.size} 字节超过 ${max / 1_048_576}MB 上限"
         val name = SshTransferRules.safeName(args.strArg("filename") ?: remote.substringAfterLast('/'))
@@ -176,7 +182,8 @@ class SshTransferTool(private val context: Context, override val name: String) :
         })
         val temp = File.createTempFile("ssh-", ".part", context.cacheDir)
         try {
-            BufferedOutputStream(temp.outputStream(), 131_072).use { output -> sftp.get(remote, output, progress) }
+            track(sftp, progress)
+            sftp.get(remote, temp.absolutePath)
             if (progress.exceeded) return "ERROR: 下载超过大小上限"
             val saved = if (dir == "app_private") {
                 val root = File(context.filesDir, "ssh_downloads").apply { mkdirs() }
@@ -225,7 +232,7 @@ class SshTransferTool(private val context: Context, override val name: String) :
         }
     }
 
-    private fun upload(sftp: ChannelSftp, remote: String, args: JsonObject): String {
+    private fun upload(sftp: SFTPClient, remote: String, args: JsonObject): String {
         val path = args.strArg("local_path") ?: return "ERROR: 缺少 local_path"
         val file = File(path).canonicalFile
         // 只允许上传下载产物，禁止把凭据等任意 app 私有文件传出设备。
@@ -237,8 +244,8 @@ class SshTransferTool(private val context: Context, override val name: String) :
         if (file.length() > max) return "ERROR: 文件 ${file.length()} 字节超过 ${max / 1_048_576}MB 上限（可用 max_mb 调整，最高 4096）"
         val overwriteConfirmed = args.boolArg("overwrite") == true && args.boolArg("confirm") == true
         if (!overwriteConfirmed) {
-            val exists = try { sftp.stat(remote); true } catch (e: SftpException) {
-                if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) false else throw e
+            val exists = try { sftp.stat(remote); true } catch (e: SFTPException) {
+                if (e.statusCode == Response.StatusCode.NO_SUCH_FILE) false else throw e
             }
             if (exists) {
                 return "CONFIRM_REQUIRED: 远程目标已存在，覆盖将替换原文件。请向用户说明风险；确认后传 overwrite=true、confirm=true。"
@@ -247,11 +254,12 @@ class SshTransferTool(private val context: Context, override val name: String) :
             val tmp = "$remote.andagent-tmp-${java.util.UUID.randomUUID().toString().take(8)}"
             val progress = SshProgress(file.length(), max)
             try {
-                BufferedInputStream(file.inputStream(), 131_072).use { sftp.put(it, tmp, progress, ChannelSftp.OVERWRITE) }
+                track(sftp, progress)
+                sftp.put(file.absolutePath, tmp)
                 if (progress.exceeded) return "ERROR: 上传超过大小上限"
                 try {
                     sftp.rename(tmp, remote)
-                } catch (e: SftpException) {
+                } catch (e: SFTPException) {
                     return "CONFIRM_REQUIRED: 远程目标在传输期间被创建（${e.message ?: "rename 失败"}）。覆盖需 overwrite=true、confirm=true。"
                 }
             } finally {
@@ -260,21 +268,22 @@ class SshTransferTool(private val context: Context, override val name: String) :
             return "uploadedPath=$remote\nbytes=${file.length()}\n" + progress.lines.joinToString("\n")
         }
         val progress = SshProgress(file.length(), max)
-        BufferedInputStream(file.inputStream(), 131_072).use { sftp.put(it, remote, progress, ChannelSftp.OVERWRITE) }
+        track(sftp, progress)
+        sftp.put(file.absolutePath, remote)
         if (progress.exceeded) return "ERROR: 上传超过大小上限"
         return "uploadedPath=$remote\nbytes=${file.length()}\n" + progress.lines.joinToString("\n")
     }
 
-    private fun list(sftp: ChannelSftp, remote: String): String {
-        val entries = sftp.ls(remote).filter { it.filename != "." && it.filename != ".." }
+    private fun list(sftp: SFTPClient, remote: String): String {
+        val entries = sftp.ls(remote).filter { it.name != "." && it.name != ".." }
         return buildString {
             appendLine("remotePath=$remote count=${entries.size.coerceAtMost(500)}${if (entries.size > 500) " truncated=true" else ""}")
-            entries.take(500).forEach { e -> appendLine("${e.filename}\tsize=${e.attrs.size}\tmtime=${e.attrs.mTime}\tpermissions=${e.attrs.permissionsString}") }
+            entries.take(500).forEach { e -> appendLine("${e.name}\tsize=${e.attributes.size}\tmtime=${e.attributes.mtime}\tpermissions=${e.attributes.mode.toString()}") }
         }.trimEnd()
     }
 
     companion object {
-        private val homes = ConcurrentHashMap<Session, String>()
-        fun forgetHome(session: Session) { homes.remove(session) }
+        private val homes = ConcurrentHashMap<SSHClient, String>()
+        fun forgetHome(session: SSHClient) { homes.remove(session) }
     }
 }

@@ -59,8 +59,8 @@ android {
         applicationId = "com.dc.andagent"
         minSdk = 26
         targetSdk = 28
-        versionCode = 55
-        versionName = "0.28.19"
+        versionCode = 56
+        versionName = "0.28.20"
     }
 
     buildFeatures {
@@ -94,6 +94,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    packaging {
+        resources {
+            excludes += "META-INF/versions/*/OSGI-INF/MANIFEST.MF"
+        }
+    }
 }
 
 dependencies {
@@ -123,9 +128,7 @@ dependencies {
     implementation(files("libs/quickjs-wrapper-android-3.2.0.jar"))
     implementation("wang.harlon.quickjs:wrapper-java:3.2.0")
 
-    // R91: SSH remote ops. mwiede/jsch is the maintained fork of the discontinued
-    // com.jcraft:jsch (same com.jcraft.jsch API), BSD-style license, pure Java.
-    implementation("com.github.mwiede:jsch:0.2.17")
+    implementation("com.hierynomus:sshj:0.41.2")
 
     // R35: pure-Java QR encode/decode (ZXing core, Apache-2.0, vendored jar).
     // Chosen over ML Kit barcode scanning: no GMS, no Play Services model

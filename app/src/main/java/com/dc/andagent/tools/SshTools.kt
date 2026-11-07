@@ -1,11 +1,16 @@
 package com.dc.andagent.tools
 
 import android.content.Context
-import com.jcraft.jsch.ChannelExec
-import com.jcraft.jsch.JSch
-import com.jcraft.jsch.ChannelSftp
-import com.jcraft.jsch.JSchException
-import com.jcraft.jsch.Session
+import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.common.Buffer
+import net.schmizz.sshj.common.KeyType
+import net.schmizz.sshj.sftp.SFTPClient
+import net.schmizz.sshj.transport.verification.HostKeyVerifier
+import net.schmizz.sshj.userauth.keyprovider.KeyFormat
+import net.schmizz.sshj.userauth.keyprovider.KeyProviderUtil
+import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile
+import net.schmizz.sshj.userauth.keyprovider.PKCS8KeyFile
+import com.hierynomus.sshj.userauth.keyprovider.OpenSSHKeyV1KeyFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -13,7 +18,12 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.security.PublicKey
+import java.io.StringReader
 import java.util.Base64
+import java.util.concurrent.TimeUnit
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 val SSH_TOOLS = listOf("ssh_connect", "ssh_exec", "ssh_list", "ssh_close")
 
@@ -21,9 +31,9 @@ val SSH_TOOLS = listOf("ssh_connect", "ssh_exec", "ssh_list", "ssh_close")
 val SSH_CREDENTIAL_TOOLS = listOf("credential_list", "credential_delete")
 
 /**
- * R91: SSH 远程运维（JSch，方案 B）。
+ * R98: SSH 远程运维（sshj）。
  *
- * 会话池跨工具调用存活：ssh_connect 建连后把 JSch [Session] 放进
+ * 会话池跨工具调用存活：ssh_connect 建连后把 sshj [SSHClient] 放进
  * [SshSessionPool]，ssh_exec 按 session_id（或 nickname）取用。known_hosts
  * 存在应用私有目录，采用 TOFU（首次使用即信任）：首次连接只探测并返回
  * SHA256 指纹，用户确认后写入 known_hosts；之后 StrictHostKeyChecking=yes，
@@ -134,27 +144,26 @@ class SshTool(
         if (SshSessionPool.size() >= MAX_SESSIONS) return@withContext "ERROR: 活跃会话已达上限 $MAX_SESSIONS，请先 ssh_close 释放"
 
         val keyId = knownHostId(host, port)
-        val knownKeys = readKnownHosts()
-        val remembered = knownKeys[keyId]
+        val remembered = SshHostKeys.hasHost(knownHostsFile(), host, port)
         val confirm = args.boolArg("confirm") == true
-        // pending 指纹由 consumePendingFingerprintIfMatches 原子核对+消费，避免并发串扰。
-        if (remembered == null) {
-            val probe = try {
-                openSession(host, port, user, auth, secret, keyPath, strict = false, probe = true)
-            } catch (e: Exception) {
-                return@withContext connectError(e)
-            }
-            val hostKey = probe.hostKey ?: run {
-                probe.disconnect()
-                return@withContext "ERROR: 服务器未提供主机密钥"
-            }
-            val keyType = hostKey.type
-            // JSch 0.2.x 的 HostKey.getKey() 返回 base64 文本，指纹按解码后的公钥 blob 计算。
-            val keyBase64 = hostKey.key
-            val fingerprint = fingerprintOf(keyBase64)
-            probe.disconnect()
-
-            // TOFU: unknown host → probe, show fingerprint, do not keep a session.
+        if (!remembered) {
+            var probedKey: PublicKey? = null
+            val probe = SSHClient()
+            probe.connectTimeout = 10_000
+            probe.timeout = 10_000
+            probe.addHostKeyVerifier(object : HostKeyVerifier {
+                override fun verify(hostname: String, port: Int, key: PublicKey): Boolean {
+                    probedKey = key
+                    return true
+                }
+                override fun findExistingAlgorithms(hostname: String, port: Int): List<String> = emptyList()
+            })
+            try { probe.connect(host, port) }
+            catch (e: Exception) { runCatching { probe.disconnect() }; return@withContext connectError(e) }
+            finally { runCatching { probe.disconnect() } }
+            val hostKey = probedKey ?: return@withContext "ERROR: 服务器未提供主机密钥"
+            val keyType = SshHostKeys.type(hostKey)
+            val fingerprint = SshHostKeys.fingerprint(hostKey)
             if (!confirm) {
                 SshSessionPool.setPendingFingerprint(keyId, fingerprint)
                 return@withContext buildString {
@@ -167,17 +176,22 @@ class SshTool(
             if (!SshSessionPool.consumePendingFingerprintIfMatches(keyId, fingerprint)) {
                 return@withContext "ERROR: 本次探测到的指纹与确认提示不一致（可能中间人攻击或服务端刚刚更换密钥），已拒绝连接。请重新发起 ssh_connect 获取新指纹。"
             }
-            appendKnownHost(keyId, keyType, keyBase64)
+            appendKnownHost(keyId, keyType, SshHostKeys.base64(hostKey))
         }
 
+        var acceptedKey: PublicKey? = null
         val session = try {
-            openSession(host, port, user, auth, secret, keyPath, strict = true)
+            openSession(host, port, user, auth, secret, keyPath) { hostname, remotePort, key ->
+                val accepted = SshHostKeys.verify(knownHostsFile(), hostname, remotePort, key)
+                if (accepted) acceptedKey = key
+                accepted
+            }
         } catch (e: Exception) {
-            return@withContext connectError(e, knownHost = remembered != null)
+            return@withContext connectError(e, knownHost = true)
         }
-        val hostKey = session.hostKey
-        val fingerprint = hostKey?.key?.let(::fingerprintOf) ?: "(未知)"
-        val keyType = hostKey?.type ?: "(未知)"
+        val hostKey = acceptedKey
+        val fingerprint = hostKey?.let(SshHostKeys::fingerprint) ?: "(未知)"
+        val keyType = hostKey?.let(SshHostKeys::type) ?: "(未知)"
         val info = try {
             SshSessionPool.registry.add(host, port, user, nickname)
         } catch (e: IllegalArgumentException) {
@@ -235,56 +249,26 @@ class SshTool(
     }
 
     private fun openSession(
-        host: String,
-        port: Int,
-        user: String,
-        auth: String,
-        secret: String,
-        keyPath: String,
-        strict: Boolean,
-        probe: Boolean = false,
-    ): Session {
-        val jsch = JSch()
-        val knownHosts = knownHostsFile()
-        if (knownHosts.isFile && knownHosts.length() > 0) jsch.setKnownHosts(knownHosts.absolutePath)
-        if (auth == "key" && !probe) {
-            if (keyPath.isNotEmpty()) {
-                val key = File(keyPath)
-                if (!key.isFile || !key.canRead()) throw IllegalArgumentException("私钥文件不存在或不可读：$keyPath")
-                if (key.length() > MAX_KEY_BYTES) throw IllegalArgumentException("私钥文件异常大（>1MB）：$keyPath")
-                jsch.addIdentity(key.absolutePath, null as ByteArray?)
-            } else {
-                if (secret.isEmpty()) throw IllegalArgumentException("缺少私钥内容")
-                if (secret.toByteArray(Charsets.UTF_8).size > MAX_KEY_BYTES) throw IllegalArgumentException("私钥内容异常大（>1MB）")
-                // 内存中的私钥直接交给 JSch，不落盘、不打印。
-                jsch.addIdentity("andagent-credential", secret.toByteArray(Charsets.UTF_8), null, null)
-            }
-        }
-        val session = jsch.getSession(user, host, port)
-        if (auth == "password" && !probe) {
-            if (secret.isEmpty()) throw IllegalArgumentException("缺少密码")
-            session.setPassword(secret)
-        }
-        // 探测阶段只做密钥交换：使用一次性假口令/无身份，绝不把真实凭据发给尚未信任的主机。
-        if (probe && auth == "password") session.setPassword("andagent-tofu-probe-" + System.nanoTime())
-        session.setConfig("StrictHostKeyChecking", if (strict) "yes" else "no")
-        session.setConfig(
-            "PreferredAuthentications",
-            if (auth == "key") "publickey" else "password,keyboard-interactive",
-        )
-        session.setConfig("ConnectTimeout", "10000")
-        session.setConfig("ServerAliveInterval", "15000")
-        session.setConfig("ServerAliveCountMax", "3")
-        session.setConfig("compression.s2c", "zlib@openssh.com,zlib,none")
-        session.setConfig("compression.c2s", "zlib@openssh.com,zlib,none")
+        host: String, port: Int, user: String, auth: String, secret: String, keyPath: String,
+        verifier: (String, Int, PublicKey) -> Boolean,
+    ): SSHClient {
+        val client = SSHClient()
+        client.connectTimeout = 10_000
+        client.timeout = 10_000
+        client.addHostKeyVerifier(object : HostKeyVerifier {
+            override fun verify(hostname: String, port: Int, key: PublicKey) = verifier(hostname, port, key)
+            override fun findExistingAlgorithms(hostname: String, port: Int): List<String> =
+                SshHostKeys.algorithms(knownHostsFile(), hostname, port)
+        })
         try {
-            session.connect(10_000)
-        } catch (e: JSchException) {
-            // 探测时认证必然失败；主机密钥在认证前已完成交换，可继续读取 fingerprint。
-            val authOnly = probe && e.message.orEmpty().contains("auth", ignoreCase = true)
-            if (!authOnly) throw e
+            client.connect(host, port)
+            SshAuthenticator.authenticate(client, user, auth, secret, keyPath, MAX_KEY_BYTES)
+            client.connection.keepAlive.keepAliveInterval = 15
+            return client
+        } catch (e: Exception) {
+            runCatching { client.disconnect() }
+            throw e
         }
-        return session
     }
 
     private fun connectError(e: Exception, knownHost: Boolean = false): String {
@@ -295,7 +279,7 @@ class SshTool(
                 "ERROR: SSH 认证失败，请检查用户名、密码或私钥。"
             lower.contains("unknownhostkey") || lower.contains("unknown host key") ->
                 "ERROR: 服务器提供的主机密钥类型不在 known_hosts 中（可能服务端更换了密钥算法）。如确认无误，请删除应用私有目录 ssh/known_hosts 中该主机的记录后重连。"
-            lower.contains("changed") || lower.contains("reject hostkey") || (knownHost && lower.contains("hostkey")) ->
+            lower.contains("changed") || lower.contains("reject hostkey") || (knownHost && (lower.contains("hostkey") || lower.contains("host key"))) ->
                 "ERROR: 主机密钥不匹配，可能遭受中间人攻击或服务器更换了密钥。已拒绝连接；请核对服务器指纹后再清理 known_hosts。"
             lower.contains("timeout") || lower.contains("timed out") ->
                 "ERROR: 连接超时（10 秒）。请检查网络、端口与防火墙。"
@@ -334,19 +318,18 @@ class SshTool(
                     SshSessionPool.removeByRef(ref)
                     return@withContext "ERROR: 会话已断开：$ref"
                 }
-                val channel = session.openChannel("exec") as ChannelExec
-                channel.setCommand(cmd)
-                channel.setInputStream(null)
-                channel.setOutputStream(out)
-                channel.setErrStream(err)
-                channel.connect(10_000)
-                val deadline = System.currentTimeMillis() + timeoutS * 1000L
-                while (!channel.isClosed && System.currentTimeMillis() < deadline) {
-                    Thread.sleep(50)
+                session.startSession().use { channel ->
+                    channel.exec(cmd).use { command ->
+                        val stdout = Thread { command.inputStream.use { it.copyTo(out) } }
+                        val stderr = Thread { command.errorStream.use { it.copyTo(err) } }
+                        stdout.start(); stderr.start()
+                        command.join(timeoutS.toLong(), TimeUnit.SECONDS)
+                        timedOut = command.isOpen
+                        if (timedOut) command.close()
+                        stdout.join(1_000); stderr.join(1_000)
+                        exit = if (timedOut) -1 else command.exitStatus ?: -1
+                    }
                 }
-                timedOut = !channel.isClosed
-                exit = if (timedOut) -1 else channel.exitStatus
-                channel.disconnect()
             }
         } catch (e: Exception) {
             if (!session.isConnected) SshSessionPool.removeByRef(ref)
@@ -396,39 +379,19 @@ class SshTool(
 
     private fun knownHostsFile(): File = File(File(appContext.filesDir, "ssh"), "known_hosts")
 
-    /** JSch known_hosts 的主机字段：非 22 端口写成 [host]:port。 */
+    /** OpenSSH known_hosts 的主机字段：非 22 端口写成 [host]:port。 */
     private fun knownHostId(host: String, port: Int): String = if (port == 22) host else "[$host]:$port"
-
-    private fun readKnownHosts(): Map<String, String> {
-        val file = knownHostsFile()
-        if (!file.isFile) return emptyMap()
-        return file.readLines()
-            .asSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") }
-            .mapNotNull { line ->
-                val parts = line.split(Regex("\\s+"), limit = 3)
-                if (parts.size >= 2) parts[0] to parts[1] else null
-            }
-            .toMap()
-    }
 
     private fun appendKnownHost(keyId: String, type: String, keyBase64: String) {
         val file = knownHostsFile()
         file.parentFile?.mkdirs()
-        // 同一主机重复行会让 JSch 取旧值，先清掉旧记录再写。
+        // 同一主机重复行会保留旧值，先清掉旧记录再写。
         val kept = if (file.isFile) {
             file.readLines().filter { it.isNotBlank() && it.split(Regex("\\s+")).firstOrNull() != keyId }
         } else {
             emptyList()
         }
         file.writeText((kept + "$keyId $type $keyBase64").joinToString("\n", postfix = "\n"))
-    }
-
-    private fun fingerprintOf(base64Key: String): String {
-        val blob = runCatching { Base64.getDecoder().decode(base64Key) }.getOrElse { base64Key.toByteArray() }
-        val digest = MessageDigest.getInstance("SHA-256").digest(blob)
-        return "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(digest)
     }
 
     companion object {
@@ -444,6 +407,74 @@ class SshTool(
     }
 }
 
+/** Authenticates only after the host key has been verified. */
+internal object SshAuthenticator {
+    fun authenticate(client: SSHClient, user: String, auth: String, secret: String, keyPath: String, maxKeyBytes: Long) {
+        if (auth == "password") {
+            client.authPassword(user, secret)
+            return
+        }
+        val key = if (keyPath.isNotEmpty()) {
+            val file = File(keyPath)
+            require(file.isFile && file.canRead()) { "私钥文件不存在或不可读：$keyPath" }
+            require(file.length() <= maxKeyBytes) { "私钥文件异常大（>1MB）：$keyPath" }
+            client.loadKeys(file.absolutePath)
+        } else {
+            require(secret.isNotEmpty()) { "缺少私钥内容" }
+            require(secret.toByteArray(Charsets.UTF_8).size <= maxKeyBytes) { "私钥内容异常大（>1MB）" }
+            val format = KeyProviderUtil.detectKeyFileFormat(StringReader(secret), false)
+            val provider = when (format) {
+                KeyFormat.OpenSSHv1 -> OpenSSHKeyV1KeyFile()
+                KeyFormat.OpenSSH -> OpenSSHKeyFile()
+                KeyFormat.PKCS8 -> PKCS8KeyFile()
+                else -> throw IllegalArgumentException("不支持的私钥格式：$format")
+            }
+            provider.init(StringReader(secret))
+            provider
+        }
+        client.authPublickey(user, key)
+    }
+}
+
+/** OpenSSH known_hosts key encoding and exact host/key verification. */
+internal object SshHostKeys {
+    fun type(key: PublicKey): String = KeyType.fromKey(key).toString()
+    fun blob(key: PublicKey): ByteArray = Buffer.PlainBuffer().putPublicKey(key).compactData
+    fun base64(key: PublicKey): String = Base64.getEncoder().encodeToString(blob(key))
+    fun fingerprint(key: PublicKey): String = "SHA256:" + Base64.getEncoder().withoutPadding()
+        .encodeToString(MessageDigest.getInstance("SHA-256").digest(blob(key)))
+
+    private fun hostId(host: String, port: Int) = if (port == 22) host else "[$host]:$port"
+    private fun entries(file: File): List<List<String>> = if (file.isFile) file.readLines().mapNotNull { line ->
+        val fields = line.trim().split(Regex("\\s+"))
+        fields.takeIf { it.size >= 3 && !it[0].startsWith('#') && !it[0].startsWith('@') }
+    } else emptyList()
+
+    private fun matches(pattern: String, id: String): Boolean = pattern.split(',').any { item ->
+        if (item == id) return@any true
+        if (!item.startsWith("|1|")) return@any false
+        val parts = item.split('|')
+        if (parts.size != 4) return@any false
+        runCatching {
+            val salt = Base64.getDecoder().decode(parts[2])
+            val mac = Mac.getInstance("HmacSHA1")
+            mac.init(SecretKeySpec(salt, "HmacSHA1"))
+            MessageDigest.isEqual(mac.doFinal(id.toByteArray(Charsets.UTF_8)), Base64.getDecoder().decode(parts[3]))
+        }.getOrDefault(false)
+    }
+
+    fun hasHost(file: File, host: String, port: Int): Boolean = entries(file).any { matches(it[0], hostId(host, port)) }
+
+    fun algorithms(file: File, host: String, port: Int): List<String> = entries(file)
+        .filter { matches(it[0], hostId(host, port)) }.map { it[1] }
+
+    fun verify(file: File, host: String, port: Int, key: PublicKey): Boolean {
+        val id = hostId(host, port)
+        val expected = base64(key)
+        return entries(file).any { matches(it[0], id) && it[1] == type(key) && it[2] == expected }
+    }
+}
+
 /* ------------------------------- pool -------------------------------- */
 
 data class SshSessionInfo(
@@ -455,7 +486,7 @@ data class SshSessionInfo(
     val startedAt: Long,
 )
 
-/** 会话元数据（纯 Kotlin，可脱离 JSch 单测）。 */
+/** 会话元数据（纯 Kotlin，可脱离 sshj 单测）。 */
 class SshSessionRegistry(private val clock: () -> Long = System::currentTimeMillis) {
     private val entries = LinkedHashMap<String, SshSessionInfo>()
     private val random = SecureRandom()
@@ -496,12 +527,12 @@ class SshSessionRegistry(private val clock: () -> Long = System::currentTimeMill
 }
 
 /**
- * 跨工具调用存活的 SSH 会话池。JSch [Session] 与元数据分开存放，
+ * 跨工具调用存活的 SSH 会话池。sshj [SSHClient] 与元数据分开存放，
  * 断开时同时清理两者；外部掉线的会话在 list/exec 时惰性剔除。
  */
 object SshSessionPool {
-    data class Live(val session: Session) {
-        var sftpChannel: ChannelSftp? = null
+    data class Live(val session: SSHClient) {
+        var sftpChannel: SFTPClient? = null
     }
 
     val registry = SshSessionRegistry()
@@ -527,7 +558,7 @@ object SshSessionPool {
         val removed = live.remove(id)
         removed?.let {
             synchronized(it.session) {
-                it.sftpChannel?.disconnect()
+                runCatching { it.sftpChannel?.close() }
                 it.sftpChannel = null
                 SshTransferTool.forgetHome(it.session)
             }
@@ -569,7 +600,7 @@ object SshSessionPool {
         pending.remove(keyId)
     }
 
-    /** 剔除 JSch 已判定断开的会话，返回剩余数量。 */
+    /** 剔除 sshj 已判定断开的会话，返回剩余数量。 */
     @Synchronized fun pruneDisconnected(): Int {
         val dead = live.filterValues { !it.session.isConnected }.keys.toList()
         dead.forEach { id -> remove(id)?.session?.disconnect() }
