@@ -18,6 +18,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
+import org.json.JSONObject
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -859,13 +860,25 @@ class MainActivity : ComponentActivity() {
         handleDeeplink(intent)
     }
 
-    /** andagent://send?prompt=...&auto=1, plus widget refresh / credentials links (#14, R91.5). */
+    /** andagent://send?prompt=...&auto=1, plus widget refresh / credentials / session links (#14, R91.5, R97). */
     private fun handleDeeplink(intent: Intent?) {
         val data = intent?.data ?: return
         if (!data.scheme.equals("andagent", true)) return
         // R91.5: andagent://credentials 直接打开原生凭据界面（不携带任何凭据内容）。
         if (data.host.equals("credentials", true)) {
             startActivity(Intent(this, SshCredentialActivity::class.java))
+            return
+        }
+        // R97: andagent://session/<id>——SSH 通知点击回到对应会话。切会话由 web 侧
+        // 消费（复用 Drawer onSwitch 同一链路），这里只负责把 id 广播进 WebView。
+        if (data.host.equals("session", true)) {
+            val id = data.pathSegments.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
+            runOnUiThread {
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('andagent:session-switch',{detail:${JSONObject.quote(id)}}));null",
+                    null,
+                )
+            }
             return
         }
         if (::bridge.isInitialized) bridge.queueDeeplink(data)

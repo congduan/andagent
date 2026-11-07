@@ -598,11 +598,20 @@ export default function App() {
     };
     const drain = () => consumeDeeplink().forEach(handle);
     window.addEventListener("andagent:deeplink-flush", drain);
+    // R97 fixup: SSH 通知点击 → MainActivity 广播 andagent:session-switch → 切会话。
+    const switchByEvent = (event: Event) => {
+      const id = String((event as CustomEvent<string>).detail ?? "");
+      if (!id) return;
+      engine.switchSession(id);
+      setDrawerOpen(false);
+    };
+    window.addEventListener("andagent:session-switch", switchByEvent);
     // Links received before the JS bundle mounted are queued by MainActivity.
     const timer = window.setTimeout(drain, 250);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("andagent:deeplink-flush", drain);
+      window.removeEventListener("andagent:session-switch", switchByEvent);
     };
   }, [engine]);
 

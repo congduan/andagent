@@ -507,6 +507,9 @@ object SshSessionPool {
     val registry = SshSessionRegistry()
     private val live = LinkedHashMap<String, Live>()
     private val pending = HashMap<String, String>()
+
+    /** 最近活跃的 SSH 会话 id（通知点击 deeplink 用）；无活跃会话返回 null。 */
+    fun presenceLatest(): String? = presence.latest
     private var appContext: Context? = null
     private val presence = SshSessionPresence()
 
@@ -577,8 +580,10 @@ object SshSessionPool {
 /** Pure transition logic for the foreground service's reference count. */
 class SshSessionPresence {
     private val ids = HashSet<String>()
-    fun put(id: String): Boolean { val wasEmpty = ids.isEmpty(); ids.add(id); return wasEmpty && ids.isNotEmpty() }
-    fun remove(id: String): Boolean { val existed = ids.remove(id); return existed && ids.isEmpty() }
+    @Volatile var latest: String? = null
+        private set
+    fun put(id: String): Boolean { val wasEmpty = ids.isEmpty(); ids.add(id); latest = id; return wasEmpty && ids.isNotEmpty() }
+    fun remove(id: String): Boolean { val existed = ids.remove(id); if (existed && latest == id) latest = ids.firstOrNull(); return existed && ids.isEmpty() }
     fun size(): Int = ids.size
 }
 

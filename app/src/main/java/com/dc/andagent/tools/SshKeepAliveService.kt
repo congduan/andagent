@@ -79,7 +79,12 @@ class SshKeepAliveService : Service() {
                 .setSmallIcon(android.R.drawable.stat_sys_download)
                 .setContentTitle("SSH 会话运行中")
                 .setContentText(if (file == null) "保持网络连接，点击返回 AndAgent" else "正在下载 $file")
-                .setContentIntent(PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java),
+                // R97 fixup: deeplink 回到当前 SSH 会话所在对话；singleTop 防止
+                // 点击通知新建 MainActivity 实例叠栈（用户报「没有返回指定对话」）。
+                .setContentIntent(PendingIntent.getActivity(context, 0,
+                    Intent(Intent.ACTION_VIEW, Uri.parse("andagent://session/${SshSessionPool.presenceLatest()}")).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    },
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                 .setOngoing(true)
                 .apply { if (percent != null) setProgress(100, percent, false) }
