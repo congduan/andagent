@@ -322,13 +322,19 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // R98: sshj 依赖 BC 的 X25519/Curve25519 KeyAgreement，Android 内置 provider
-        // 没有——必须在首次 SSH 连接前注册 BouncyCastleProvider。insert 在系统
-        // provider 之前但不移除系统项；重复调用由 insertProviderAt 幂等返回 1/失败处理。
+        // 没有——必须在首次 SSH 连接前注册完整 BouncyCastleProvider。注意 Android
+        // 系统已注册了精简版同名 "BC" provider，直接 insertProviderAt 会因重名静默
+        // 返回 -1（review 必修项①），所以先 removeProvider 再 insert，并校验注册
+        // 结果与目标算法真正可用。
         runCatching {
-            if (java.security.Security.getProvider("BC") == null ||
-                java.security.Security.getProvider("BC")?.get("KeyAgreement.X25519") == null) {
-                java.security.Security.insertProviderAt(
+            if (java.security.Security.getProvider("BC")?.get("KeyAgreement.X25519") == null) {
+                java.security.Security.removeProvider("BC")
+                val inserted = java.security.Security.insertProviderAt(
                     org.bouncycastle.jce.provider.BouncyCastleProvider(), 2)
+                if (inserted <= 0 ||
+                    java.security.Security.getProvider("BC")?.get("KeyAgreement.X25519") == null) {
+                    android.util.Log.w("AndAgent", "BouncyCastle BC provider registration failed (inserted=$inserted); SSH X25519 key exchange may not work")
+                }
             }
         }
         FilePickResultBridge.launcher = filePickLaunchCallback

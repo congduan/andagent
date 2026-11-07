@@ -85,12 +85,20 @@ class SshTool(
         injectedCredentials ?: SshCredentialStore(appContext)
     }
 
-    override suspend fun execute(args: JsonObject): String = when (name) {
-        "ssh_connect" -> connect(args)
-        "ssh_exec" -> exec(args)
-        "ssh_list" -> list()
-        "ssh_close" -> close(args)
-        else -> "ERROR: 未知 SSH 工具"
+    override suspend fun execute(args: JsonObject): String = try {
+        when (name) {
+            "ssh_connect" -> connect(args)
+            "ssh_exec" -> exec(args)
+            "ssh_list" -> list()
+            "ssh_close" -> close(args)
+            else -> "ERROR: 未知 SSH 工具"
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // never-crash 纪律（review 必修项②）：凭据读取、known_hosts IO、指纹编码
+        // 等任何异常都不允许逃逸出工具边界，统一收敛为 ERROR 返回。
+        "ERROR: ${e.message ?: e.javaClass.simpleName}"
     }
 
     /* ----------------------------- connect ----------------------------- */
@@ -312,10 +320,11 @@ class SshTool(
         val err = CappedOutputStream(STDERR_LIMIT)
         var exit = -1
         var timedOut = false
+        var deadSession = false
         try {
             synchronized(session) {
                 if (!session.isConnected) {
-                    SshSessionPool.removeByRef(ref)
+                    deadSession = true
                     return@withContext "ERROR: 会话已断开：$ref"
                 }
                 session.startSession().use { channel ->
@@ -332,13 +341,24 @@ class SshTool(
                 }
             }
         } catch (e: Exception) {
-            if (!session.isConnected) SshSessionPool.removeByRef(ref)
-            return@withContext "ERROR: 命令执行失败：${e.message ?: e.javaClass.simpleName}"
+            if (!session.isConnected) deadSession = true
+            if (!deadSession) return@withContext "ERROR: 命令执行失败：${e.message ?: e.javaClass.simpleName}"
         }
-        buildString {
+        // 锁序纪律（review 必修项③）：removeByRef 会拿池锁再等 session 锁，
+        // 绝不能在持有 session 锁时调用——此处已退出 synchronized 块才清理。
+        if (deadSession) SshSessionPool.removeByRef(ref)
+        // exec 正常结束（无 exit_code 且未超时——如通道被服务端提前关闭）也返回
+        // 已捕获的输出，而不是落到 withContext lambda 的 Unit。
+        return@withContext if (exit != -1 || timedOut) buildString {
             appendLine("exit_code=$exit")
             if (timedOut) appendLine("timeout=true（超过 ${timeoutS}s，已强制断开通道）")
             if (danger != null) appendLine("confirmed=$danger")
+            appendLine("--- stdout ---")
+            appendLine(SshCommandGuard.clipUtf8(out.toByteArray(), STDOUT_LIMIT, out.total))
+            append("--- stderr ---\n")
+            append(SshCommandGuard.clipUtf8(err.toByteArray(), STDERR_LIMIT, err.total))
+        } else buildString {
+            appendLine("exit_code=-1（通道在返回退出码前关闭）")
             appendLine("--- stdout ---")
             appendLine(SshCommandGuard.clipUtf8(out.toByteArray(), STDOUT_LIMIT, out.total))
             append("--- stderr ---\n")

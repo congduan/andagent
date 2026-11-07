@@ -495,6 +495,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
       <dl className="settings-rows">
         <div className="settings-row"><dt>{t("version")}</dt><dd>{getAppVersion()}</dd></div>
         <div className="settings-row"><dt>{t("built")}</dt><dd>{aboutBuildTime()}</dd></div>
+        <div className="settings-row"><dt>{t("gitCommit")}</dt><dd><code>{__GIT_COMMIT__}</code></dd></div>
         <div className="settings-row"><dt>{t("license")}</dt><dd>Apache-2.0</dd></div>
       </dl>
     ))}
