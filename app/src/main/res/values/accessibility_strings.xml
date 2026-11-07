@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_label">AndAgent automation</string>
+    <string name="accessibility_service_description">Read the active window\'s controls to tap, long-press, scroll, type text, and perform back/home/recents. AndAgent reads the screen only while a tool is running and does not store screen content.</string>
+</resources>

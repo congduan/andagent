@@ -154,6 +154,20 @@
         </service>
         <service android:name=".events.EventMonitorService" android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+        <!-- R71: 无障碍控件自动化。系统通过 BIND_ACCESSIBILITY_SERVICE 绑定；用户须在
+             系统设置 → 无障碍中手动开启。服务只读取当前窗口，不持久化屏幕内容。 -->
+        <service
+            android:name=".tools.AndagentAccessibilityService"
+            android:exported="true"
+            android:label="@string/accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
         <service android:name=".events.EventNotificationListener"
             android:label="AndAgent 系统事件监听"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"

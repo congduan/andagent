@@ -71,6 +71,7 @@ import com.dc.andagent.tools.SHORTCUT_TOOLS
 import com.dc.andagent.tools.ShortcutTool
 import com.dc.andagent.tools.TILE_TOOLS
 import com.dc.andagent.tools.TileTool
+import com.dc.andagent.tools.AccessibilityTool
 import com.dc.andagent.tools.DbGuiTool
 import com.dc.andagent.tools.TermuxTool
 import com.dc.andagent.tools.SSH_TOOLS
@@ -509,6 +510,18 @@ class MainActivity : ComponentActivity() {
         tools.putAll(SHORTCUT_TOOLS.associateWith { ShortcutTool(appContext, it) })
         // R77: quick-settings tile config tools.
         tools.putAll(TILE_TOOLS.associateWith { TileTool(appContext, it) })
+        // R71: accessibility-service control automation (no Shizuku needed).
+        tools.putAll(
+            listOf(
+                "a11y_status",
+                "a11y_screen",
+                "a11y_click",
+                "a11y_long_click",
+                "a11y_scroll",
+                "a11y_text",
+                "a11y_action",
+            ).associateWith { AccessibilityTool(appContext, it) },
+        )
         tools.putAll(IR_TOOLS.associateWith { IrTool(appContext, it) })
         tools.putAll(com.dc.andagent.events.EVENT_TOOLS.associateWith { com.dc.andagent.events.EventTool(appContext, it) })
         tools.putAll(com.dc.andagent.pods.PODS_TOOLS.associateWith { com.dc.andagent.pods.PodsTool(appContext, permissionBroker, it) })

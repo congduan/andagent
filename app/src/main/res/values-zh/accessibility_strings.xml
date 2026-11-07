@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_label">AndAgent 自动化</string>
+    <string name="accessibility_service_description">读取当前屏幕控件以实现点击、长按、滚动、输入文本以及返回/桌面/最近任务。仅在调用工具时读取当前窗口，不保存屏幕内容。</string>
+</resources>

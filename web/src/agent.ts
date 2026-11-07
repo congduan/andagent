@@ -191,6 +191,13 @@ const TOOL_DEFS = [
   { name: "input_tap", description: "经 Shizuku 模拟屏幕点击。", parameters: { type: "object", properties: { x: { type: "integer", description: "横坐标" }, y: { type: "integer", description: "纵坐标" } }, required: ["x", "y"] } },
   { name: "input_swipe", description: "经 Shizuku 模拟屏幕滑动。", parameters: { type: "object", properties: { x1: { type: "integer", description: "起点 X" }, y1: { type: "integer", description: "起点 Y" }, x2: { type: "integer", description: "终点 X" }, y2: { type: "integer", description: "终点 Y" }, ms: { type: "integer", description: "时长毫秒" } }, required: ["x1", "y1", "x2", "y2"] } },
   { name: "input_text", description: "经 Shizuku 向当前焦点输入框输入文本。", parameters: { type: "object", properties: { s: { type: "string", description: "输入内容" } }, required: ["s"] } },
+  { name: "a11y_status", description: "查询无障碍服务状态：是否已启用/已连接、当前前台包名与窗口、可用能力；未启用时返回开启路径。只读。", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "a11y_screen", description: "读取当前前台窗口的无障碍节点树（viewId/text/contentDescription/class/bounds/可点击性），默认最多 80 节点、单条文本 200 字符；密码框内容不输出。只读；使用前先把目标应用切到前台。", parameters: { type: "object", properties: { max_nodes: { type: "integer", description: "最多返回节点数，默认 80，范围 1-400" } }, required: [] } },
+  { name: "a11y_click", description: "按 view_id/text/content_description 查找控件并点击（匹配到不可点击节点时自动向上找可点击父节点）；找不到时返回候选控件。", parameters: { type: "object", properties: { view_id: { type: "string", description: "资源 id，如 com.app:id/login，或只写 login / :id/login 后缀匹配" }, text: { type: "string", description: "控件文本" }, content_description: { type: "string", description: "控件内容描述" }, match: { type: "string", enum: ["contains", "exact"], description: "text/content_description 匹配方式，默认 contains" }, index: { type: "integer", description: "同一选择器匹配到多个控件时的序号，从 0 开始，默认 0" } }, required: [] } },
+  { name: "a11y_long_click", description: "按 view_id/text/content_description 查找控件并长按（自动向上找可长按/可点击父节点）；找不到时返回候选控件。", parameters: { type: "object", properties: { view_id: { type: "string", description: "资源 id，完整或后缀" }, text: { type: "string", description: "控件文本" }, content_description: { type: "string", description: "控件内容描述" }, match: { type: "string", enum: ["contains", "exact"], description: "匹配方式，默认 contains" }, index: { type: "integer", description: "匹配序号，默认 0" } }, required: [] } },
+  { name: "a11y_scroll", description: "滚动当前窗口的可滚动控件：direction=forward/backward，可用选择器指定列表容器；省略则滚动第一个可滚动节点。", parameters: { type: "object", properties: { direction: { type: "string", enum: ["forward", "backward"], description: "滚动方向，默认 forward" }, view_id: { type: "string", description: "可选：可滚动控件 id" }, text: { type: "string", description: "可选：可滚动控件文本" }, content_description: { type: "string", description: "可选：可滚动控件描述" }, match: { type: "string", enum: ["contains", "exact"], description: "匹配方式，默认 contains" } }, required: [] } },
+  { name: "a11y_text", description: "向输入框写入文本（先 ACTION_FOCUS 再 ACTION_SET_TEXT）；可用 view_id/content_description 指定输入框，省略则写当前焦点输入框。text 可为空字符串以清空。", parameters: { type: "object", properties: { text: { type: "string", description: "要写入的文本，最长 10000 字符；空字符串表示清空" }, view_id: { type: "string", description: "可选：输入框资源 id" }, content_description: { type: "string", description: "可选：输入框内容描述" }, match: { type: "string", enum: ["contains", "exact"], description: "匹配方式，默认 contains" } }, required: ["text"] } },
+  { name: "a11y_action", description: "执行全局无障碍动作：back（返回）/ home（桌面）/ recents（最近任务）。", parameters: { type: "object", properties: { action: { type: "string", enum: ["back", "home", "recents"], description: "全局动作" } }, required: ["action"] } },
   {
     name: "clipboard_write",
     description: "把文本写入系统剪贴板，方便用户粘贴到其他应用。",
@@ -720,6 +727,20 @@ const NETWORK_GUIDE_EN = [
   "http_request returns JSON with status/ok/url/headers/body/truncated/elapsedMs. Bound long bodies with max_chars; on non-2xx inspect status and the body prefix before deciding whether to retry, and do not blindly repeat the same request.",
 ].join("\n");
 
+const A11Y_GUIDE = [
+  "无障碍控件自动化（无需 Shizuku）：先用 a11y_status 查看服务是否启用；未启用时引导用户到 系统设置 → 无障碍 → AndAgent 开启（Android 13+ 若提示受限设置，先在应用信息页允许受限设置），也可调用 open_settings(panel=accessibility) 跳转。",
+  "操作目标应用前先把它切到前台，再调用 a11y_screen 读取控件树（默认 80 节点，含 viewId/text/contentDescription/class/bounds）。a11y_screen 只读，密码框内容不会返回；页面太大时用 max_nodes 限制，不要反复全量读屏。",
+  "优先用控件选择器而不是坐标：a11y_click / a11y_long_click 支持 view_id（完整名或 :id/xxx 后缀）、text、content_description，match=contains（默认）/exact；匹配到不可点击节点会自动向上找可点击父节点，找不到会列出候选控件。",
+  "滚动用 a11y_scroll（direction=forward/backward，可用选择器指定列表容器）；输入文本用 a11y_text（先 focus 再 setText，省略选择器则写当前焦点输入框）；返回/桌面/最近任务用 a11y_action。点击、长按、输入、全局动作会走现有确认闸。",
+].join("\n");
+
+const A11Y_GUIDE_EN = [
+  "Accessibility control automation (no Shizuku): check a11y_status first. When disabled, guide the user to Settings → Accessibility → AndAgent (on Android 13+, if restricted settings are mentioned, allow them from the app info page first), or call open_settings with panel=accessibility.",
+  "Bring the target app to the foreground before a11y_screen, which returns the control tree (80 nodes by default with viewId/text/contentDescription/class/bounds). a11y_screen is read-only and never returns password fields; bound large screens with max_nodes and do not repeatedly dump the whole screen.",
+  "Prefer selectors over coordinates: a11y_click / a11y_long_click accept view_id (full name or :id/xxx suffix), text and content_description, with match=contains (default)/exact. If the matched node is not clickable, the clickable ancestor is used; when nothing matches, candidates are listed.",
+  "Use a11y_scroll for scrolling (direction=forward/backward, optional selector for the list container), a11y_text to type (focus then setText; focused editor when no selector), and a11y_action for back/home/recents. Click, long-click, text and global actions go through the normal confirmation gate.",
+].join("\n");
+
 const SSH_TRANSFER_GUIDE = [
   "SSH 文件传输：用户要服务器文件时，先用 ssh_remote_ls 查看远程目录，再用 ssh_download 下载单文件；返回 savedPath 后可交给 file_read 分析。目录可先用 ssh_exec 打包为 tar，再下载单文件。",
   "上传用 ssh_upload，先说明目标路径和覆盖风险。已存在的远程文件只有用户确认后才传 overwrite=true、confirm=true；默认不覆盖。local_path 只能是 Download/AndAgentSsh 或 app_private（ssh_downloads）里的文件，凭据等私有文件禁止上传。SSH 会话退后台由前台服务保活，断线后需用户重新连接。",
@@ -1198,6 +1219,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? LIVE_GUIDE_EN : LIVE_GUIDE,
               currentLanguage() === "en" ? HARDWARE_GUIDE_EN : HARDWARE_GUIDE,
               currentLanguage() === "en" ? NETWORK_GUIDE_EN : NETWORK_GUIDE,
+              currentLanguage() === "en" ? A11Y_GUIDE_EN : A11Y_GUIDE,
               currentLanguage() === "en" ? SSH_TRANSFER_GUIDE_EN : SSH_TRANSFER_GUIDE,
               currentLanguage() === "en" ? SHORTCUT_GUIDE_EN : SHORTCUT_GUIDE,
               currentLanguage() === "en" ? STORAGE_MEDIA_GUIDE_EN : STORAGE_MEDIA_GUIDE,
