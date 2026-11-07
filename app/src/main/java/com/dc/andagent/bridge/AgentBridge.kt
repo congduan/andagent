@@ -91,6 +91,12 @@ class AgentBridge(
     private val sshCredentialEditOpen: (String) -> String = { "ERROR: SSH 凭据界面不可用" },
     private val sshCredentialListJson: () -> String = { "[]" },
     private val sshCredentialRemove: (String) -> String = { "ERROR: SSH 凭据存储不可用" },
+    // R102: 外部非私有存储镜像——换签名重装后据此恢复数据。
+    private val externalStateStatusJson: () -> String = { "{\"enabled\":false,\"path\":\"\",\"writable\":false}" },
+    private val externalStateSync: () -> String = { "ERROR: 外部备份不可用" },
+    private val externalStateRestore: () -> String = { "ERROR: 外部备份不可用" },
+    private val externalStateSetEnabled: (Boolean) -> String = { "ERROR: 外部备份不可用" },
+    private val externalStateWriteConfig: () -> String = { "ERROR: 外部备份不可用" },
     // R20: 八域 UI 命令（Toast/震动/沉浸/方向/导航/分享/安全/输入法/状态）。
     private val uiCommands: UiCommands? = null,
 ) {
@@ -293,6 +299,41 @@ class AgentBridge(
         obj["ttsBaseUrl"]?.jsonPrimitive?.contentOrNull?.let { settings.ttsBaseUrl = it }
         obj["ttsModel"]?.jsonPrimitive?.contentOrNull?.let { settings.ttsModel = it }
         obj["ttsVoice"]?.jsonPrimitive?.contentOrNull?.let { settings.ttsVoice = it }
+    }
+
+    /* ------------------- R102 外部存储（换签名重装恢复） ------------------- */
+
+    /** {"enabled","degraded","path","writable","hasSnapshot","lastSyncAt",...} */
+    @JavascriptInterface
+    fun externalStateStatus(): String = runCatching { externalStateStatusJson() }.getOrElse {
+        buildJsonObject {
+            put("enabled", false)
+            put("path", "")
+            put("writable", false)
+            put("error", it.message ?: "外部备份状态读取失败")
+        }.toString()
+    }
+
+    /** 立即把白名单数据镜像到公共目录，返回单行结果。 */
+    @JavascriptInterface
+    fun externalStateSync(): String = runCatching { externalStateSync() }.getOrElse {
+        "ERROR: 备份失败：${it.message ?: it.javaClass.simpleName}"
+    }
+
+    /** 从外部快照恢复（会覆盖本机数据，调用方必须已确认）。 */
+    @JavascriptInterface
+    fun externalStateRestore(): String = runCatching { externalStateRestore() }.getOrElse {
+        "ERROR: 恢复失败：${it.message ?: it.javaClass.simpleName}"
+    }
+
+    @JavascriptInterface
+    fun externalStateSetEnabled(enabled: Boolean): String = runCatching { externalStateSetEnabled(enabled) }
+        .getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+
+    /** 把当前模型配置写成 Download/config.json（含 API Key，跨安装可用）。 */
+    @JavascriptInterface
+    fun externalStateWriteConfig(): String = runCatching { externalStateWriteConfig() }.getOrElse {
+        "ERROR: 写入配置失败：${it.message ?: it.javaClass.simpleName}"
     }
 
     @JavascriptInterface

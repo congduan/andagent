@@ -6,8 +6,10 @@ import {
   memoryCall, persistSettings, requestHealthPermission, requestProjectionConsent,
   setDevToolsEnabled, skillManage, stopProjection,
   sshCredentialDelete, sshCredentialEdit, sshCredentialsList, sshCredentialsOpen,
+  externalStateStatus, externalStateSync, externalStateRestore,
+  externalStateSetEnabled, externalStateWriteConfig, requestPermissions,
   defaultSystemPrompt, hasSavedSystemPrompt, isDefaultSystemPrompt,
-  type Settings, type SshCredentialMeta,
+  type ExternalStateStatus, type Settings, type SshCredentialMeta,
 } from "./bridge";
 import { SessionStore } from "./sessions";
 import noticesText from "../../THIRD-PARTY-NOTICES.md?raw";
@@ -37,7 +39,7 @@ type Props = {
 
 export type SettingsPage =
   | "home" | "model" | "prompt" | "appearance" | "memory" | "automation"
-  | "ssh" | "skills" | "extensions" | "data" | "about";
+  | "ssh" | "skills" | "extensions" | "storage" | "data" | "about";
 
 type ShizukuStatus = ReturnType<typeof getShizukuStatus>;
 type ProjectionStatus = ReturnType<typeof getProjectionStatus>;
@@ -80,6 +82,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
 
   const [creds, setCreds] = useState<SshCredentialMeta[]>([]);
   const [credsLoaded, setCredsLoaded] = useState(false);
+  const [external, setExternal] = useState<ExternalStateStatus>(() => externalStateStatus());
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   // R63: 子页按需惰性加载（进入页面才拉数据，替代旧版全量 useState 平铺）。
@@ -96,6 +99,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
       setMemoriesLoaded(true);
     }
     if (page === "data" && hasBridge()) { setShizuku(getShizukuStatus()); setTermuxStatus(getTermuxStatus()); setProjection(getProjectionStatus()); setDevtools(hasBridge() ? getDevToolsStatus() : null); }
+    if (page === "storage") setExternal(externalStateStatus());
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
   }, [page]);
 
@@ -214,6 +218,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     { key: "automation", icon: "⏱️", tint: "#f59e0b", title: t("cron"), sub: t("cronNote"), badge: cronLoaded ? `${cronTasks.length}` : undefined, badgeTone: "count" },
     { key: "skills", icon: "🧩", tint: "#10b981", title: t("skills"), sub: `${t("install")} · ${t("enabled")} · ${t("search")}`, badge: skillsLoaded ? `${skills.length}` : undefined, badgeTone: "count" },
     { key: "ssh", icon: "🔑", tint: "#f43f5e", title: t("sshCredentials"), sub: t("sshCredentialsGroupSub"), badge: credsLoaded ? `${creds.length}` : undefined, badgeTone: "count" },
+    { key: "storage", icon: "💾", tint: "#14b8a6", title: t("storageGroup"), sub: external.degraded ? t("storageModeDegraded") : t("storageModePublic"), badge: external.hasSnapshot ? "✓" : undefined, badgeTone: external.hasSnapshot ? "ok" : "warn" },
     { key: "extensions", icon: "🧰", tint: "#0ea5e9", title: t("extensionsGroup"), sub: "Shizuku · Termux · DevTools" },
     { key: "data", icon: "📊", tint: "#06b6d4", title: t("dataGroup"), sub: `${t("health")} · ${t("projection")}` },
     { key: "about", icon: "ℹ️", tint: "#64748b", title: t("about"), sub: `${t("version")} ${getAppVersion()}` },
@@ -520,6 +525,88 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     </>)}
   </>);
 
+  // ===== 外部备份（R102：换签名重装后恢复数据）=====
+  const formatWhen = (ts: number) => (ts > 0 ? new Date(ts).toLocaleString() : t("storageNever"));
+  const formatSize = (bytes: number) => bytes >= 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    : bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
+  const refreshExternal = () => setExternal(externalStateStatus());
+
+  const storagePage = sub(t("storageGroup"), <>
+    <p className="settings-page-note">{t("storageNote")}</p>
+    {external.pendingRestore && hasBridge() && (
+      <div className="settings-alert">
+        <span>{t("storageFoundSnapshot")}</span>
+        <button type="button" className="btn-ghost btn-sm" onClick={async () => {
+          if (!(await appConfirm(t("storageRestoreConfirm")))) return;
+          showResult(externalStateRestore());
+          refreshExternal();
+        }}>{t("storageRestore")}</button>
+      </div>
+    )}
+    {(!external.permission || !external.writable) && hasBridge() && (
+      <div className="settings-alert">
+        <span>{t("storagePermissionNote")}</span>
+        <button type="button" className="btn-ghost btn-sm" onClick={async () => {
+          const granted = await requestPermissions(["android.permission.WRITE_EXTERNAL_STORAGE"]);
+          showResult(Object.values(granted).some(Boolean) ? externalStateSync() : "ERROR: 未授予存储权限");
+          refreshExternal();
+        }}>{t("storageGrantStorage")}</button>
+      </div>
+    )}
+    {section(t("storagePath"), <>
+      <dl className="settings-rows">
+        <div className="settings-row"><dt>{t("storagePath")}</dt><dd><code>{external.path || t("none")}</code></dd></div>
+        <div className="settings-row"><dt>{t("storageMode")}</dt>
+          <dd className={external.degraded ? "is-warn" : "is-ok"}>
+            {external.degraded ? t("storageModeDegraded") : t("storageModePublic")}
+          </dd>
+        </div>
+        <div className="settings-row"><dt>{t("storageLastSync")}</dt><dd>{formatWhen(external.lastSyncAt)}</dd></div>
+        <div className="settings-row"><dt>{t("storageSnapshot")}</dt><dd>{formatWhen(external.snapshotAt)}</dd></div>
+        <div className="settings-row"><dt>{t("storageFiles")}</dt><dd>{external.files}</dd></div>
+        <div className="settings-row"><dt>{t("storageSize")}</dt><dd>{formatSize(external.bytes)}</dd></div>
+      </dl>
+      {!!external.note && <p className="settings-card-note">{external.note}</p>}
+      {!external.hasSnapshot && <p className="settings-empty">{t("storageNoSnapshot")}</p>}
+    </>)}
+    {section(t("storageAuto"), <>
+      <div className="settings-card-actions">
+        <button type="button" className="btn-primary" disabled={!hasBridge()}
+          onClick={() => { showResult(externalStateSync()); refreshExternal(); }}>{t("storageSyncNow")}</button>
+        <button type="button" className="btn-ghost" disabled={!hasBridge() || !external.hasSnapshot}
+          onClick={async () => {
+            if (!(await appConfirm(t("storageRestoreConfirm")))) return;
+            showResult(externalStateRestore());
+            refreshExternal();
+          }}>{t("storageRestore")}</button>
+        <button type="button" className="btn-ghost" onClick={refreshExternal}>{t("refreshStatus")}</button>
+      </div>
+      <label className="settings-switch">
+        <input type="checkbox" checked={external.enabled} disabled={!hasBridge()}
+          onChange={(e) => { showResult(externalStateSetEnabled(e.target.checked)); refreshExternal(); }} />
+        <span>{t("storageAuto")}</span>
+      </label>
+      {!!external.excluded?.length && (
+        <details className="settings-details">
+          <summary>{t("storageExcluded")}</summary>
+          <ul>{external.excluded.map((item) => <li key={item}>{item}</li>)}</ul>
+        </details>
+      )}
+    </>)}
+    {section(t("storageConfigTitle"), <>
+      <p className="settings-card-note">{t("storageConfigNote")}</p>
+      <div className="settings-card-actions">
+        <button type="button" className="btn-ghost" disabled={!hasBridge()}
+          onClick={async () => {
+            if (!(await appConfirm(t("storageWriteConfigConfirm")))) return;
+            showResult(externalStateWriteConfig());
+            refreshExternal();
+          }}>{t("storageWriteConfig")}</button>
+      </div>
+    </>)}
+  </>);
+
   const dataPage = sub(t("dataGroup"), <>
     {section(t("projection"), <>
       <p className="settings-card-note">{t("projectionNote")}</p>
@@ -597,7 +684,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   const subPages: Record<SettingsPage, React.ReactNode> = {
     home: null, model: modelPage, prompt: promptPage, appearance: appearancePage, memory: memoryPage,
     automation: automationPage, skills: skillsPage, ssh: sshPage, extensions: extensionsPage,
-    data: dataPage, about: aboutPage,
+    storage: storagePage, data: dataPage, about: aboutPage,
   };
 
   return (

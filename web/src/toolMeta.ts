@@ -148,6 +148,12 @@ export const TOOL_META: Record<string, ToolMeta> = {
   vibrate_waveform: { label: "波形触感", labelEn: "Waveform haptics", icon: "📳", destructive: true },
   audio_record_ex: { label: "参数化录音", labelEn: "Parametric recording", icon: "🎤" },
   audio_route: { label: "音频路由", labelEn: "Audio route", icon: "🔊", destructive: true },
+  // R86: 蓝牙扩展刀（与 Kotlin destructive 对齐：ble_advertise / bt_audio_route）
+  ble_advertise: { label: "BLE 广播", labelEn: "BLE advertise", icon: "📡", destructive: true },
+  bt_audio_route: { label: "蓝牙音频路由", labelEn: "Bluetooth audio route", icon: "🎧", destructive: true },
+  bt_battery: { label: "蓝牙电量", labelEn: "Bluetooth battery", icon: "🔋" },
+  usb_list: { label: "USB 设备", labelEn: "USB devices", icon: "🔌" },
+  usb_midi: { label: "USB MIDI", labelEn: "USB MIDI", icon: "🎹" },
   steps_today: { label: "今日步数", labelEn: "Today’s steps", icon: "👟" },
   steps_history: { label: "步数历史", labelEn: "Step history", icon: "👟" },
 };

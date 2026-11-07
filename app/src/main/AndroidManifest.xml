@@ -22,6 +22,12 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- R86: 手机作 BLE 外设广播（Android 12+；targetSdk 28 由 BLUETOOTH_ADMIN 自动映射） -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <!-- R86: USB host 拓扑枚举与 USB MIDI（无硬件时工具如实报不支持） -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-feature android:name="android.software.midi" android:required="false" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <!-- Calendar (runtime) -->

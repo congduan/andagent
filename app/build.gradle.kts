@@ -80,6 +80,22 @@ android {
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
+    /**
+     * R102: 仓库内置的开发签名。默认的 debug.keystore 每台机器自动生成、指纹不同，
+     * 换机器打的包签名不一致，系统强制卸载才能装 —— 私有目录数据全丢。
+     * 这里固定一把钥匙给 debug 与 release 共用，口令同样是公开的开发口令，
+     * 不用于任何真实发布场景（正式发版请换成自己的 release keystore）。
+     */
+    signingConfigs {
+        create("dev") {
+            storeFile = file("keystore/andagent-dev.jks")
+            storePassword = "andagent-dev"
+            keyAlias = "andagent"
+            keyPassword = "andagent-dev"
+            storeType = "PKCS12"
+        }
+    }
+
     buildFeatures {
         buildConfig = true
     }
@@ -98,9 +114,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 固定签名：任何机器上构建出的 APK 都能覆盖安装同一台手机上的旧版本。
+            signingConfig = signingConfigs.getByName("dev")
+        }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("dev")
         }
     }
 

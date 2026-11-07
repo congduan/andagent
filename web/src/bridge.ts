@@ -171,6 +171,12 @@ interface AndroidBridge {
   sshCredentialEdit?(nickname: string): string;
   sshCredentialsList?(): string;
   sshCredentialDelete?(nickname: string): string;
+  /** R102: 外部非私有存储镜像——换签名重装后据此恢复数据。 */
+  externalStateStatus?(): string;
+  externalStateSync?(): string;
+  externalStateRestore?(): string;
+  externalStateSetEnabled?(enabled: boolean): string;
+  externalStateWriteConfig?(): string;
   saveSettings(json: string): void;
   getAppVersion(): string;
   /** 界面语言（"system" | "zh" | "en"）：工具结果与原生界面据此本地化。 */
@@ -295,6 +301,64 @@ export function sshCredentialsList(): SshCredentialMeta[] {
 
 export function sshCredentialDelete(nickname: string): string {
   try { return bridge()?.sshCredentialDelete?.(nickname) ?? "ERROR: SSH 凭据界面仅在 Android 应用内可用"; }
+  catch (e) { return `ERROR: ${String(e)}`; }
+}
+
+/* ------------------------------------------------------------------ */
+/* R102: 外部非私有存储镜像                                            */
+/* ------------------------------------------------------------------ */
+
+export interface ExternalStateStatus {
+  enabled: boolean;
+  /** true = 落在 Android/data 或应用私有目录，卸载会丢。 */
+  degraded: boolean;
+  path: string;
+  writable: boolean;
+  /** 是否已授予 legacy 存储权限（决定能否写 Download/）。 */
+  permission: boolean;
+  hasSnapshot: boolean;
+  /** 本机无数据但外部有快照——典型的换签名重装场景。 */
+  pendingRestore: boolean;
+  lastSyncAt: number;
+  snapshotAt: number;
+  files: number;
+  bytes: number;
+  note?: string;
+  excluded?: string[];
+  error?: string;
+}
+
+const EMPTY_EXTERNAL_STATUS: ExternalStateStatus = {
+  enabled: false, degraded: true, path: "", writable: false, permission: false,
+  hasSnapshot: false, pendingRestore: false, lastSyncAt: 0, snapshotAt: 0, files: 0, bytes: 0,
+};
+
+export function externalStateStatus(): ExternalStateStatus {
+  const b = bridge();
+  if (!b?.externalStateStatus) return EMPTY_EXTERNAL_STATUS;
+  try {
+    const parsed = JSON.parse(b.externalStateStatus()) as Partial<ExternalStateStatus>;
+    return { ...EMPTY_EXTERNAL_STATUS, ...parsed };
+  } catch { return EMPTY_EXTERNAL_STATUS; }
+}
+
+export function externalStateSync(): string {
+  try { return bridge()?.externalStateSync?.() ?? "ERROR: 外部备份仅在 Android 应用内可用"; }
+  catch (e) { return `ERROR: ${String(e)}`; }
+}
+
+export function externalStateRestore(): string {
+  try { return bridge()?.externalStateRestore?.() ?? "ERROR: 外部备份仅在 Android 应用内可用"; }
+  catch (e) { return `ERROR: ${String(e)}`; }
+}
+
+export function externalStateSetEnabled(enabled: boolean): string {
+  try { return bridge()?.externalStateSetEnabled?.(enabled) ?? "ERROR: 外部备份仅在 Android 应用内可用"; }
+  catch (e) { return `ERROR: ${String(e)}`; }
+}
+
+export function externalStateWriteConfig(): string {
+  try { return bridge()?.externalStateWriteConfig?.() ?? "ERROR: 外部备份仅在 Android 应用内可用"; }
   catch (e) { return `ERROR: ${String(e)}`; }
 }
 

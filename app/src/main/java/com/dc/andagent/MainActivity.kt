@@ -184,6 +184,8 @@ import com.dc.andagent.tools.R35Tool
 import com.dc.andagent.tools.R35_TOOLS
 import com.dc.andagent.tools.HardwareStatusTool
 import com.dc.andagent.tools.HARDWARE_STATUS_TOOLS
+import com.dc.andagent.tools.BtUsbExtTool
+import com.dc.andagent.tools.BT_USB_EXT_TOOLS
 import com.dc.andagent.tools.AndroidReflectTool
 import com.dc.andagent.tools.RestrictedReflectExecutor
 import com.dc.andagent.tools.ApiToolFactory
@@ -217,6 +219,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var liveQuickJsEngine: QuickJsEngine
     private lateinit var liveLoopRunner: LiveLoopRunner
     private lateinit var liveOverlayHost: LiveOverlayHost
+    /** R102: 外部非私有存储镜像（换签名重装后恢复数据）。 */
+    private var externalState: com.dc.andagent.state.ExternalStateStore? = null
     private val scriptToolExecutor = java.util.concurrent.Executors.newFixedThreadPool(2)
 
     private val healthPermissionResult = AtomicReference<Set<String>?>(null)
@@ -347,6 +351,10 @@ class MainActivity : ComponentActivity() {
 
         val settingsStore = SettingsStore(this)
         val appContext = applicationContext
+        // R102: 外部镜像在 Activity 就绪后立刻补一次，保证卸载前已有最新快照。
+        val externalStateStore = com.dc.andagent.state.ExternalStateStore(appContext, settingsStore)
+        externalState = externalStateStore
+        externalStateStore.autoSync(force = true)
         permissionBroker = PermissionBroker(this, permissionLauncher)
         shizuku = ShizukuShell(appContext).also { it.init() }
 
@@ -558,6 +566,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(R35_TOOLS.associateWith { R35Tool(appContext, permissionBroker, shizuku, it) })
         // R84: 传感器与机身状态（高频/批量采样、心率、运动触发、热状态、电池电气量、波形触感、参数化录音、音频路由）。
         tools.putAll(HARDWARE_STATUS_TOOLS.associateWith { HardwareStatusTool(appContext, permissionBroker, it) })
+        // R86: 蓝牙扩展刀（BLE 外设广播、A2DP 媒体路由、标准 GATT 电量、USB 拓扑、USB MIDI）。
+        tools.putAll(BT_USB_EXT_TOOLS.associateWith { BtUsbExtTool(appContext, permissionBroker, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.
         tools["android_reflect"] = AndroidReflectTool(RestrictedReflectExecutor(appContext))
         tools.putAll(com.dc.andagent.memory.MEMORY_TOOLS.associateWith { com.dc.andagent.memory.MemoryTool(memoryStore, it) })
@@ -618,6 +628,12 @@ class MainActivity : ComponentActivity() {
                     else "已删除 SSH 凭据「$nickname」"
                 }.getOrElse { "ERROR: 删除失败：${it.message ?: it.javaClass.simpleName}" }
             },
+            // R102: 外部非私有存储镜像——换签名重装后从这里恢复。
+            externalStateStatusJson = { externalStateStore.statusJson() },
+            externalStateSync = { externalStateStore.syncNow() },
+            externalStateRestore = { externalStateStore.restoreNow() },
+            externalStateSetEnabled = { enabled -> externalStateStore.setEnabled(enabled) },
+            externalStateWriteConfig = { externalStateStore.writeConfigJson() },
             uiCommands = UiCommands(this) { if (::webView.isInitialized) webView else null },
             themeChange = { dark -> runOnUiThread { applyUiTheme(dark) } },
             systemThemeProvider = { if (systemPrefersDark()) "dark" else "light" },
@@ -894,7 +910,12 @@ class MainActivity : ComponentActivity() {
     private fun themeBackgroundColor(): Int =
         Color.parseColor(if (isDarkThemeStored()) "#0b0d11" else "#f5f7fa")
 
-    override fun onPause() { if (::nfcSession.isInitialized) nfcSession.onPause(); super.onPause() }
+    override fun onPause() {
+        if (::nfcSession.isInitialized) nfcSession.onPause()
+        // R102: 退到后台就镜像一次——卸载前已经落盘，不依赖卸载时机。
+        externalState?.autoSync(force = true)
+        super.onPause()
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -1058,6 +1079,9 @@ class MainActivity : ComponentActivity() {
         if (::liveOverlayHost.isInitialized) liveOverlayHost.close()
         com.dc.andagent.shell.DevToolsClient.shutdown()
         if (::quickJsEngine.isInitialized) { WidgetToolRuntime.detach(quickJsEngine); quickJsEngine.shutdown() }
+        // R102: 最后一次镜像。shutdown() 允许已提交的任务跑完，不会截断写入。
+        externalState?.autoSync(force = true)
+        externalState?.shutdown()
         scriptToolExecutor.shutdownNow()
         if (::shizuku.isInitialized) shizuku.shutdown()
         runCatching { safeTopScript?.remove() }
