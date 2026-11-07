@@ -321,32 +321,51 @@ class SshTool(
         var exit = -1
         var timedOut = false
         var deadSession = false
+        var failure: String? = null
         try {
             synchronized(session) {
                 if (!session.isConnected) {
                     deadSession = true
-                    return@withContext "ERROR: 会话已断开：$ref"
-                }
-                session.startSession().use { channel ->
-                    channel.exec(cmd).use { command ->
-                        val stdout = Thread { command.inputStream.use { it.copyTo(out) } }
-                        val stderr = Thread { command.errorStream.use { it.copyTo(err) } }
-                        stdout.start(); stderr.start()
-                        command.join(timeoutS.toLong(), TimeUnit.SECONDS)
-                        timedOut = command.isOpen
-                        if (timedOut) command.close()
-                        stdout.join(1_000); stderr.join(1_000)
-                        exit = if (timedOut) -1 else command.exitStatus ?: -1
+                } else {
+                    session.startSession().use { channel ->
+                        channel.exec(cmd).use { command ->
+                            val stdout = Thread { command.inputStream.use { it.copyTo(out) } }
+                            val stderr = Thread { command.errorStream.use { it.copyTo(err) } }
+                            stdout.start(); stderr.start()
+                            command.join(timeoutS.toLong(), TimeUnit.SECONDS)
+                            timedOut = command.isOpen
+                            if (timedOut) command.close()
+                            stdout.join(1_000); stderr.join(1_000)
+                            exit = if (timedOut) -1 else command.exitStatus ?: -1
+                        }
                     }
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
+            // 失败原因必须保留：执行异常不能伪装成「通道提前关闭」的正常输出。
+            failure = e.message ?: e.javaClass.simpleName
             if (!session.isConnected) deadSession = true
-            if (!deadSession) return@withContext "ERROR: 命令执行失败：${e.message ?: e.javaClass.simpleName}"
         }
-        // 锁序纪律（review 必修项③）：removeByRef 会拿池锁再等 session 锁，
-        // 绝不能在持有 session 锁时调用——此处已退出 synchronized 块才清理。
+        // 锁序纪律：removeByRef 拿池锁再等 session 锁，绝不能在持有 session 锁时
+        // 调用——断会话早退与异常路径都已退出 synchronized 块，在此统一清理。
         if (deadSession) SshSessionPool.removeByRef(ref)
+        if (deadSession && exit == -1 && !timedOut && failure != null) {
+            return@withContext "ERROR: 会话已断开（$ref）：命令执行失败：$failure"
+        }
+        if (deadSession && exit == -1 && !timedOut) {
+            return@withContext "ERROR: 会话已断开：$ref"
+        }
+        if (failure != null && exit == -1 && !timedOut) {
+            return@withContext buildString {
+                appendLine("ERROR: 命令执行失败：$failure（已捕获的部分输出如下）")
+                appendLine("--- stdout ---")
+                appendLine(SshCommandGuard.clipUtf8(out.toByteArray(), STDOUT_LIMIT, out.total))
+                append("--- stderr ---\n")
+                append(SshCommandGuard.clipUtf8(err.toByteArray(), STDERR_LIMIT, err.total))
+            }
+        }
         // exec 正常结束（无 exit_code 且未超时——如通道被服务端提前关闭）也返回
         // 已捕获的输出，而不是落到 withContext lambda 的 Unit。
         return@withContext if (exit != -1 || timedOut) buildString {

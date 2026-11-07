@@ -9,11 +9,19 @@ plugins {
  * The bundles are no longer committed, so this task fails loudly instead of
  * packaging a stale/missing WebView payload.
  */
+// 关于页 git commit 编译期注入：Gradle 打包时把实际 HEAD 传给 Vite（否则 Vite
+// 自己 rev-parse 出的是构建时 HEAD，APK 内资产可能滞后于发布提交）。
+val webGitCommit = providers.exec {
+    commandLine("git", "rev-parse", "--short", "HEAD")
+    ignoreExitValue = true
+}.standardOutput.asText.orNull?.trim().takeUnless { it.isNullOrEmpty() } ?: "unknown"
+
 val buildWeb by tasks.registering(Exec::class) {
     group = "build"
     description = "Build the assistant-ui WebView bundle with npm + Vite"
     workingDir = rootProject.file("web")
     environment("NODE_OPTIONS", "--max-old-space-size=4096")
+    environment("ANDAGENT_GIT_COMMIT", webGitCommit)
     commandLine(
         "bash", "-c",
         """

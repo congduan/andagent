@@ -4,6 +4,10 @@ import react from "@vitejs/plugin-react";
 
 // git commit 号编译期注入（关于页展示）；非 git 环境回退 unknown。
 function gitShortHead(): string {
+  // ANDAGENT_GIT_COMMIT 由 Gradle buildWeb 注入（打包 HEAD 与发布提交一致）；
+  // 手动 `npm run build` 时回退本地 rev-parse；非 git 环境回退 unknown。
+  const injected = process.env.ANDAGENT_GIT_COMMIT;
+  if (injected && injected !== "unknown") return injected;
   try {
     return execSync("git rev-parse --short HEAD", { cwd: __dirname, stdio: ["ignore", "pipe", "ignore"] })
       .toString()
