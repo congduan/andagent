@@ -1,6 +1,7 @@
 package com.dc.andagent.adb
 
 import java.io.File
+import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.security.KeyFactory
 import java.security.KeyPair
@@ -9,8 +10,10 @@ import java.security.PrivateKey
 import java.security.PublicKey
 import java.security.SecureRandom
 import java.security.Signature
+import java.security.interfaces.RSAPublicKey
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
+import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -83,6 +86,55 @@ object AdbAuth {
                 verify(sig)
             }
         }.getOrDefault(false)
+
+    /**
+     * R100 ②：AUTH(RSAPUBLICKEY=3) 的 data = base64(android_pubkey 524B) + " user@host" + NUL。
+     *
+     * android_pubkey 结构（全小端 u32 字，对齐 AOSP android_pubkey.c / libcrypto_utils）：
+     *   u32   modulus_size_words = 64（2048-bit）
+     *   u32   n0inv = -n^{-1} mod 2^32
+     *   u8[256] modulus（n 的小端字节）
+     *   u8[256] rr = R^2 mod n，R = 2^2048（即 2^4096 mod n）
+     *   u32   exponent = 65537
+     *
+     * 首次连接签名失败后发此包，目标手机弹「允许 USB/无线调试」授权框；用户允许后
+     * 该公钥被 adbd 记住，重新握手走 SIGNATURE=2 即成功（见 AdbClient.handshake）。
+     */
+    fun encodePublicKey(publicKey: PublicKey): ByteArray {
+        val rsa = publicKey as? RSAPublicKey ?: error("ADB 公钥必须是 RSA")
+        val n = rsa.modulus
+        val e = rsa.publicExponent
+        val words = 64
+        require(n.bitLength() <= words * 32) { "RSA modulus 超过 2048 位" }
+        val two32 = BigInteger.ONE.shiftLeft(32)
+        val n0inv = two32.subtract(n.mod(two32).modInverse(two32)).mod(two32)
+        val rr = BigInteger.ONE.shiftLeft(64 * words).mod(n)
+
+        val out = ByteArray(4 + 4 + 256 + 256 + 4)
+        putU32LE(out, 0, words.toLong())
+        putU32LE(out, 4, n0inv.toLong())
+        putLE256(out, 8, n)
+        putLE256(out, 8 + 256, rr)
+        putU32LE(out, 8 + 512, e.toLong())
+        val b64 = Base64.getEncoder().encodeToString(out)
+        return "$b64 andagent@andagent\u0000".toByteArray(Charsets.UTF_8)
+    }
+
+    private fun putU32LE(b: ByteArray, off: Int, v: Long) {
+        b[off] = v.toByte()
+        b[off + 1] = (v ushr 8).toByte()
+        b[off + 2] = (v ushr 16).toByte()
+        b[off + 3] = (v ushr 24).toByte()
+    }
+
+    /** 把 BigInteger 写成 256 字节小端（低位在前），高位不足补 0。 */
+    private fun putLE256(b: ByteArray, off: Int, value: BigInteger) {
+        val be = value.toByteArray() // 大端，可能带 1 字节前导符号 0
+        for (i in 0 until 256) {
+            val idx = be.size - 1 - i
+            b[off + i] = if (idx >= 0) be[idx] else 0
+        }
+    }
 
     /**
      * 私钥 PKCS#8 DER + 公钥 X.509 DER 拼成私有容器后交给 wrapper 加密落盘。

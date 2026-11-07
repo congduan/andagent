@@ -6,8 +6,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.math.BigInteger
 import java.security.interfaces.RSAPrivateKey
 import java.security.interfaces.RSAPublicKey
+import java.util.Base64
 import javax.crypto.spec.SecretKeySpec
 
 /** R100 ①：RSA / SHA1withRSA / AES-GCM 落盘，纯 JVM，无 AndroidKeyStore。 */
@@ -82,5 +84,37 @@ class AdbAuthTest {
         } finally {
             file.delete()
         }
+    }
+
+    @Test
+    fun encodePublicKeyProducesAospAndroidPubkeyLayout() {
+        val kp = AdbAuth.generateKeyPair()
+        val rsa = kp.public as RSAPublicKey
+        val text = String(AdbAuth.encodePublicKey(kp.public), Charsets.UTF_8)
+        assertTrue("RSA PUBLICKEY data 以 NUL 结尾", text.endsWith("\u0000"))
+        val b64 = text.substringBefore(' ').trim()
+        val raw = Base64.getDecoder().decode(b64)
+        assertEquals("android_pubkey 固定 524 字节", 524, raw.size)
+
+        fun u32(off: Int): Long {
+            var v = 0L
+            for (i in 0 until 4) v = v or ((raw[off + i].toLong() and 0xff) shl (8 * i))
+            return v
+        }
+        assertEquals(64L, u32(0)) // modulus_size_words
+        val n = rsa.modulus
+        val two32 = BigInteger.ONE.shiftLeft(32)
+        val expectedN0inv = two32.subtract(n.mod(two32).modInverse(two32)).mod(two32)
+        assertEquals(expectedN0inv.toLong(), u32(4)) // n0inv
+
+        // modulus 小端 256 字节 → 还原大端 BigInteger
+        val le = raw.copyOfRange(8, 8 + 256)
+        val be = ByteArray(256) { le[255 - it] }
+        assertEquals(n, BigInteger(1, be))
+        // rr = 2^4096 mod n 小端 256 字节
+        val rrLe = raw.copyOfRange(8 + 256, 8 + 512)
+        val rrBe = ByteArray(256) { rrLe[255 - it] }
+        assertEquals(BigInteger.ONE.shiftLeft(4096).mod(n), BigInteger(1, rrBe))
+        assertEquals(rsa.publicExponent.toLong(), u32(8 + 512)) // exponent
     }
 }

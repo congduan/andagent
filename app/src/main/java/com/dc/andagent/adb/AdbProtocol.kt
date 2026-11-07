@@ -4,34 +4,38 @@ import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.zip.CRC32
 
 /**
- * R100 ①：ADB 传输协议帧编解码（纯 JVM/Kotlin，无 Android 依赖，mock 对端共享本实现）。
+ * R100 ②：ADB 传输协议帧编解码（纯 JVM/Kotlin，无 Android 依赖）。
  *
- * 帧头固定 24 字节，6 个 32 位字段全部按大端（网络字节序）写入：
- *   command(4) arg0(4) arg1(4) data_length(4) data_crc32(4) magic(4)
- *   magic = command xor 0xffffffff；data_crc32 = CRC32(data)。
+ * 帧头固定 24 字节，6 个 32 位字段全部按【小端】写入（真实 adbd 的线上字节序）：
+ *   command(4) arg0(4) arg1(4) data_length(4) data_check(4) magic(4)
+ *   magic = command xor 0xffffffff。
  *
- * 命令字取自简报：按大端 ASCII 拼写（"CNXN"=0x434e584e …），故大端写出时线上字节
- * 恰为可读 ASCII 标签。注：真实 adbd 帧头为小端，其命令字数值是本常量的字节序反转
- * （CNXN=0x4e584e43）。本轮为纯 mock 对端 PoC，双端共享编解码自洽即可；若第②/③轮
- * 对接真实 adbd/scrcpy，需把编解码整体改小端并同步换成小端命令字常量——详见战报。
+ * data_check 是 AOSP 定义的 payload 字节累加和（wrapping u32），不是 CRC32。
+ * 但协议版本 ≥ 0x01000001（我们 CNXN 通告的 A_VERSION_SKIP_CHECKSUM）时双方
+ * 都忽略该字段——对端发来的帧 data_check 会是 0。因此编码仍写累加和（兼容旧版），
+ * 解码遇到 data_check==0 时跳过校验；非 0 时按累加和校验（防篡改）。
+ *
+ * 命令字为小端数值：线上字节恰为可读 ASCII 标签，例如 0x4e584e43 小端写出即
+ * 43 4e 58 4e = "CNXN"。① 轮用大端 mock 自洽，本轮按 AOSP 改小端以对接真实 adbd。
  */
 
-// ---- 命令字（大端 ASCII 拼写）----
-const val A_CNXN = 0x434e584e
-const val A_AUTH = 0x41555448
-const val A_OPEN = 0x4f50454e
-const val A_OKAY = 0x4f4b4159
-const val A_WRTE = 0x57525445
-const val A_CLSE = 0x434c5345
+// ---- 命令字（小端数值；线上字节 = ASCII 标签）----
+const val A_CNXN = 0x4e584e43
+const val A_AUTH = 0x48545541
+const val A_OPEN = 0x4e45504f
+const val A_OKAY = 0x59414b4f
+const val A_WRTE = 0x45545257
+const val A_CLSE = 0x45534c43
+const val A_SYNC = 0x434e5953
 
 // ---- CNXN 参数 ----
+/** A_VERSION_SKIP_CHECKSUM：≥ 此版本双方忽略 data_check。 */
 const val A_VERSION = 0x01000001
 const val MAX_DATA = 4096
 
-// ---- AUTH arg0（真实 adbd：TOKEN=1 / SIGNATURE=2 / RSAPUBLICKEY=3）----
+// ---- AUTH arg0（AOSP：TOKEN=1 / SIGNATURE=2 / RSAPUBLICKEY=3）----
 const val ADB_AUTH_TOKEN = 1
 const val ADB_AUTH_SIGNATURE = 2
 const val ADB_AUTH_RSAPUBLICKEY = 3
@@ -51,17 +55,17 @@ class AdbProtocolException(message: String) : IOException(message)
 
 object AdbProtocol {
 
-    /** 编码为完整帧（24B 头 + data）。 */
+    /** 编码为完整帧（24B 头 + data），全小端。 */
     fun encode(msg: AdbMessage): ByteArray {
-        val crc = crc32(msg.data)
+        val check = dataCheckOf(msg.data)
         val magic = msg.command xor -1
         val out = ByteArray(HEADER_SIZE + msg.data.size)
-        putIntBE(out, 0, msg.command)
-        putIntBE(out, 4, msg.arg0)
-        putIntBE(out, 8, msg.arg1)
-        putIntBE(out, 12, msg.data.size)
-        putIntBE(out, 16, crc)
-        putIntBE(out, 20, magic)
+        putIntLE(out, 0, msg.command)
+        putIntLE(out, 4, msg.arg0)
+        putIntLE(out, 8, msg.arg1)
+        putIntLE(out, 12, msg.data.size)
+        putIntLE(out, 16, check)
+        putIntLE(out, 20, magic)
         msg.data.copyInto(out, HEADER_SIZE)
         return out
     }
@@ -72,8 +76,9 @@ object AdbProtocol {
     }
 
     /**
-     * 从流中读一帧：先读满 24B 头，校验 magic 与 data_length 上限，再按长度读 body，
-     * 最后校验 CRC32。干净 EOF（对端无任何字节地关闭）抛 EOFException。
+     * 从流中读一帧：先读满 24B 头，校验 magic 与 data_length 上限，再按长度读 body。
+     * data_check==0（≥0x01000001 对端忽略校验）时跳过校验，非 0 时按累加和校验。
+     * 干净 EOF（对端无任何字节地关闭）抛 EOFException。
      */
     fun readMessage(input: InputStream): AdbMessage {
         val header = ByteArray(HEADER_SIZE)
@@ -82,12 +87,12 @@ object AdbProtocol {
         header[0] = first.toByte()
         readExact(input, header, 1, HEADER_SIZE - 1)
 
-        val command = getIntBE(header, 0)
-        val arg0 = getIntBE(header, 4)
-        val arg1 = getIntBE(header, 8)
-        val dataLength = getUIntBE(header, 12)
-        val dataCrc32 = getIntBE(header, 16)
-        val magic = getIntBE(header, 20)
+        val command = getIntLE(header, 0)
+        val arg0 = getIntLE(header, 4)
+        val arg1 = getIntLE(header, 8)
+        val dataLength = getUIntLE(header, 12)
+        val dataCheck = getIntLE(header, 16)
+        val magic = getIntLE(header, 20)
 
         if (magic != (command xor -1)) {
             throw AdbProtocolException(
@@ -101,11 +106,14 @@ object AdbProtocol {
         val data = ByteArray(dataLength.toInt())
         readExact(input, data, 0, data.size)
 
-        val crc = crc32(data)
-        if (crc != dataCrc32) {
-            throw AdbProtocolException(
-                "crc32 mismatch: expected 0x${dataCrc32.toString(16)}, got 0x${crc.toString(16)}",
-            )
+        // 0 = 现代对端（版本 ≥0x01000001）忽略 data_check；否则按 AOSP 字节和校验。
+        if (dataCheck != 0) {
+            val check = dataCheckOf(data)
+            if (check != dataCheck) {
+                throw AdbProtocolException(
+                    "data_check mismatch: expected 0x${dataCheck.toString(16)}, got 0x${check.toString(16)}",
+                )
+            }
         }
         return AdbMessage(command, arg0, arg1, data)
     }
@@ -121,23 +129,27 @@ object AdbProtocol {
         }
     }
 
-    private fun crc32(data: ByteArray): Int =
-        CRC32().apply { update(data, 0, data.size) }.value.toInt()
-
-    private fun putIntBE(b: ByteArray, off: Int, v: Int) {
-        b[off] = (v ushr 24).toByte()
-        b[off + 1] = (v ushr 16).toByte()
-        b[off + 2] = (v ushr 8).toByte()
-        b[off + 3] = v.toByte()
+    /** AOSP data_check：payload 字节的无符号累加和（wrapping u32）。 */
+    private fun dataCheckOf(data: ByteArray): Int {
+        var sum = 0
+        for (b in data) sum += (b.toInt() and 0xff)
+        return sum
     }
 
-    private fun getIntBE(b: ByteArray, off: Int): Int =
-        ((b[off].toInt() and 0xff) shl 24) or
-            ((b[off + 1].toInt() and 0xff) shl 16) or
-            ((b[off + 2].toInt() and 0xff) shl 8) or
-            (b[off + 3].toInt() and 0xff)
+    private fun putIntLE(b: ByteArray, off: Int, v: Int) {
+        b[off] = v.toByte()
+        b[off + 1] = (v ushr 8).toByte()
+        b[off + 2] = (v ushr 16).toByte()
+        b[off + 3] = (v ushr 24).toByte()
+    }
+
+    private fun getIntLE(b: ByteArray, off: Int): Int =
+        (b[off].toInt() and 0xff) or
+            ((b[off + 1].toInt() and 0xff) shl 8) or
+            ((b[off + 2].toInt() and 0xff) shl 16) or
+            ((b[off + 3].toInt() and 0xff) shl 24)
 
     /** 无符号 32 位读取，避免 2^31~2^32 的长度被读成负数绕过上限。 */
-    private fun getUIntBE(b: ByteArray, off: Int): Long =
-        getIntBE(b, off).toLong() and 0xffffffffL
+    private fun getUIntLE(b: ByteArray, off: Int): Long =
+        getIntLE(b, off).toLong() and 0xffffffffL
 }
