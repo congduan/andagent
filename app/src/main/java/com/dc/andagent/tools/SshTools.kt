@@ -268,6 +268,15 @@ class SshTool(
         // （用户报腾讯云「基本都卡住」）。取 45s：正常传输单次 read 远小于此，
         // 真死锁 45s 内必然中止抛 SocketTimeoutException。
         client.timeout = 45_000
+        // sshj 三层超时各自独立：transport / connection / sftp engine。
+        // client.timeout 只传播到 transport；ConnectionImpl 在 SSHClient 构造时
+        // 拷贝 transport 的**当时值**且不联动——漏设时 Window.awaitExpansion 等
+        // channel window 等待用短默认值，输出量大的命令在慢网络报
+        // 「Timeout expired: 200」（Connection/SFTP 层默认秒级值）。
+        // 三层显式统一为 45s（连接前设置，connect 会再覆盖 transport 为同值）。
+        client.connection.setTimeoutMs(45_000)
+        // 压缩对广域网吞吐有额外收益（R97b 的 1MB 窗口 + zlib 组合）
+        client.useCompression()
         client.addHostKeyVerifier(object : HostKeyVerifier {
             override fun verify(hostname: String, port: Int, key: PublicKey) = verifier(hostname, port, key)
             override fun findExistingAlgorithms(hostname: String, port: Int): List<String> =
