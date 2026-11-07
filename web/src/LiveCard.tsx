@@ -5,7 +5,7 @@ import { CanvasCard } from "./CanvasCard";
 import { showError } from "./toast";
 
 type LiveSpec = { name: string; code: string; interval_ms?: number; render?: string; width?: number; height?: number };
-type LiveState = { id: string; name: string; state: string; ticks: number; failures: number; error?: string; results: unknown[] };
+type LiveState = { id: string; name: string; state: string; ticks: number; failures: number; error?: string; warning?: string; errorHistory?: string[]; results: unknown[] };
 
 const DEFAULT_RENDER = `
 ctx.fillStyle='#0b0d11';ctx.fillRect(0,0,w,h);
@@ -78,6 +78,13 @@ export function LiveCard({ code }: { code: string }) {
         <button type="button" disabled={busy} onClick={() => void action("live_stop", { id })}>{t("stopAction")}</button>
       </>}
     </div>
+    {(state?.errorHistory?.length || state?.error) ? <div className="live-errors">
+      <div className="live-error-current" role="alert">{state?.errorHistory?.[0] ?? state?.error}</div>
+      {!!state?.errorHistory?.length && <details>
+        <summary>最近错误 ({state.errorHistory.length})</summary>
+        <ol>{state.errorHistory.map((entry, index) => <li key={`${index}-${entry}`}>{entry}</li>)}</ol>
+      </details>}
+    </div> : null}
     <CanvasCard code={canvasCode} data={data} />
   </div>;
 }

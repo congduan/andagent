@@ -2,11 +2,11 @@
 <html lang="zh-CN">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><title>数据库浏览器</title></head>
 <body><div id="app">
-  <header><button id="back" type="button" aria-label="返回" title="返回">←</button><div><strong id="title">数据库浏览器</strong><small id="mode"></small></div></header>
-  <main><aside><h2>数据表</h2><div id="tables"></div></aside><section>
-    <div class="toolbar"><h2 id="current">选择数据表</h2><div><button id="prev" type="button">上一页</button><span id="page">第 1 页</span><button id="next" type="button">下一页</button></div></div>
-    <div id="grid"></div><p id="status" role="status"></p>
-    <form id="query"><label for="sql">只读 SQL 查询</label><textarea id="sql" rows="3" placeholder="SELECT * FROM records LIMIT 100"></textarea><button type="submit">运行查询</button></form>
+  <header class="app-header"><button id="back" type="button" aria-label="返回" title="返回">←</button><div class="header-title"><strong id="title">数据库浏览器</strong><span id="mode" class="mode-pill">只读</span></div></header>
+  <main><aside class="sidebar"><div class="sidebar-head"><span class="eyebrow">DATABASE</span><h2>数据表</h2></div><div id="tables" aria-label="数据表"></div></aside><section class="workspace">
+    <div class="toolbar"><div><span class="eyebrow">TABLE VIEW</span><h2 id="current">选择数据表</h2></div><div class="pager"><button id="prev" type="button">上一页</button><span id="page">第 1 页</span><button id="next" type="button">下一页</button></div></div>
+    <div class="grid-panel"><div id="grid"></div><p id="status" role="status"></p></div>
+    <form id="query" class="query-card"><div class="query-head"><div><span class="eyebrow">QUERY CONSOLE</span><label for="sql">只读 SQL 查询</label></div><span class="query-hint">⌘ / Ctrl + Enter 执行</span></div><div class="sql-editor"><pre id="sql-highlight" aria-hidden="true"></pre><textarea id="sql" rows="3" spellcheck="false" placeholder="SELECT * FROM records LIMIT 100"></textarea></div><button type="submit">运行查询 <span aria-hidden="true">↗</span></button></form>
   </section></main>
   <dialog id="detail"><div class="detail-head"><strong>单元格内容</strong><button id="detail-close" type="button">关闭</button></div><pre id="detail-text"></pre></dialog>
 </div><script type="module" src="./main.ts"></script></body></html>

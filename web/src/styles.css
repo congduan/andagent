@@ -3037,6 +3037,11 @@ html.theme-transition *::after {
 .webview-uri { overflow-wrap: anywhere; margin-bottom: 8px; }
 .webview-card button, .geo-card button { color: var(--text); border: 1px solid var(--border-strong); border-radius: 7px; padding: 7px 11px; background: rgba(127,155,255,.15); }
 .webview-error, .rich-error { color: var(--danger); margin-top: 8px; }
+.live-errors { margin: 8px 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); border-radius: 10px; background: color-mix(in srgb, var(--danger) 8%, var(--panel)); color: var(--danger); font-size: 12px; }
+.live-error-current, .live-errors li { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); }
+.live-errors summary { cursor: pointer; margin-top: 6px; min-height: 28px; color: var(--text); }
+.live-errors ol { margin: 4px 0 0; padding-left: 22px; }
+.live-errors li + li { margin-top: 8px; }
 .photos-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; margin: 10px 0; }
 .photos-grid button { min-width: 0; padding: 0; overflow: hidden; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; }
 .photos-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
