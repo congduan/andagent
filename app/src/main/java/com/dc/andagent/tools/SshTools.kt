@@ -263,7 +263,11 @@ class SshTool(
     ): SSHClient {
         val client = SSHClient()
         client.connectTimeout = 10_000
-        client.timeout = 10_000
+        // R97b: 10s read timeout 对大文件 SFTP 传输太短（一次 socket read 可能合法
+        // 超过 10s——弱网长肥管道），但完全无超时会在服务器/网络异常时永久卡死
+        // （用户报腾讯云「基本都卡住」）。取 45s：正常传输单次 read 远小于此，
+        // 真死锁 45s 内必然中止抛 SocketTimeoutException。
+        client.timeout = 45_000
         client.addHostKeyVerifier(object : HostKeyVerifier {
             override fun verify(hostname: String, port: Int, key: PublicKey) = verifier(hostname, port, key)
             override fun findExistingAlgorithms(hostname: String, port: Int): List<String> =
