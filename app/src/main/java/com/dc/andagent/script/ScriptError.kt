@@ -80,7 +80,10 @@ data class ScriptError(
                     col = payload.text("col")?.toIntOrNull(),
                 )
             }
-            return fromJs(raw, raw)
+            // Legacy plain-string path: the raw text is a multiline stack — use its
+            // first line as the collapsed message and keep the full text as the stack.
+            val message = raw.lineSequence().firstOrNull()?.take(200) ?: raw
+            return fromJs(message, raw)
         }
     }
 }
