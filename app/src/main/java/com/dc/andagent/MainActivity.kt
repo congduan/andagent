@@ -321,6 +321,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // R98: sshj 依赖 BC 的 X25519/Curve25519 KeyAgreement，Android 内置 provider
+        // 没有——必须在首次 SSH 连接前注册 BouncyCastleProvider。insert 在系统
+        // provider 之前但不移除系统项；重复调用由 insertProviderAt 幂等返回 1/失败处理。
+        runCatching {
+            if (java.security.Security.getProvider("BC") == null ||
+                java.security.Security.getProvider("BC")?.get("KeyAgreement.X25519") == null) {
+                java.security.Security.insertProviderAt(
+                    org.bouncycastle.jce.provider.BouncyCastleProvider(), 2)
+            }
+        }
         FilePickResultBridge.launcher = filePickLaunchCallback
 
         val settingsStore = SettingsStore(this)

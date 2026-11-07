@@ -130,6 +130,12 @@ dependencies {
 
     implementation("com.hierynomus:sshj:0.41.2")
 
+    // sshj declares BouncyCastle as runtime-only, but MainActivity registers
+    // BouncyCastleProvider explicitly (X25519 KeyAgreement is missing from the
+    // Android built-in providers) - so bcprov must also be on the compile
+    // classpath. Version aligned with sshj 0.41.2's transitive 1.84.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.84")
+
     // R35: pure-Java QR encode/decode (ZXing core, Apache-2.0, vendored jar).
     // Chosen over ML Kit barcode scanning: no GMS, no Play Services model
     // download, zero permissions, fully offline. See app/libs/README.md.
