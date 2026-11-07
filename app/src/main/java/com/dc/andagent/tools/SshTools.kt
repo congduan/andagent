@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.PublicKey
@@ -304,6 +305,7 @@ class SshTool(
         val live = SshSessionPool.resolve(ref)
             ?: return@withContext "ERROR: 会话不存在或已断开：$ref（用 ssh_list 查看活跃会话）"
         val cmd = args.strArg("cmd") ?: return@withContext "ERROR: 缺少 cmd"
+        val cancelKey = SshTransferCancel.key(ref, cmd)
         if (cmd.length > MAX_COMMAND_CHARS) return@withContext "ERROR: 命令过长（上限 $MAX_COMMAND_CHARS 字符）"
         val timeoutS = (args.intArg("timeout_s") ?: 30).coerceIn(1, 300)
         val danger = SshCommandGuard.dangerOf(cmd)
@@ -327,12 +329,20 @@ class SshTool(
                 if (!session.isConnected) {
                     deadSession = true
                 } else {
+                    if (SshTransferCancel.isCancelled(cancelKey)) throw IOException("已被用户中断")
                     session.startSession().use { channel ->
                         channel.exec(cmd).use { command ->
                             val stdout = Thread { command.inputStream.use { it.copyTo(out) } }
                             val stderr = Thread { command.errorStream.use { it.copyTo(err) } }
                             stdout.start(); stderr.start()
-                            command.join(timeoutS.toLong(), TimeUnit.SECONDS)
+                            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutS.toLong())
+                            while (command.isOpen && System.nanoTime() < deadline) {
+                                if (SshTransferCancel.isCancelled(cancelKey)) {
+                                    command.close()
+                                    break
+                                }
+                                command.join(200, TimeUnit.MILLISECONDS)
+                            }
                             timedOut = command.isOpen
                             if (timedOut) command.close()
                             stdout.join(1_000); stderr.join(1_000)
@@ -348,9 +358,12 @@ class SshTool(
             failure = e.message ?: e.javaClass.simpleName
             if (!session.isConnected) deadSession = true
         }
+        val cancelled = SshTransferCancel.isCancelled(cancelKey)
+        SshTransferCancel.clear(cancelKey)
         // 锁序纪律：removeByRef 拿池锁再等 session 锁，绝不能在持有 session 锁时
         // 调用——断会话早退与异常路径都已退出 synchronized 块，在此统一清理。
         if (deadSession) SshSessionPool.removeByRef(ref)
+        if (cancelled) return@withContext "ERROR: 已被用户中断"
         if (deadSession && exit == -1 && !timedOut && failure != null) {
             return@withContext "ERROR: 会话已断开（$ref）：命令执行失败：$failure"
         }

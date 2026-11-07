@@ -25,6 +25,20 @@ import java.util.concurrent.ConcurrentHashMap
 
 val SSH_TRANSFER_TOOLS = listOf("ssh_download", "ssh_upload", "ssh_remote_ls")
 
+object SshTransferCancel {
+    private val cancelled = ConcurrentHashMap<String, Boolean>()
+    fun key(ref: String, path: String) = "$ref\n$path"
+    fun request(key: String) { cancelled[key] = true }
+    fun isCancelled(key: String) = cancelled[key] == true
+    fun clear(key: String) { cancelled.remove(key) }
+    fun wasInterrupted(error: Throwable): Boolean = generateSequence(error) { it.cause }
+        .any { it.message?.contains("已被用户中断") == true }
+}
+
+data class SshTransferEvent(val type: String, val key: String, val name: String, val direction: String,
+                            val percent: Int = 0, val bytes: Long = 0, val total: Long = 0,
+                            val ok: Boolean = false, val savedPath: String? = null)
+
 /** Path and progress decisions are pure so they can be checked without Android or a server. */
 object SshTransferRules {
     fun shouldNotify(lastAt: Long, lastPercent: Int, now: Long, percent: Int): Boolean =
@@ -49,7 +63,9 @@ object SshTransferRules {
     }
 }
 
-class SshProgress(private val total: Long, private val maxBytes: Long, private val onReport: (Int) -> Unit = {}, private val now: () -> Long = System::currentTimeMillis) {
+class SshProgress(private val total: Long, private val maxBytes: Long, private val onReport: (Int) -> Unit = {},
+                  private val onTransfer: (Int, Long, Long) -> Unit = { _, _, _ -> }, private val cancelled: () -> Boolean = { false },
+                  private val now: () -> Long = System::currentTimeMillis) {
     private var done = 0L
     private var lastReported = 0L
     private var lastPercent = 0
@@ -60,6 +76,7 @@ class SshProgress(private val total: Long, private val maxBytes: Long, private v
         private set
     fun init(op: Int, src: String?, dest: String?, max: Long) = Unit
     fun count(count: Long): Boolean {
+        if (cancelled()) throw IOException("已被用户中断")
         done += count
         if (done > maxBytes) { exceeded = true; return false }
         val percent = if (total > 0) ((done * 100 / total).coerceAtMost(100)).toInt() else 0
@@ -67,6 +84,7 @@ class SshProgress(private val total: Long, private val maxBytes: Long, private v
             lines.add("进度: $done/$total 字节${if (total > 0) " ($percent%)" else ""}")
             lastReported = done
             lastPercent = percent
+            onTransfer(percent, done, total)
         }
         val time = now()
         if (SshTransferRules.shouldNotify(lastNotifiedAt, lastNotifiedPercent, time, percent)) {
@@ -79,7 +97,8 @@ class SshProgress(private val total: Long, private val maxBytes: Long, private v
     fun end() = Unit
 }
 
-class SshTransferTool(private val context: Context, override val name: String) : Tool {
+class SshTransferTool(private val context: Context, override val name: String,
+                      private val emitTransfer: (SshTransferEvent) -> Unit = {}) : Tool {
     override val description = when (name) {
         "ssh_download" -> "从 SSH 服务器下载单个文件到 Download/AndAgentSsh 或 app_private，返回 savedPath，下载前可用 ssh_remote_ls 查看。"
         "ssh_upload" -> "将本机文件上传到 SSH 服务器。默认禁止覆盖；覆盖时需 overwrite=true 且 confirm=true。"
@@ -110,16 +129,33 @@ class SshTransferTool(private val context: Context, override val name: String) :
 
     override suspend fun execute(args: JsonObject): String = withContext(Dispatchers.IO) {
         val ref = args.strArg("session_id") ?: return@withContext "ERROR: 缺少 session_id"
-        val live = SshSessionPool.resolve(ref) ?: return@withContext "ERROR: SSH 会话不存在：$ref"
+        val path = args.strArg("remote_path").orEmpty()
+        val key = SshTransferCancel.key(ref, path)
+        val direction = if (name == "ssh_download") "download" else "upload"
+        val fileName = if (name == "ssh_download") args.strArg("filename") ?: path.substringAfterLast('/') else path.substringAfterLast('/')
+        val transfer = name == "ssh_download" || name == "ssh_upload"
+        if (transfer && path.isBlank()) {
+            SshTransferCancel.clear(key)
+            return@withContext "ERROR: 缺少 remote_path"
+        }
+        val live = SshSessionPool.resolve(ref) ?: run {
+            SshTransferCancel.clear(key)
+            return@withContext "ERROR: SSH 会话不存在：$ref"
+        }
         val session = live.session
         if (!session.isConnected) {
             SshSessionPool.removeByRef(ref)
+            SshTransferCancel.clear(key)
             return@withContext "ERROR: SSH 会话已断开：$ref"
         }
-        try {
+        val result = try {
             synchronized(session) {
+                if (transfer) {
+                    if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
+                    emitTransfer(SshTransferEvent("ssh.transfer.progress", key, fileName, direction))
+                }
                 val home = homeFor(session)
-                val remote = SshTransferRules.remotePath(args.strArg("remote_path") ?: if (name == "ssh_remote_ls") "~" else return@withContext "ERROR: 缺少 remote_path", home)
+                val remote = SshTransferRules.remotePath(if (transfer) path else args.strArg("remote_path") ?: "~", home)
                 val sftp = live.sftpChannel.let { existing ->
                     if (existing != null) existing else {
                         runCatching { existing?.close() }
@@ -129,20 +165,31 @@ class SshTransferTool(private val context: Context, override val name: String) :
                 }
                 try {
                     when (name) {
-                        "ssh_download" -> download(sftp, remote, args)
-                        "ssh_upload" -> upload(sftp, remote, args)
+                        "ssh_download" -> download(sftp, remote, args, key)
+                        "ssh_upload" -> upload(sftp, remote, args, key)
                         else -> list(sftp, remote)
                     }
                 } catch (e: Exception) {
-                    sftp.close()
+                    if (SshTransferCancel.wasInterrupted(e)) {
+                        // sshj's transfer listener aborts the SFTP operation; the SSH session stays alive.
+                        runCatching { sftp.close() }
+                    } else sftp.close()
                     live.sftpChannel = null
                     throw e
                 }
             }
         } catch (e: Exception) {
             if (!session.isConnected) SshSessionPool.removeByRef(ref)
-            "ERROR: SFTP ${e.message ?: e.javaClass.simpleName}"
+            if (SshTransferCancel.wasInterrupted(e) || SshTransferCancel.isCancelled(key)) "ERROR: 已被用户中断"
+            else "ERROR: SFTP ${e.message ?: e.javaClass.simpleName}"
         }
+        if (transfer) {
+            SshTransferCancel.clear(key)
+            val savedPath = result.lineSequence().firstOrNull { it.startsWith("savedPath=") || it.startsWith("uploadedPath=") }?.substringAfter('=')
+            emitTransfer(SshTransferEvent("ssh.transfer.done", key, fileName, direction,
+                ok = !result.startsWith("ERROR:") && !result.startsWith("CONFIRM_REQUIRED:"), savedPath = savedPath))
+        }
+        result
     }
 
     private fun homeFor(session: SSHClient): String = homes.getOrPut(session) {
@@ -169,7 +216,7 @@ class SshTransferTool(private val context: Context, override val name: String) :
         }
     }
 
-    private fun download(sftp: SFTPClient, remote: String, args: JsonObject): String {
+    private fun download(sftp: SFTPClient, remote: String, args: JsonObject, key: String): String {
         val attrs = sftp.stat(remote)
         if (attrs.type == FileMode.Type.DIRECTORY) return "ERROR: 不支持目录下载；可先用 ssh_exec 打包为 tar 文件"
         val max = SshTransferRules.maxMb(args.intArg("max_mb")).toLong() * 1_048_576
@@ -177,13 +224,17 @@ class SshTransferTool(private val context: Context, override val name: String) :
         val name = SshTransferRules.safeName(args.strArg("filename") ?: remote.substringAfterLast('/'))
         val dir = args.strArg("dir") ?: "downloads"
         if (dir !in listOf("downloads", "app_private")) return "ERROR: dir 只能是 downloads 或 app_private"
+        emitTransfer(SshTransferEvent("ssh.transfer.progress", key, name, "download", total = attrs.size))
         val progress = SshProgress(attrs.size, max, onReport = { percent ->
             runCatching { SshKeepAliveService.progress(context, name, percent) }
-        })
+        }, onTransfer = { percent, bytes, total ->
+            emitTransfer(SshTransferEvent("ssh.transfer.progress", key, name, "download", percent, bytes, total))
+        }, cancelled = { SshTransferCancel.isCancelled(key) })
         val temp = File.createTempFile("ssh-", ".part", context.cacheDir)
         try {
             track(sftp, progress)
             sftp.get(remote, temp.absolutePath)
+            if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
             if (progress.exceeded) return "ERROR: 下载超过大小上限"
             val saved = if (dir == "app_private") {
                 val root = File(context.filesDir, "ssh_downloads").apply { mkdirs() }
@@ -232,7 +283,7 @@ class SshTransferTool(private val context: Context, override val name: String) :
         }
     }
 
-    private fun upload(sftp: SFTPClient, remote: String, args: JsonObject): String {
+    private fun upload(sftp: SFTPClient, remote: String, args: JsonObject, key: String): String {
         val path = args.strArg("local_path") ?: return "ERROR: 缺少 local_path"
         val file = File(path).canonicalFile
         // 只允许上传下载产物，禁止把凭据等任意 app 私有文件传出设备。
@@ -242,6 +293,7 @@ class SshTransferTool(private val context: Context, override val name: String) :
         require(file.isFile && file.canRead()) { "本地文件不存在或不可读" }
         val max = SshTransferRules.maxMb(args.intArg("max_mb")).toLong() * 1_048_576
         if (file.length() > max) return "ERROR: 文件 ${file.length()} 字节超过 ${max / 1_048_576}MB 上限（可用 max_mb 调整，最高 4096）"
+        emitTransfer(SshTransferEvent("ssh.transfer.progress", key, remote.substringAfterLast('/'), "upload", total = file.length()))
         val overwriteConfirmed = args.boolArg("overwrite") == true && args.boolArg("confirm") == true
         if (!overwriteConfirmed) {
             val exists = try { sftp.stat(remote); true } catch (e: SFTPException) {
@@ -252,10 +304,11 @@ class SshTransferTool(private val context: Context, override val name: String) :
             }
             // TOCTOU 防护：先传到随机临时名，再原子 rename——rename 在目标已存在时会失败，不会静默覆盖。
             val tmp = "$remote.andagent-tmp-${java.util.UUID.randomUUID().toString().take(8)}"
-            val progress = SshProgress(file.length(), max)
+            val progress = uploadProgress(file, remote, max, key)
             try {
                 track(sftp, progress)
                 sftp.put(file.absolutePath, tmp)
+                if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
                 if (progress.exceeded) return "ERROR: 上传超过大小上限"
                 try {
                     sftp.rename(tmp, remote)
@@ -267,12 +320,18 @@ class SshTransferTool(private val context: Context, override val name: String) :
             }
             return "uploadedPath=$remote\nbytes=${file.length()}\n" + progress.lines.joinToString("\n")
         }
-        val progress = SshProgress(file.length(), max)
+        val progress = uploadProgress(file, remote, max, key)
         track(sftp, progress)
         sftp.put(file.absolutePath, remote)
+        if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
         if (progress.exceeded) return "ERROR: 上传超过大小上限"
         return "uploadedPath=$remote\nbytes=${file.length()}\n" + progress.lines.joinToString("\n")
     }
+
+    private fun uploadProgress(file: File, remote: String, max: Long, key: String) =
+        SshProgress(file.length(), max, onTransfer = { percent, bytes, total ->
+            emitTransfer(SshTransferEvent("ssh.transfer.progress", key, remote.substringAfterLast('/'), "upload", percent, bytes, total))
+        }, cancelled = { SshTransferCancel.isCancelled(key) })
 
     private fun list(sftp: SFTPClient, remote: String): String {
         val entries = sftp.ls(remote).filter { it.name != "." && it.name != ".." }

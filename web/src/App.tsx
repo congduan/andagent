@@ -25,6 +25,7 @@ import {
   type Settings,
 } from "./bridge";
 import { CopyMenu, selectedText, useLongPress } from "./CopyMenu";
+import { SshTransferHost } from "./SshTransferCard";
 import { Drawer } from "./Drawer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { batchConversationMarkdown, conversationMarkdown } from "./exportConversation";
@@ -742,6 +743,7 @@ export default function App() {
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
 
+        <SshTransferHost />
         <Composer hasKey={isModelConfigured(settings)} />
 
         {settingsPresence.rendered && (

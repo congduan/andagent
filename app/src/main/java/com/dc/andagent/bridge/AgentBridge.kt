@@ -13,6 +13,8 @@ import com.dc.andagent.widget.WidgetApi
 import com.dc.andagent.widget.data.WidgetDataScheduler
 import com.dc.andagent.tools.Tool
 import com.dc.andagent.tools.JsonFixer
+import com.dc.andagent.tools.SshTransferCancel
+import com.dc.andagent.tools.SshTransferEvent
 import com.dc.andagent.cron.CronScheduler
 import com.dc.andagent.cron.CronStore
 import android.provider.Settings
@@ -102,6 +104,7 @@ class AgentBridge(
     private val calls = ConcurrentHashMap<String, Call>()
     // R39: 工具任务注册表——cancelTool(reqId) 中断正在执行的工具调用。
     private val toolFutures = ConcurrentHashMap<String, java.util.concurrent.Future<*>>()
+    private val sshToolKeys = ConcurrentHashMap<String, String>()
     // R39: 最近一次 shell_exec 的完整结果（终端卡片「查看 agent 输出」用）。
     @Volatile
     private var lastShellExecResult: String = ""
@@ -134,6 +137,21 @@ class AgentBridge(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     fun emitNotice(message: String) { emit(buildJsonObject { put("type", "notice"); put("message", message) }) }
+
+    fun emitTransferProgress(event: SshTransferEvent) {
+        emit(buildJsonObject {
+            put("type", event.type); put("key", event.key); put("name", event.name)
+            put("direction", event.direction); put("percent", event.percent)
+            put("bytes", event.bytes); put("total", event.total)
+            if (event.type == "ssh.transfer.done") {
+                put("ok", event.ok)
+                event.savedPath?.let { put("savedPath", it) }
+            }
+        })
+    }
+
+    @JavascriptInterface
+    fun cancelSshTransfer(key: String) { if (key.isNotBlank()) SshTransferCancel.request(key) }
 
     /* ------------------------- deep links (#14) ------------------------- */
 
@@ -741,6 +759,11 @@ class AgentBridge(
      */
     @JavascriptInterface
     fun cancelTool(reqId: String) {
+        val sshKey = sshToolKeys[reqId]
+        if (sshKey != null) {
+            SshTransferCancel.request(sshKey)
+            return
+        }
         val future = toolFutures.remove(reqId) ?: return
         if (future.cancel(true)) {
             emitToolResult(reqId, false, "ERROR: 已被用户中断")
@@ -772,6 +795,12 @@ class AgentBridge(
                 emitToolResult(reqId, false, "ERROR: bad arguments JSON: ${it.message}")
                 return@submit
             }
+            if (name == "ssh_download" || name == "ssh_upload" || name == "ssh_exec") {
+                val ref = args["session_id"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                val path = if (name == "ssh_exec") args["cmd"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                    else args["remote_path"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                sshToolKeys[reqId] = SshTransferCancel.key(ref, path)
+            }
             val result = runCatching { runBlocking { tool.execute(args) } }
                 .recoverCatching { e ->
                     if (e is java.util.concurrent.CancellationException ||
@@ -787,6 +816,7 @@ class AgentBridge(
                 lastShellExecResult = (args["cmd"]?.jsonPrimitive?.contentOrNull?.let { "$ $it\n" } ?: "") + result
             }
             emitToolResult(reqId, !result.startsWith("ERROR:"), mediaPreviewResult(name, result))
+            sshToolKeys.remove(reqId)
         }
         toolFutures[reqId] = future
         // 先注册再查完成态，堵住「任务瞬间跑完 + cancel 永远 miss」的窗口。

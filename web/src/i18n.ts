@@ -19,6 +19,7 @@ const zh = {
   modelKeyRequired: "请填写 API Key。", modelIdRequired: "请填写模型 ID。", modelSaveFailed: "保存失败，请重试。",
   modelNotConfigured: "还没有连接大模型。", modelConfigure: "去配置", modelInputUnconfigured: "连接大模型后就能开始对话…",
   settings: "设置", close: "关闭", cancel: "取消", save: "保存", appearance: "外观", confirmOk: "确定",
+  sshTransferCancel: "取消传输", sshTransferCancelling: "正在取消…", sshTransferFailed: "传输未完成", sshTransferCopyPath: "复制路径",
   operationConfirm: "操作确认", confirmModeOff: "关闭", confirmModeDestructive: "写入操作", confirmModeAll: "所有工具",
   confirmModeNote: "默认关闭以保持原有行为。建议开启「写入操作」，执行带写入标记的工具前先确认；「所有工具」适合调试或不信任模型时使用。",
   toolConfirmPrompt: "即将执行「{label}」\n参数：{args}\n确认执行？",
@@ -407,6 +408,7 @@ const zh = {
 } as const;
 type Key = keyof typeof zh;
 const en: Record<Key, string> = {
+  sshTransferCancel: "Cancel transfer", sshTransferCancelling: "Cancelling…", sshTransferFailed: "Transfer not completed", sshTransferCopyPath: "Copy path",
   connectModel: "Connect a model", modelLater: "Later",
   modelSetupHeading: "Connect your first model", modelSetupNote: "AndAgent uses the provider you choose. The main model needs tool calling. Your API key stays on this device; chats go directly to the entered endpoint. Testing sends a short request and may incur a small charge.",
   modelProvider: "Model provider", modelCustom: "Custom · OpenAI compatible", modelCustomHint: "Any OpenAI-compatible endpoint", modelOptionalKey: "API Key (optional)",

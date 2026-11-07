@@ -2,7 +2,7 @@ import { currentLanguage, translate } from "./i18n";
 import { appConfirm } from "./ConfirmDialog";
 import { loadConfirmMode } from "./confirmMode";
 import { TOOL_DESTRUCTIVE, TOOL_META } from "./toolMeta";
-const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload"]);
+const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec"]);
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
  *
@@ -213,6 +213,7 @@ interface AndroidBridge {
   /** R39 修复：系统深/浅色真值（"dark" | "light"），WebView 媒体查询不可信。 */
   systemTheme?(): string;
   cancelTool?(reqId: string): void;
+  cancelSshTransfer?(key: string): void;
   lastShellResult?(): string;
   /* R20: 八域 UI 命令（可选；浏览器预览下全部缺失）。 */
   uiToast?(message: string, long: boolean): string;
@@ -497,6 +498,10 @@ export function cancelToolByCallId(callId: string): void {
   } catch {
     /* bridge method missing on older APKs */
   }
+}
+
+export function cancelSshTransfer(key: string): void {
+  try { bridge()?.cancelSshTransfer?.(key); } catch { /* older APK */ }
 }
 
 const recentConfirmations = new Map<string, { decision: Promise<boolean>; expiresAt: number }>();
@@ -933,6 +938,11 @@ function handleEvent(payload: string): void {
 
   if (type === "conversation.exported") {
     window.dispatchEvent(new CustomEvent("andagent:conversation-exported", { detail: String(event.path ?? "") }));
+    return;
+  }
+
+  if (type === "ssh.transfer.progress" || type === "ssh.transfer.done") {
+    window.dispatchEvent(new CustomEvent("andagent:ssh-transfer", { detail: event }));
     return;
   }
 

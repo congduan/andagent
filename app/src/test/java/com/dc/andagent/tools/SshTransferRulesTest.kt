@@ -6,6 +6,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SshTransferRulesTest {
+    @org.junit.Test fun cancellationStopsProgressAndCanBeCleared() {
+        val key = SshTransferCancel.key("session", "/tmp/a")
+        val progress = SshProgress(10_000_000, 10_000_000, cancelled = { SshTransferCancel.isCancelled(key) })
+        progress.count(1_000_000)
+        SshTransferCancel.request(key)
+        try {
+            progress.count(1_000_000)
+            throw AssertionError("transfer continued")
+        } catch (e: java.io.IOException) {
+            org.junit.Assert.assertEquals("已被用户中断", e.message)
+        } finally {
+            SshTransferCancel.clear(key)
+        }
+        org.junit.Assert.assertFalse(SshTransferCancel.isCancelled(key))
+    }
     @Test fun presenceStartsOnceAndStopsOnlyWhenEmpty() {
         val p = SshSessionPresence()
         assertTrue(p.put("a"))

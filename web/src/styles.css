@@ -998,6 +998,20 @@ button:disabled {
 
 /* ---------------- Tool cards ---------------- */
 
+.ssh-transfer-host { display: grid; gap: 8px; padding: 8px 16px; max-height: 42vh; overflow-y: auto; }
+.ssh-transfer-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; box-shadow: 0 4px 16px #0002; }
+.ssh-transfer-heading, .ssh-transfer-detail, .ssh-transfer-path { display: flex; align-items: center; gap: 8px; }
+.ssh-transfer-heading strong, .ssh-transfer-path span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ssh-transfer-heading b { font-variant-numeric: tabular-nums; }
+.ssh-transfer-track { height: 7px; margin: 10px 0 7px; border-radius: 9px; overflow: hidden; background: var(--surface-2, #7773); }
+.ssh-transfer-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 180ms ease; }
+.ssh-transfer-card.failed .ssh-transfer-track span { background: #e35b69; }
+.ssh-transfer-detail { font-size: 12px; opacity: .8; font-variant-numeric: tabular-nums; }
+.ssh-transfer-detail button { margin-left: auto; }
+.ssh-transfer-path { margin-top: 8px; font-size: 12px; }
+.ssh-transfer-host button { color: var(--accent); border: 0; background: none; cursor: pointer; padding: 2px 4px; }
+.ssh-transfer-host button:disabled { opacity: .5; cursor: default; }
+
 .tool-card {
   position: relative;
   margin: 10px 0;
