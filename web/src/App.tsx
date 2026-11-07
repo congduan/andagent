@@ -46,7 +46,7 @@ import { MessageNav, type MessageNavItem } from "./MessageNav";
 import { SettingsPanel, type SettingsPage } from "./Settings";
 import { ModelSetup } from "./ModelSetup";
 import { dismissModelSetup, isModelConfigured, needsModelSetup } from "./modelConfig";
-import { TEMPLATE_GROUPS } from "./templates";
+import { pickTemplateGroups } from "./templates";
 import { ToolCard } from "./ToolCard";
 import { fmtTokens, sumUsageBreakdown } from "./usage";
 import { SessionStore } from "./sessions";
@@ -439,36 +439,46 @@ function ThreadWaitingHint() {
 }
 
 function TemplateGrid() {
-  const { language } = useI18n();
+  const { language, t } = useI18n();
   const aui = useAui();
+  // 每次进入空会话都重新抽一批，挂载时只随机一次，切换语言不会打乱。
+  const [groups, setGroups] = useState(() => pickTemplateGroups());
   return (
     <div className="template-groups">
-      {TEMPLATE_GROUPS.map((group) => (
+      {groups.map((group) => (
         <div className="template-group" key={group.label.zh}>
           <div className="template-group-label">{group.label[language]}</div>
           <div className="template-grid">
-            {group.templates.map((t) => (
+            {group.templates.map((tpl) => (
               <button
                 type="button"
                 className="template-card"
-                key={t.title.zh}
-                title={t.prompt[language]}
+                key={tpl.title.zh}
+                title={tpl.prompt[language]}
                 onClick={() =>
                   aui.thread.append({
                     role: "user",
-                    content: [{ type: "text", text: t.prompt[language] }],
+                    content: [{ type: "text", text: tpl.prompt[language] }],
                   })
                 }
               >
                 <span className="template-icon" aria-hidden="true">
-                  <Icon name={t.icon} size={15} />
+                  <Icon name={tpl.icon} size={15} />
                 </span>
-                <span className="template-title">{t.title[language]}</span>
+                <span className="template-title">{tpl.title[language]}</span>
               </button>
             ))}
           </div>
         </div>
       ))}
+      <button
+        type="button"
+        className="template-refresh"
+        onClick={() => setGroups(pickTemplateGroups())}
+      >
+        <Icon name="refresh" size={13} />
+        <span>{t("templateShuffle")}</span>
+      </button>
     </div>
   );
 }
