@@ -50,12 +50,17 @@
 #include <vector>
 
 #include <openssl/base.h>
+#include <openssl/digest.h>
 #include <openssl/evp.h>
 #include <openssl/mem.h>
 #include <openssl/rsa.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
+
+// R103 A: reuse the TLS fingerprint helper so adb_pair can hand the pinned
+// device identity back to Kotlin (stored in KV, verified by tls_client.cpp).
+#include "tls_client.h"
 
 // Bionic tags the libadb_pairing_auth entry points __INTRODUCED_IN(30). We
 // compile against minSdk 26 but the symbols are vendored locally (not the
@@ -107,6 +112,7 @@ struct PairResult {
     bool ok = false;
     std::string reason;  // machine-readable failure code
     std::string guid;
+    std::string cert_fp;  // R103: SHA-256 hex of the pairing server's leaf cert
 };
 
 // ---- JNI conversions ------------------------------------------------------
@@ -349,6 +355,16 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
         return r;
     }
 
+    // R103 A: capture the peer (device) leaf certificate fingerprint. This is
+    // the identity the main-port TLS connection is pinned against (KV store,
+    // written by Kotlin on pairing success). SSL_get_peer_certificate returns a
+    // reference the caller must X509_free.
+    X509* peer = SSL_get_peer_certificate(tls.ssl.get());
+    if (peer) {
+        r.cert_fp = andagent::CertFingerprintHex(peer);
+        X509_free(peer);
+    }
+
     // pairing_connection.cpp:190-198 - append TLS exporter material to the
     // password so the PAKE is bound to this exact TLS session.
     std::vector<uint8_t> ekm(kExportedKeySize);
@@ -555,7 +571,7 @@ Java_com_dc_andagent_tools_AdbPairNative_nativePair(JNIEnv* env, jobject /*thiz*
     PairResult r = DoPair(h, port, c, pk, d);
     std::string out;
     if (r.ok) {
-        out = "OK\nGUID=" + r.guid + "\n";
+        out = "OK\nGUID=" + r.guid + "\nCERT_FP=" + r.cert_fp + "\n";
     } else {
         out = "ERROR\nREASON=" + r.reason + "\n";
     }

@@ -1,5 +1,8 @@
 package com.dc.andagent.tools
 
+import com.dc.andagent.adb.TLS_READ_ERROR
+import com.dc.andagent.adb.TlsConnectResult
+import com.dc.andagent.adb.TlsNative
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -14,7 +17,7 @@ import kotlinx.serialization.json.JsonObject
  * 原生实现见 app/src/main/cpp/adbpair/（AOSP pairing_auth/aes_128_gcm 源码直采 +
  * BoringSSL）。Kotlin 侧只留薄壳：参数校验 → JNI → 结果文案。
  */
-object AdbPairNative {
+object AdbPairNative : TlsNative {
     /** 非 arm64 或 JVM 单测环境没有 .so，加载失败时所有调用走降级文案，不崩溃。 */
     private val loaded: Boolean = try {
         System.loadLibrary("adbpair")
@@ -31,6 +34,16 @@ object AdbPairNative {
 
     private external fun nativeSelfTest(): String
 
+    // ---- R103 A：TLS 1.3 传输层（cpp/adbpair/tls_client.cpp）----
+    private external fun nativeTlsConnect(
+        host: String, port: Int, timeoutMs: Int, pinned: Array<String>,
+    ): String
+
+    private external fun nativeTlsRead(handle: Long, buf: ByteArray): Int
+    private external fun nativeTlsWrite(handle: Long, data: ByteArray): Int
+    private external fun nativeTlsSetReadTimeout(handle: Long, ms: Int)
+    private external fun nativeTlsClose(handle: Long)
+
     /** 宽 JNI 边界：任何 UnsatisfiedLinkError / 原生异常都收敛成字符串。 */
     fun pair(host: String, port: Int, code: String, adbPubKey: ByteArray, deviceName: String): String =
         if (!loaded) "ERROR\nREASON=UNAVAILABLE\n"
@@ -41,6 +54,47 @@ object AdbPairNative {
     fun selfTest(): String =
         if (!loaded) "UNSUPPORTED_ABI_OR_JVM"
         else runCatching { nativeSelfTest() }.getOrDefault("JNI_EXCEPTION")
+
+    /**
+     * 纯函数：解析 nativeTlsConnect 原始返回串（"OK\nHANDLE=..\nFP=..\n" 或
+     * "ERROR\nREASON=..\nFP=..\n"），便于 JVM 单测脱离 .so 覆盖。
+     */
+    fun parseTlsConnect(raw: String): TlsConnectResult {
+        val fields = HashMap<String, String>()
+        for (line in raw.lineSequence()) {
+            val i = line.indexOf('=')
+            if (i > 0) fields[line.substring(0, i)] = line.substring(i + 1)
+        }
+        return if (raw.startsWith("OK")) {
+            TlsConnectResult(
+                handle = fields["HANDLE"]?.toLongOrNull(),
+                fingerprint = fields["FP"]?.takeIf { it.isNotBlank() },
+            )
+        } else {
+            TlsConnectResult(reason = fields["REASON"] ?: "UNKNOWN")
+        }
+    }
+
+    override fun connect(host: String, port: Int, timeoutMs: Int, pinned: List<String>): TlsConnectResult =
+        if (!loaded) TlsConnectResult(reason = "UNAVAILABLE")
+        else runCatching { parseTlsConnect(nativeTlsConnect(host, port, timeoutMs, pinned.toTypedArray())) }
+            .getOrDefault(TlsConnectResult(reason = "JNI_EXCEPTION"))
+
+    override fun read(handle: Long, buf: ByteArray): Int =
+        if (!loaded) TLS_READ_ERROR
+        else runCatching { nativeTlsRead(handle, buf) }.getOrDefault(TLS_READ_ERROR)
+
+    override fun write(handle: Long, data: ByteArray): Int =
+        if (!loaded) TLS_READ_ERROR
+        else runCatching { nativeTlsWrite(handle, data) }.getOrDefault(TLS_READ_ERROR)
+
+    override fun setReadTimeout(handle: Long, ms: Int) {
+        if (loaded) runCatching { nativeTlsSetReadTimeout(handle, ms) }
+    }
+
+    override fun close(handle: Long) {
+        if (loaded) runCatching { nativeTlsClose(handle) }
+    }
 }
 
 object AdbPairTool {
@@ -69,23 +123,33 @@ object AdbPairTool {
         return null
     }
 
-    /** 纯函数：把 JNI 原始结果翻译成用户文案（含 adb_connect 引导）。 */
-    fun format(raw: String, host: String, pairingPort: Int, deviceName: String): String {
-        val fields = HashMap<String, String>()
+    /** 纯函数：解析 JNI 原始结果的 key=value 行（OK / ERROR 通用）。 */
+    fun fields(raw: String): Map<String, String> {
+        val out = HashMap<String, String>()
         for (line in raw.lineSequence()) {
             val i = line.indexOf('=')
-            if (i > 0) fields[line.substring(0, i)] = line.substring(i + 1)
+            if (i > 0) out[line.substring(0, i)] = line.substring(i + 1)
         }
+        return out
+    }
+
+    /** 纯函数：从 nativePair 的 OK 结果取设备证书指纹；缺失/非法返回 null。 */
+    fun pairingFingerprint(raw: String): String? =
+        fields(raw)["CERT_FP"]?.takeIf { AdbToolRules.isValidFingerprint(it) }
+
+    /** 纯函数：把 JNI 原始结果翻译成用户文案（含 adb_connect 引导）。 */
+    fun format(raw: String, host: String, pairingPort: Int, deviceName: String): String {
+        val fields = fields(raw)
         return when {
             raw.startsWith("OK") -> buildString {
                 append("✅ 配对成功：目标设备 GUID=${fields["GUID"].orEmpty()}，本机名称=$deviceName。")
                 appendLine()
-                append("设备已记住本机 ADB 公钥。下一步用 adb_connect(host=\"$host\", port=<adb_port>) 直连：")
+                append("设备已记住本机 ADB 公钥，并已锁定目标证书指纹，下一步用 adb_connect(host=\"$host\", port=<adb_port>) 直连：")
                 appendLine()
                 append("adb_port 是手机「无线调试」页显示的主端口（通常 5555 或随机端口），与本次配对端口 $pairingPort 不同，请勿混用。")
                 appendLine()
-                append("注意：配对后 adbd 在主端口启用 TLS 传输；当前 adb_connect 仍是明文 TCP + AUTH RSA 客户端，")
-                append("该 TLS 传输层待后续收口（见战报「真机未测 / 后续」），本环境未做真机联调。")
+                append("本机已记录该 host 的配对指纹：adb_connect 会自动尝试 TLS 1.3 传输（配对过的 Android 11+ 主端口要求 TLS）；")
+                append("若连到的是传统明文 adbd，可显式传 tls=false。TLS 直连本环境未做真机联调（见战报清单）。")
             }
             else -> when (fields["REASON"]) {
                 "WRONG_CODE" ->
@@ -109,7 +173,15 @@ object AdbPairTool {
         }
     }
 
-    fun execute(args: JsonObject, adbPubKey: () -> ByteArray): String {
+    /**
+     * [onPaired]：配对成功时回调（host, 设备证书指纹 hex 或 null），由 AdbTool
+     * 接到 AdbSessionHub.rememberPairing 写入 KV。默认空实现，保持既有调用方签名兼容。
+     */
+    fun execute(
+        args: JsonObject,
+        adbPubKey: () -> ByteArray,
+        onPaired: (host: String, fingerprint: String?) -> Unit = { _, _ -> },
+    ): String {
         val host = args.strArg("host")
         val port = args.intArg("pairing_port")
         val code = args.strArg("pairing_code")
@@ -120,6 +192,7 @@ object AdbPairTool {
             return "ERROR: 读取本机 ADB 公钥失败：${it.message}"
         }
         val raw = AdbPairNative.pair(host!!, port!!, code!!, pk, deviceName)
+        if (raw.startsWith("OK")) onPaired(host, pairingFingerprint(raw))
         return format(raw, host, port, deviceName)
     }
 }

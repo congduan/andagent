@@ -470,6 +470,7 @@ class MainActivity : ComponentActivity() {
             "otg_status" to OtgTool(appContext, "otg_status").withBroker(permissionBroker),
             "otg_request" to OtgTool(appContext, "otg_request").withBroker(permissionBroker),
             "otg_file_ops" to OtgTool(appContext, "otg_file_ops").withBroker(permissionBroker),
+            "otg_transfer" to OtgTool(appContext, "otg_transfer").withBroker(permissionBroker),
             "phone_call" to PhoneCallTool(appContext, permissionBroker),
             "sms_send" to SmsSendTool(appContext, permissionBroker),
             "location_get" to LocationGetTool(appContext, permissionBroker),

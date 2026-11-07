@@ -10,9 +10,17 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /**
- * R100 ②：ADB 目标元数据（纯 JVM，可脱离 Android 单测）。key 固定 "host:port"。
+ * R100 ② / R103 A：ADB 目标元数据（纯 JVM，可脱离 Android 单测）。key 固定 "host:port"。
+ * [tls] 标记该目标主端口需 TLS 1.3 传输；[fingerprint] 是配对时锁定的设备证书
+ * SHA-256 hex（64 位小写），连接期由原生层做 pin 校验。两者缺省值保证旧 KV
+ * 记录（只有 host/port）向后兼容。
  */
-data class AdbTarget(val host: String, val port: Int) {
+data class AdbTarget(
+    val host: String,
+    val port: Int,
+    val tls: Boolean = false,
+    val fingerprint: String? = null,
+) {
     val key: String get() = "$host:$port"
 }
 
@@ -84,7 +92,13 @@ object AdbToolRules {
     fun safeName(name: String): String = SshTransferRules.safeName(name)
 
     fun encodeTargets(targets: List<AdbTarget>): JsonArray = JsonArray(
-        targets.map { buildJsonObject { put("host", it.host); put("port", it.port) } },
+        targets.map { buildJsonObject {
+            put("host", it.host)
+            put("port", it.port)
+            // 仅写非缺省字段，保持旧 KV 记录字节稳定、AdbTarget 相等性不变。
+            if (it.tls) put("tls", true)
+            if (!it.fingerprint.isNullOrBlank()) put("fingerprint", it.fingerprint)
+        } },
     )
 
     fun decodeTargets(el: JsonElement?): List<AdbTarget> {
@@ -94,7 +108,33 @@ object AdbToolRules {
             val host = o["host"]?.jsonPrimitive?.contentOrNull
             val port = o["port"]?.jsonPrimitive?.intOrNull
             if (host.isNullOrBlank() || port == null || port !in 1..65535) null
-            else AdbTarget(host, port)
+            else {
+                val tls = o["tls"]?.jsonPrimitive?.contentOrNull?.equals("true", true) == true
+                val fp = o["fingerprint"]?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { isValidFingerprint(it) }
+                AdbTarget(host, port, tls, fp)
+            }
+        }
+    }
+
+    /** 64 位十六进制（大小写均可）；非法指纹不参与 pin，避免把脏值喂给原生层。 */
+    fun isValidFingerprint(fp: String?): Boolean =
+        fp != null && fp.length == 64 &&
+            fp.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+
+    /**
+     * R103 A：配对注册表（host -> 设备证书指纹，null 表示已配对但未取到指纹）。
+     * 用 JsonObject 存，值为 "" 时解码回 null，但 key 仍在 → isPaired 仍为真，
+     * 可自动尝试 TLS（原生层 pinned 空列表 = 信任自签、仅 TLS 1.3）。
+     */
+    fun encodePairings(pairings: Map<String, String?>): JsonObject = buildJsonObject {
+        for ((host, fp) in pairings) put(host, fp ?: "")
+    }
+
+    fun decodePairings(el: JsonElement?): Map<String, String?> {
+        val o = el as? JsonObject ?: return emptyMap()
+        return o.mapValues { (_, v) ->
+            v.jsonPrimitive.contentOrNull?.takeIf { isValidFingerprint(it) }
         }
     }
 }

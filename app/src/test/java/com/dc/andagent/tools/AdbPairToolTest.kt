@@ -103,6 +103,50 @@ class AdbPairToolTest {
         assertTrue(s.contains("host"))
     }
 
+    // ---- R103 A: TLS JNI 结果解析 / 配对指纹 -------------------------------
+    @Test
+    fun `parseTlsConnect reads handle and fingerprint`() {
+        val fp = "a".repeat(64)
+        val ok = AdbPairNative.parseTlsConnect("OK\nHANDLE=42\nFP=$fp\n")
+        assertEquals(42L, ok.handle)
+        assertEquals(fp, ok.fingerprint)
+        assertNull(ok.reason)
+
+        val err = AdbPairNative.parseTlsConnect("ERROR\nREASON=PIN_MISMATCH\nFP=$fp\n")
+        assertNull(err.handle)
+        assertEquals("PIN_MISMATCH", err.reason)
+
+        val malformed = AdbPairNative.parseTlsConnect("OK\nHANDLE=not-a-number\n")
+        assertNull("畸形 handle 不应被当成有效连接", malformed.handle)
+    }
+
+    @Test
+    fun `pairingFingerprint validates cert fp`() {
+        val fp = "ab".repeat(32)
+        assertEquals(fp, AdbPairTool.pairingFingerprint("OK\nGUID=g\nCERT_FP=$fp\n"))
+        assertNull(AdbPairTool.pairingFingerprint("OK\nGUID=g\nCERT_FP=short\n"))
+        assertNull(AdbPairTool.pairingFingerprint("OK\nGUID=g\n"))
+        assertNull(AdbPairTool.pairingFingerprint("ERROR\nREASON=WRONG_CODE\n"))
+        assertEquals("g", AdbPairTool.fields("OK\nGUID=g\nCERT_FP=$fp\n")["GUID"])
+    }
+
+    @Test
+    fun `format success now mentions tls auto connect`() {
+        val out = AdbPairTool.format("OK\nGUID=g\nCERT_FP=${"ab".repeat(32)}\n", "h", 37531, "AndAgent")
+        assertTrue(out.contains("TLS 1.3"))
+        assertTrue(out.contains("自动"))
+        assertTrue(out.contains("tls=false"))
+    }
+
+    @Test
+    fun `jvm tls connect degrades to structured error`() {
+        val r = AdbPairNative.connect("192.168.1.5", 5555, 5000, listOf("ab".repeat(32)))
+        if (!AdbPairNative.available) {
+            assertEquals("UNAVAILABLE", r.reason)
+            assertNull(r.handle)
+        }
+    }
+
     // ---- JNI boundary smoke ----------------------------------------------
     @Test
     fun `jni boundary self test never throws on host jvm`() {

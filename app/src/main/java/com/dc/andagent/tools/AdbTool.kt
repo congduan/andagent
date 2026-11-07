@@ -8,7 +8,10 @@ import android.provider.MediaStore
 import android.util.Base64
 import com.dc.andagent.adb.AdbAuth
 import com.dc.andagent.adb.AdbClient
+import com.dc.andagent.adb.AdbTransport
 import com.dc.andagent.adb.AndroidKeystoreKeyWrapper
+import com.dc.andagent.adb.TcpTransport
+import com.dc.andagent.adb.TlsTransport
 import com.dc.andagent.adb.adbKeyFile
 import com.dc.andagent.shell.devtoolsScreenshotJson
 import kotlinx.coroutines.Dispatchers
@@ -21,12 +24,12 @@ import kotlinx.serialization.json.put
 import java.io.File
 import java.security.KeyPair
 
-/** 注册进 MainActivity 工具表的 ADB 工具族（R100 ② 7 个 + R100 ③ scrcpy/操控 3 个 + 配对 1 个）。 */
+/** 注册进 MainActivity 工具表的 ADB 工具族（R100 ② 7 个 + R103 scrcpy 2 个 + 配对 1 个）。 */
 val ADB_TOOLS = listOf(
     "adb_connect", "adb_devices", "adb_disconnect",
     "adb_shell", "adb_screencap", "adb_pull", "adb_push",
     AdbPairTool.NAME,
-)
+) + AdbScrcpyToolSpec.NAMES
 
 /**
  * R100 ②：ADB 会话中枢（进程内单例）。7 个 AdbTool 实例共享同一份状态：
@@ -37,10 +40,13 @@ val ADB_TOOLS = listOf(
 object AdbSessionHub {
     private const val NS = "adb"
     private const val KEY = "targets"
+    /** R103 A：配对时锁定的设备证书指纹（host -> SHA-256 hex，null = 已配对但未取到指纹）。 */
+    private const val PAIRINGS_KEY = "pairings"
     const val RECONNECT_TIMEOUT_MS = 3000
 
     val registry = AdbSessionRegistry()
     private val live = LinkedHashMap<String, AdbClient>()
+    private val pairings = LinkedHashMap<String, String?>()
     private val lock = Any()
     @Volatile private var ctx: Context? = null
 
@@ -58,10 +64,16 @@ object AdbSessionHub {
     private fun loadPersisted() {
         val el = runCatching { kv().get(NS, KEY) }.getOrNull()
         registry.replaceAll(AdbToolRules.decodeTargets(el))
+        pairings.clear()
+        pairings.putAll(AdbToolRules.decodePairings(runCatching { kv().get(NS, PAIRINGS_KEY) }.getOrNull()))
     }
 
     private fun persist() {
         runCatching { kv().set(NS, KEY, AdbToolRules.encodeTargets(registry.list())) }
+    }
+
+    private fun persistPairings() {
+        runCatching { kv().set(NS, PAIRINGS_KEY, AdbToolRules.encodePairings(pairings)) }
     }
 
     private val keyPair: KeyPair by lazy {
@@ -79,27 +91,59 @@ object AdbSessionHub {
         return kp
     }
 
-    /** 连接并登记目标；返回 AdbClient.connect 的原始结果串。 */
-    fun connect(host: String, port: Int): String = synchronized(lock) {
-        val key = "$host:$port"
-        if (registry.size() >= AdbToolRules.MAX_TARGETS && !registry.contains(key)) {
-            return "ERROR: 已保存目标数达上限 ${AdbToolRules.MAX_TARGETS}，请先 adb_disconnect"
-        }
-        val c = AdbClient(keyPair)
-        val r = c.connect(host, port)
-        if (r.startsWith("OK")) {
-            live[key] = c
-        } else {
-            c.close()
-            live.remove(key)
-        }
-        // OK / AUTH_REQUIRED 都登记（便于 adb_devices 看到、重试）；纯网络 ERROR 不登记。
-        if (r.startsWith("OK") || r.startsWith("AUTH_REQUIRED")) {
-            registry.add(AdbTarget(host, port))
+    /** 按目标元数据构造传输：TLS 目标走 TlsTransport（JNI 桥），否则明文 TcpTransport。 */
+    private fun newClientFor(t: AdbTarget): AdbClient =
+        AdbClient(
+            keyPair,
+            if (t.tls) TlsTransport(listOfNotNull(t.fingerprint), AdbPairNative) else TcpTransport(),
+        )
+
+    /** R103 A：配对成功后由 AdbPairTool 回调，把 host + 设备证书指纹写入 KV。 */
+    fun rememberPairing(host: String, fingerprint: String?) {
+        synchronized(lock) {
+            pairings[host] = fingerprint
+            persistPairings()
+            // 已保存的目标同步标记 TLS，便于自动重连 / adb_devices 走 TLS 通道。
+            registry.list().filter { it.host.equals(host, ignoreCase = true) }.forEach {
+                registry.add(it.copy(tls = true, fingerprint = fingerprint))
+            }
             persist()
         }
-        r
     }
+
+    /** 该 host 是否曾配对成功（决定 adb_connect 是否自动尝试 TLS）。 */
+    fun isPaired(host: String): Boolean = synchronized(lock) { pairings.containsKey(host) }
+
+    /** 该 host 锁定的设备证书指纹（null = 已配对但未取到，TLS 走信任自签的降级路径）。 */
+    fun fingerprintFor(host: String): String? = synchronized(lock) { pairings[host] }
+
+    /** 解析目标引用，供 scrcpy 等独立会话取 host/port。 */
+    fun target(ref: String): AdbTarget? = synchronized(lock) { registry.resolve(ref) }
+
+    /** 连接并登记目标；返回 AdbClient.connect 的原始结果串。tls=true 走 TLS 1.3 传输。 */
+    fun connect(host: String, port: Int, tls: Boolean = false, pinnedFp: String? = null): String =
+        synchronized(lock) {
+            val key = "$host:$port"
+            if (registry.size() >= AdbToolRules.MAX_TARGETS && !registry.contains(key)) {
+                return "ERROR: 已保存目标数达上限 ${AdbToolRules.MAX_TARGETS}，请先 adb_disconnect"
+            }
+            val transport: AdbTransport =
+                if (tls) TlsTransport(listOfNotNull(pinnedFp), AdbPairNative) else TcpTransport()
+            val c = AdbClient(keyPair, transport)
+            val r = c.connect(host, port)
+            if (r.startsWith("OK")) {
+                live[key] = c
+            } else {
+                c.close()
+                live.remove(key)
+            }
+            // OK / AUTH_REQUIRED 都登记（便于 adb_devices 看到、重试）；纯网络 ERROR 不登记。
+            if (r.startsWith("OK") || r.startsWith("AUTH_REQUIRED")) {
+                registry.add(AdbTarget(host, port, tls, pinnedFp))
+                persist()
+            }
+            r
+        }
 
     fun disconnect(host: String): String = synchronized(lock) {
         val t = registry.resolve(host) ?: return "ERROR: 目标不存在：$host（用 adb_devices 查看）"
@@ -112,12 +156,12 @@ object AdbSessionHub {
     /** R100 ③：配对时把现有 ADB RSA 公钥（adbkey.pub 格式）交给原生层放进 PeerInfo。 */
     fun adbPublicKey(): ByteArray = AdbAuth.encodePublicKey(keyPair.public)
 
-    /** 操作工具取用：必要时（重连/app 重启后 live 空）自动连接。 */
+    /** 操作工具取用：必要时（重连/app 重启后 live 空）自动连接（沿用目标的传输类型）。 */
     fun client(ref: String): AdbClient? = synchronized(lock) {
         val t = registry.resolve(ref) ?: return null
         val existing = live[t.key]
         if (existing != null && existing.isAlive()) return existing
-        val c = AdbClient(keyPair)
+        val c = newClientFor(t)
         val r = c.connect(t.host, t.port)
         if (r.startsWith("OK")) {
             live[t.key] = c
@@ -129,12 +173,15 @@ object AdbSessionHub {
     }
 
     /**
-     * R100 ③：创建【独立】AdbClient（复用共享 keyPair，但不放入 live 池）。
+     * R100 ③ / R103 A：创建【独立】AdbClient（复用共享 keyPair，但不放入 live 池）。
      * scrcpy 会话用它开常驻视频裸流（openDuplex 的读循环会长期占用连接），避免与共享池其它
-     * 工具锁步互踩。返回未连接实例；调用方负责 connect(host, port) 并在会话结束后 close()。
-     * 复用同一 keyPair → 目标机对 adb_connect 时授权过的公钥仍然授信，无需二次授权。
+     * 工具锁步互踩。传 ref 时按目标的 TLS 标记构造对应传输；返回未连接实例；调用方负责
+     * connect(host, port) 并在会话结束后 close()。复用同一 keyPair → 已授权公钥仍然授信。
      */
-    fun newClient(): AdbClient = AdbClient(keyPair)
+    fun newClient(ref: String? = null): AdbClient {
+        val t = ref?.let { registry.resolve(it) }
+        return if (t != null) newClientFor(t) else AdbClient(keyPair, TcpTransport())
+    }
 
     /** adb_devices：列出已保存目标 + 状态；离线目标做一次 best-effort 重连。 */
     fun devices(): String = synchronized(lock) {
@@ -148,7 +195,7 @@ object AdbSessionHub {
             val alive = c != null && c.isAlive()
             var status = if (alive) "connected" else "offline"
             if (!alive) {
-                val nc = AdbClient(keyPair)
+                val nc = newClientFor(t)
                 val r = nc.connect(t.host, t.port, RECONNECT_TIMEOUT_MS)
                 if (r.startsWith("OK")) {
                     live[t.key] = nc
@@ -170,7 +217,7 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
 
     override val description = when (name) {
         "adb_connect" ->
-            "连接目标手机的 adbd（TCP 无线调试）。host 必填；port 默认 5555（传统端口，或已配对设备「无线调试」页显示的端口）。首次连接会向手机发送本机公钥并弹「允许调试」授权框，在手机上点「允许」后重新调用本工具一次即握手成功。Android 11+ 配对码模式（另一端口+配对码）本轮不支持。"
+            "连接目标手机的 adbd（无线调试主端口）。host 必填；port 默认 5555。tls 可选：默认自动——用 adb_pair 配对过的 host 自动走 TLS 1.3 传输（Android 11+ 配对后主端口强制 TLS，并用配对时锁定的设备证书指纹校验），未配对或传统明文 adbd 走明文 TCP + AUTH RSA；也可显式传 tls=true/false 覆盖。首次连接会向手机发送本机公钥并弹「允许调试」授权框，点「允许」后重新调用本工具一次即握手成功。adb_pair 用的是「配对端口」，与这里的主端口不同。"
         "adb_devices" ->
             "列出已保存的 ADB 目标（host/port/状态）；app 重启后仍能看到，并对离线目标尝试重连。"
         "adb_disconnect" -> "断开并移除已保存的 ADB 目标（host 或 host:port）。"
@@ -183,19 +230,20 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         "adb_push" ->
             "把本机文件上传到目标手机（SYNC SEND）。local_path/remote_path 必填；max_mb 对齐 ssh_download。"
         AdbPairTool.NAME -> AdbPairTool.description
-        // adb_screencast/adb_record 工具延后（R103 TLS 刀一并重建）
+        in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.description(name)
         else -> "ADB 工具"
     }
 
-    /** 安全边界：shell/pull/push + 远程操控 adb_input + 录制 adb_scrcpy_record 标 destructive（web 确认闸 + 提示词覆盖）。 */
+    /** 安全边界：shell/pull/push + 录制 adb_record 标 destructive（web 确认闸 + 提示词覆盖）。 */
     override val destructive = name in setOf(
-        "adb_shell", "adb_pull", "adb_push", "adb_input", "adb_scrcpy_record",
+        "adb_shell", "adb_pull", "adb_push", AdbScrcpyToolSpec.RECORD,
     )
 
     override val parameters = when (name) {
         "adb_connect" -> schemaOf(
             "host" to strParam("目标手机 IP 或主机名"),
-            "port" to intParam("无线调试端口，默认 5555"),
+            "port" to intParam("无线调试主端口，默认 5555"),
+            "tls" to boolParam("是否走 TLS 1.3；默认自动：adb_pair 配对过的 host 自动 TLS，未配对走明文"),
             required = listOf("host"),
         )
         "adb_devices" -> schemaOf()
@@ -223,7 +271,7 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             required = listOf("target", "local_path", "remote_path"),
         )
         AdbPairTool.NAME -> AdbPairTool.parameters
-        // (removed: scrcpy spec pending rebuild)
+        in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.parameters(name)
         else -> schemaOf()
     }
 
@@ -244,8 +292,10 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             "adb_screencap" -> doScreencap(args)
             "adb_pull" -> doPull(args)
             "adb_push" -> doPush(args)
-            AdbPairTool.NAME -> AdbPairTool.execute(args) { AdbSessionHub.adbPublicKey() }
-            // (removed: scrcpy spec pending rebuild)
+            AdbPairTool.NAME -> AdbPairTool.execute(args, { AdbSessionHub.adbPublicKey() }) { host, fp ->
+                AdbSessionHub.rememberPairing(host, fp)
+            }
+            in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.execute(context, name, args)
             else -> "ERROR: 未知 ADB 工具"
         }
     }
@@ -255,7 +305,10 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         AdbToolRules.validateHost(host)?.let { return "ERROR: $it" }
         val port = args.intArg("port") ?: AdbToolRules.DEFAULT_PORT
         if (!AdbToolRules.validPort(port)) return "ERROR: port 必须在 1..65535"
-        val r = AdbSessionHub.connect(host, port)
+        // 默认自动：配对过的 host 走 TLS，未配对走明文；显式 tls=true/false 覆盖。
+        val useTls = args.boolArg("tls") ?: AdbSessionHub.isPaired(host)
+        val pinned = if (useTls) AdbSessionHub.fingerprintFor(host) else null
+        val r = AdbSessionHub.connect(host, port, useTls, pinned)
         return buildString {
             appendLine(r)
             when {

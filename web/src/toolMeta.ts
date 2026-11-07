@@ -126,6 +126,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
   otg_status: { label: "OTG 状态", labelEn: "OTG status", icon: "🔌" },
   otg_request: { label: "OTG 授权", labelEn: "Grant OTG access", icon: "🔑" },
   otg_file_ops: { label: "U 盘文件", labelEn: "USB drive files", icon: "💾", destructive: true },
+  otg_transfer: { label: "U 盘传输", labelEn: "USB transfer", icon: "🔁", destructive: true },
   screen_record: { label: "录屏", labelEn: "Record screen", icon: "🎥" },
   screen_record_stop: { label: "停止录屏", labelEn: "Stop recording", icon: "⏹️" },
   screen_record_list: { label: "录屏列表", labelEn: "List screen recordings", icon: "🎞️" },

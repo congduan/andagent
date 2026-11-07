@@ -5,12 +5,14 @@ import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.net.InetSocketAddress
-import java.net.Socket
 import java.security.KeyPair
 
 /**
- * R100 ②：ADB 客户端（纯 JVM/Kotlin）——TCP → CNXN → AUTH → OPEN/WRTE/CLSE / sync:。
+ * R100 ② / R103 A：ADB 客户端（纯 JVM/Kotlin）——CNXN → AUTH → OPEN/WRTE/CLSE / sync:。
+ *
+ * 传输层由 [transport] 注入：默认 [TcpTransport]（明文），配对过的 Android 11+
+ * 主端口用 [TlsTransport]（TLS 1.3）。TLS 只是传输层替换，线上帧格式不变，故
+ * 本类的协议逻辑对两种传输完全一致（R103 防失败条款）。
  *
  * 线上帧小端（AdbProtocol）。never-crash 纪律（对齐 SshTools.kt）：对外方法全部
  * runCatching 包裹，异常统一转成可读结果，绝不向调用方抛异常。
@@ -23,8 +25,8 @@ import java.security.KeyPair
  */
 class AdbClient(
     private val keyPair: KeyPair = AdbAuth.generateKeyPair(),
+    private val transport: AdbTransport = TcpTransport(),
 ) {
-    private var socket: Socket? = null
     private var input: InputStream? = null
     private var output: OutputStream? = null
     private var nextLocalId = 1
@@ -41,18 +43,15 @@ class AdbClient(
     fun connect(host: String, port: Int, timeoutMs: Int = DEFAULT_TIMEOUT_MS): String = synchronized(lock) {
         runCatching {
             close() // 释放上一次连接（若有）
-            val s = Socket()
-            socket = s // 先登记，确保连接失败时 getOrElse->close() 能回收 fd
-            s.connect(InetSocketAddress(host, port), timeoutMs)
-            s.soTimeout = timeoutMs
-            input = s.getInputStream()
-            output = s.getOutputStream()
+            transport.open(host, port, timeoutMs)
+            input = transport.inputStream()
+            output = transport.outputStream()
 
             write(AdbMessage(A_CNXN, A_VERSION, MAX_DATA, "host::\u0000".toByteArray()))
             when (val r = handshake()) {
                 is Handshake.Connected -> {
-                    // 握手期可能把 soTimeout 调到 AUTH_WAIT_MS；连上后放宽，避免长 shell/传输被连接超时误杀。
-                    s.soTimeout = SESSION_TIMEOUT_MS
+                    // 握手期可能把读超时调到 AUTH_WAIT_MS；连上后放宽，避免长 shell/传输被连接超时误杀。
+                    transport.setReadTimeout(SESSION_TIMEOUT_MS)
                     "OK: ADB 连接已建立（${host}:${port}）"
                 }
                 is Handshake.AuthRequired -> {
@@ -110,7 +109,7 @@ class AdbClient(
                                 )
                                 sentPublicKey = true
                                 // 授权框等待用户操作：缩短读超时，尽快返回「需授权」。
-                                runCatching { socket?.soTimeout = AUTH_WAIT_MS }
+                                runCatching { transport.setReadTimeout(AUTH_WAIT_MS) }
                             }
                             else -> return Handshake.Error(
                                 "设备未授权本公钥（请在手机授权框点「允许」，且不要点「拒绝」/「一律不允许」）",
@@ -429,17 +428,16 @@ class AdbClient(
     private fun read(): AdbMessage =
         AdbProtocol.readMessage(input ?: error("输入流不可用"))
 
-    /** 粗粒度存活判断；socket 假活由下一次读超时兜底。 */
-    fun isAlive(): Boolean = socket?.let { it.isConnected && !it.isClosed } ?: false
+    /** 粗粒度存活判断；底层连接假活由下一次读超时兜底。 */
+    fun isAlive(): Boolean = transport.isAlive()
 
-    /** 全路径释放，幂等（重复调用安全）。 */
+    /** 全路径释放，幂等（重复调用安全）；transport.close() 负责回收 fd / JNI handle。 */
     fun close() {
         runCatching { input?.close() }
         runCatching { output?.close() }
-        runCatching { socket?.close() }
+        runCatching { transport.close() }
         input = null
         output = null
-        socket = null
     }
 
     /** 对齐 ssh_exec 的 clipUtf8：按 UTF-8 字符边界截断，输出恒为合法 UTF-8。 */

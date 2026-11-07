@@ -50,7 +50,9 @@ class AlbumPhotosTool(private val context: Context) : Tool {
         val selection = mutableListOf<String>()
         val selectionArgs = mutableListOf<String>()
         if (!bucket.isNullOrBlank()) { selection.add("bucket_display_name LIKE ?"); selectionArgs.add("%$bucket%") }
-        if (!keyword.isNullOrBlank()) { selection.add("display_name LIKE ?"); selectionArgs.add("%$keyword%") }
+        // MediaStore 列名是 _display_name（DISPLAY_NAME 常量值），裸 "display_name" 在
+        // 部分 ROM/DB 上查询报错或静默不命中——统一用常量值，与 projection 一致。
+        if (!keyword.isNullOrBlank()) { selection.add("${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?"); selectionArgs.add("%$keyword%") }
 
         val rows = mutableListOf<Map<String, String>>()
         resolver.query(

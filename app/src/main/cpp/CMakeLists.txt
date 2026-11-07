@@ -30,7 +30,8 @@ if(CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
     add_library(adbpair SHARED
         "${ADBPAIR_DIR}/pairing_auth.cpp"
         "${ADBPAIR_DIR}/aes_128_gcm.cpp"
-        "${ADBPAIR_DIR}/adbpair_jni.cpp")
+        "${ADBPAIR_DIR}/adbpair_jni.cpp"
+        "${ADBPAIR_DIR}/tls_client.cpp")
     target_include_directories(adbpair PRIVATE
         "${ADBPAIR_DIR}/include"
         "${ADBPAIR_DIR}/prebuilt/include")
