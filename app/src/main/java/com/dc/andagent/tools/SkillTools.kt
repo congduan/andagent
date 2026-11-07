@@ -44,6 +44,34 @@ internal object SkillFormat {
     }
 }
 
+/** GitHub 安装来源：[file] 非空表示指向单个文件，直接按字节抓取。 */
+internal data class SkillRepo(val owner: String, val name: String, val branch: String?, val path: String?, val file: String?) {
+    val url: String get() = "https://github.com/$owner/$name"
+    /** 归并同一仓库的不同写法（含 tree/blob 子路径）。 */
+    val key: String get() = "github:$owner/$name".lowercase()
+}
+
+internal object SkillSource {
+    private val github = Regex("^https?://(?:www\\.)?github\\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)(?:/(tree|blob)/([^/]+)(?:/(.*))?)?$")
+
+    fun parseGitHub(source: String): SkillRepo? {
+        val url = source.trim().substringBefore('#').substringBefore('?').trimEnd('/')
+        val match = github.find(url) ?: return null
+        val owner = match.groupValues[1]
+        val name = match.groupValues[2].removeSuffix(".git")
+        if (owner.isEmpty() || name.isEmpty()) return null
+        val kind = match.groupValues[3]
+        val branch = match.groupValues[4].ifBlank { null }
+        val path = match.groupValues[5].trim('/').ifBlank { null }
+        val raw = if (kind == "blob") "https://raw.githubusercontent.com/$owner/$name/${branch.orEmpty()}/${path.orEmpty()}" else null
+        return SkillRepo(owner, name, branch, path, raw)
+    }
+
+    /** 用 owner/name 归并 GitHub 地址；其它来源按去掉尾斜杠与 .git 的文本比较。 */
+    fun key(source: String): String =
+        parseGitHub(source)?.key ?: source.trim().trimEnd('/').removeSuffix(".git").lowercase()
+}
+
 class SkillRegistry(private val context: Context, private val tools: MutableMap<String, Tool>, private val engine: QuickJsEngine) {
     private val root = File(context.filesDir, "skills").apply { mkdirs() }
     private val prefs = context.getSharedPreferences("skills", Context.MODE_PRIVATE)
@@ -104,28 +132,44 @@ class SkillRegistry(private val context: Context, private val tools: MutableMap<
         reload(); return list()
     }
     fun install(source: String): String {
-        val bytes = when {
-            source.startsWith("http://") || source.startsWith("https://") -> http.newCall(Request.Builder().url(source).build()).execute().use { response ->
-                require(response.isSuccessful) { "HTTP ${response.code}" }
-                response.body?.byteStream()?.use { it.readNBytes(2_000_001) } ?: error("空响应")
-            }
-            source.startsWith("content:") -> context.contentResolver.openInputStream(Uri.parse(source))?.use { it.readBytes() } ?: error("URI 不可读")
-            else -> {
-                val file = File(source.removePrefix("file://"))
-                if (file.isDirectory) {
-                    val md = File(file, "SKILL.md")
-                    require(md.isFile) { "目录缺少 SKILL.md" }
-                    val temp = java.io.ByteArrayOutputStream()
-                    java.util.zip.ZipOutputStream(temp).use { zip ->
-                        listOf("SKILL.md", "main.js").forEach { name ->
-                            val child = File(file, name)
-                            if (child.isFile) { zip.putNextEntry(java.util.zip.ZipEntry(name)); child.inputStream().use { it.copyTo(zip) }; zip.closeEntry() }
-                        }
-                    }
-                    temp.toByteArray()
-                } else file.readBytes()
-            }
+        val repo = SkillSource.parseGitHub(source)
+        return when {
+            repo == null -> "已安装技能：${installBytes(readSource(source), source)}"
+            repo.file != null -> "已安装技能：${installBytes(readSource(repo.file), source)}"
+            else -> installFromRepo(repo)
         }
+    }
+
+    /** 抓取待安装字节：HTTP(S) 直链 / content URI / 本地文件或目录（目录会打包成 ZIP）。 */
+    private fun readSource(source: String): ByteArray = when {
+        source.startsWith("http://") || source.startsWith("https://") -> readUrl(source)
+        source.startsWith("content:") -> context.contentResolver.openInputStream(Uri.parse(source))?.use { it.readBytes() } ?: error("URI 不可读")
+        else -> {
+            val file = File(source.removePrefix("file://"))
+            if (file.isDirectory) {
+                val md = File(file, "SKILL.md")
+                require(md.isFile) { "目录缺少 SKILL.md" }
+                val temp = java.io.ByteArrayOutputStream()
+                java.util.zip.ZipOutputStream(temp).use { zip ->
+                    listOf("SKILL.md", "main.js").forEach { name ->
+                        val child = File(file, name)
+                        if (child.isFile) { zip.putNextEntry(java.util.zip.ZipEntry(name)); child.inputStream().use { it.copyTo(zip) }; zip.closeEntry() }
+                    }
+                }
+                temp.toByteArray()
+            } else file.readBytes()
+        }
+    }
+
+    private fun readUrl(url: String, accept: String? = null): ByteArray = http.newCall(
+        Request.Builder().url(url).apply { if (accept != null) header("Accept", accept) }.build()
+    ).execute().use { response ->
+        require(response.isSuccessful) { "HTTP ${response.code}" }
+        response.body?.byteStream()?.use { it.readNBytes(2_000_001) } ?: error("空响应")
+    }
+
+    /** 单文件 / ZIP 技能包安装：SKILL.md 或打包了 SKILL.md 的 ZIP。 */
+    private fun installBytes(bytes: ByteArray, source: String): String {
         require(bytes.size <= 2_000_000) { "技能包超过 2MB" }
         val staging = File(root, ".stage_${System.nanoTime()}").apply { mkdirs() }
         try {
@@ -140,33 +184,126 @@ class SkillRegistry(private val context: Context, private val tools: MutableMap<
                     }
                 }
             } else File(staging, "SKILL.md").writeBytes(bytes)
-            val m = SkillFormat.parse(File(staging, "SKILL.md").readText())
-            val dest = File(root, m.name)
-            require(!dest.exists()) { "技能已存在：${m.name}" }
-            require(staging.renameTo(dest)) { "安装失败" }
-            return reload()
+            return commit(staging, source)
         } finally { if (staging.exists()) staging.deleteRecursively() }
     }
+
+    /** 校验暂存目录里的 SKILL.md，落盘后重新扫描；返回技能名。 */
+    private fun commit(staging: File, source: String): String {
+        val manifest = SkillFormat.parse(File(staging, "SKILL.md").readText())
+        val dest = File(root, manifest.name)
+        require(!dest.exists()) { "技能已存在：${manifest.name}" }
+        require(staging.renameTo(dest)) { "安装失败" }
+        prefs.edit().putString("source_${manifest.name}", source).apply()
+        reload()
+        return manifest.name
+    }
+
+    /**
+     * 从 GitHub 仓库安装：拉取默认分支文件树，找出所有 SKILL.md 所在目录，
+     * 逐个抓取 SKILL.md（以及可选的 main.js）落盘。一次最多 8 个，已安装的跳过。
+     */
+    private fun installFromRepo(repo: SkillRepo): String {
+        val branch = repo.branch ?: defaultBranch(repo)
+        val prefix = repo.path
+        val dirs = repoTree(repo, branch).filter { it.endsWith("SKILL.md", ignoreCase = true) }
+            .map { it.substringBeforeLast('/', "") }
+            .filter { prefix == null || it == prefix || it.startsWith("$prefix/") }
+            .distinct()
+            .sortedWith(compareBy({ it.count { ch -> ch == '/' } }, { it }))
+            .take(8)
+        require(dirs.isNotEmpty()) { "仓库中没有找到 SKILL.md" }
+        val ok = mutableListOf<String>()
+        val skipped = mutableListOf<String>()
+        val failed = mutableListOf<String>()
+        for (dir in dirs) {
+            runCatching { installRepoDir(repo, branch, dir) }.onSuccess { name ->
+                if (name == null) skipped += dir.ifEmpty { repo.name } else ok += name
+            }.onFailure { failed += "${dir.ifEmpty { repo.name }}：${it.message ?: it.javaClass.simpleName}" }
+        }
+        val message = buildString {
+            if (ok.isNotEmpty()) append("已安装技能：").append(ok.joinToString("、"))
+            if (skipped.isNotEmpty()) { if (isNotEmpty()) append("；"); append("已存在：").append(skipped.joinToString("、")) }
+            if (failed.isNotEmpty()) { if (isNotEmpty()) append("；"); append("失败：").append(failed.joinToString("；")) }
+            if (isEmpty()) append("没有可安装的技能")
+        }
+        if (ok.isEmpty() && failed.isNotEmpty()) throw IllegalStateException(message)
+        return message
+    }
+
+    /** 安装仓库里的单个技能目录；已存在时返回 null。 */
+    private fun installRepoDir(repo: SkillRepo, branch: String, dir: String): String? {
+        val base = "https://raw.githubusercontent.com/${repo.owner}/${repo.name}/$branch/" + if (dir.isEmpty()) "" else "$dir/"
+        val staging = File(root, ".stage_${System.nanoTime()}").apply { mkdirs() }
+        try {
+            File(staging, "SKILL.md").writeBytes(readUrl(base + "SKILL.md"))
+            runCatching { readUrl(base + "main.js") }.getOrNull()
+                ?.takeIf { it.size <= 100_000 }?.let { File(staging, "main.js").writeBytes(it) }
+            val name = SkillFormat.parse(File(staging, "SKILL.md").readText()).name
+            if (installed.containsKey(name) || File(root, name).exists()) return null
+            return commit(staging, repo.url)
+        } finally { if (staging.exists()) staging.deleteRecursively() }
+    }
+
+    private fun defaultBranch(repo: SkillRepo): String {
+        val key = "branch_${repo.owner}/${repo.name}"
+        prefs.getString(key, null)?.takeIf { it.isNotBlank() }?.let { return it }
+        val branch = runCatching {
+            val body = readUrl("https://api.github.com/repos/${repo.owner}/${repo.name}", "application/vnd.github+json")
+            Json.parseToJsonElement(String(body, Charsets.UTF_8)).jsonObject["default_branch"]?.jsonPrimitive?.content
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "main"
+        prefs.edit().putString(key, branch).apply()
+        return branch
+    }
+
+    /** 仓库文件清单；API 不可用（限流/无网）时退化为「根目录 SKILL.md」单点尝试。 */
+    private fun repoTree(repo: SkillRepo, branch: String): List<String> = runCatching {
+        val body = readUrl("https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/$branch?recursive=1", "application/vnd.github+json")
+        Json.parseToJsonElement(String(body, Charsets.UTF_8)).jsonObject["tree"]?.jsonArray.orEmpty()
+            .filter { it.jsonObject["type"]?.jsonPrimitive?.content == "blob" }
+            .mapNotNull { it.jsonObject["path"]?.jsonPrimitive?.content }
+    }.getOrElse { listOf("SKILL.md") }
+
+    private fun installedSourceKeys(): Set<String> =
+        installed.keys.mapNotNull { prefs.getString("source_$it", null)?.let { s -> SkillSource.key(s) } }.toSet()
+
     fun search(query: String): String {
-        val github = "https://api.github.com/search/repositories?q=" + java.net.URLEncoder.encode("$query topic:claude-skills", "UTF-8") + "&per_page=20"
         val results = mutableListOf<JsonElement>()
+        val installedSources = installedSourceKeys()
+        fun isInstalled(source: String?, name: String?): Boolean =
+            (name != null && installed.containsKey(name)) || (source != null && SkillSource.key(source) in installedSources)
+
+        val github = "https://api.github.com/search/repositories?q=" + java.net.URLEncoder.encode("$query topic:claude-skills", "UTF-8") + "&per_page=20"
         runCatching {
-            val body = http.newCall(Request.Builder().url(github).header("Accept", "application/vnd.github+json").build()).execute().use { r ->
-                require(r.isSuccessful) { "GitHub HTTP ${r.code}" }; r.body?.string().orEmpty()
-            }
+            val body = String(readUrl(github, "application/vnd.github+json"), Charsets.UTF_8)
             Json.parseToJsonElement(body).jsonObject["items"]?.jsonArray.orEmpty().forEach { item ->
                 val obj = item.jsonObject
+                val name = obj["name"]?.jsonPrimitive?.contentOrNull
+                val repo = obj["html_url"]?.jsonPrimitive?.contentOrNull
                 results.add(buildJsonObject {
-                    put("name", obj["name"] ?: JsonNull)
-                    put("repo", obj["html_url"] ?: JsonNull)
+                    put("name", name?.let(::JsonPrimitive) ?: JsonNull)
+                    put("repo", repo?.let(::JsonPrimitive) ?: JsonNull)
                     put("description", obj["description"] ?: JsonNull)
+                    put("source", repo?.let(::JsonPrimitive) ?: JsonNull)
+                    put("installed", isInstalled(repo, name))
                 })
             }
         }
         prefs.getString("index_url", null)?.takeIf { it.isNotBlank() }?.let { url ->
             runCatching {
-                val body = http.newCall(Request.Builder().url(url).build()).execute().use { r -> require(r.isSuccessful); r.body?.string().orEmpty() }
-                Json.parseToJsonElement(body).jsonArray.filter { it.toString().contains(query, true) }.take(20).forEach(results::add)
+                val body = String(readUrl(url), Charsets.UTF_8)
+                Json.parseToJsonElement(body).jsonArray.filter { it.toString().contains(query, true) }.take(20).forEach { item ->
+                    val obj = runCatching { item.jsonObject }.getOrNull() ?: return@forEach
+                    val name = (obj["name"] ?: obj["id"])?.jsonPrimitive?.contentOrNull
+                    val source = (obj["source"] ?: obj["url"] ?: obj["repo"])?.jsonPrimitive?.contentOrNull
+                    results.add(buildJsonObject {
+                        put("name", name?.let(::JsonPrimitive) ?: JsonNull)
+                        put("description", obj["description"] ?: JsonNull)
+                        put("repo", source?.let(::JsonPrimitive) ?: JsonNull)
+                        put("source", source?.let(::JsonPrimitive) ?: JsonNull)
+                        put("installed", isInstalled(source, name))
+                    })
+                }
             }
         }
         return JsonArray(results).toString()
@@ -181,12 +318,12 @@ private class SkillDynamicTool(override val name: String, override val descripti
 
 class SkillTool(private val registry: SkillRegistry, override val name: String) : Tool {
     override val description = when (name) {
-        "skill_install" -> "从 URL、本地路径或 file_pick URI 安装 SKILL.md 或 ZIP 技能包。"
+        "skill_install" -> "安装技能：支持 GitHub 仓库地址（自动查找仓库内的 SKILL.md）、SKILL.md 或 ZIP 直链、本地路径、file_pick URI。"
         "skill_list" -> "列出已安装技能。"
         "skill_reload" -> "重新扫描技能目录并注册动态工具。"
         "skill_enable" -> "启用或停用技能。"
         "skill_delete" -> "删除内部技能，需 confirm=true。"
-        "skill_search" -> "搜索 GitHub 技能仓库和自定义索引。"
+        "skill_search" -> "搜索 GitHub 技能仓库和自定义索引，返回可直接用于 skill_install 的 source。"
         "skill_index_set" -> "设置自定义技能 JSON 索引 URL。"
         else -> "查看技能详情。"
     }

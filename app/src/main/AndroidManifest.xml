@@ -12,6 +12,11 @@
     <!-- Sensors (accelerometer/gyro etc. need no runtime permission) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- R84: 心率传感器（BODY_SENSORS，运行时）与运动触发传感器（ACTIVITY_RECOGNITION，Android 10+ 运行时） -->
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- R84: Android 12+ 采样率 >200Hz 需要该普通权限（targetSdk=28 目前豁免，预先声明） -->
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
 
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />

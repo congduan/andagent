@@ -4,6 +4,7 @@ import android.content.Context
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.common.Buffer
 import net.schmizz.sshj.common.KeyType
+import net.schmizz.sshj.connection.ConnectionException
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import net.schmizz.sshj.userauth.keyprovider.KeyFormat
@@ -270,9 +271,8 @@ class SshTool(
         client.timeout = 45_000
         // sshj 三层超时各自独立：transport / connection / sftp engine。
         // client.timeout 只传播到 transport；ConnectionImpl 在 SSHClient 构造时
-        // 拷贝 transport 的**当时值**且不联动——漏设时 Window.awaitExpansion 等
-        // channel window 等待用短默认值，输出量大的命令在慢网络报
-        // 「Timeout expired: 200」（Connection/SFTP 层默认秒级值）。
+        // 拷贝 transport 的**当时值**且不联动，漏设时 channel window 扩容
+        // （Window.Remote）与 global request 用默认值等待，大输出/慢网络容易失败。
         // 三层显式统一为 45s（连接前设置，connect 会再覆盖 transport 为同值）。
         client.connection.setTimeoutMs(45_000)
         // 压缩对广域网吞吐有额外收益（R97b 的 1MB 窗口 + zlib 组合）
@@ -354,7 +354,15 @@ class SshTool(
                                     command.close()
                                     break
                                 }
-                                command.join(200, TimeUnit.MILLISECONDS)
+                                // sshj 的 Channel.join(timeout) 没有布尔返回值：通道仍打开时
+                                // 它直接抛 ConnectionException(TimeoutException)「Timeout expired:
+                                // 200 MILLISECONDS」。裸调用会让任何超过 200ms 的命令立刻报超时，
+                                // 所以只吞掉「等待超时」，真正的连接错误继续上报。
+                                try {
+                                    command.join(200, TimeUnit.MILLISECONDS)
+                                } catch (e: ConnectionException) {
+                                    if (e.cause !is java.util.concurrent.TimeoutException) throw e
+                                }
                             }
                             timedOut = command.isOpen
                             if (timedOut) command.close()

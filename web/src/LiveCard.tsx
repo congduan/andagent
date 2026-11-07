@@ -1,5 +1,5 @@
 import { useI18n } from "./i18n";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { execTool } from "./bridge";
 import { CanvasCard } from "./CanvasCard";
 import { showError } from "./toast";
@@ -36,22 +36,27 @@ export function LiveCard({ code }: { code: string }) {
   const [state, setState] = useState<LiveState | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const poll = useCallback(async () => {
+    const result = await execTool("live_list", {});
+    if (!result.ok) return;
+    try {
+      const loops = (JSON.parse(result.result) as { loops: LiveState[] }).loops;
+      const found = loops.find((loop) => loop.id === id);
+      // 循环已被原生侧移除（停止 / 连续失败自动停止）时，卡片也要落到 stopped，
+      // 否则「停止」按钮会一直挂着，点了只是报错——看起来就是停止不了。
+      if (found) setState(found);
+      else setState((previous) => (previous ? { ...previous, state: "stopped" } : previous));
+    } catch { /* show last valid frame */ }
+  }, [id]);
+
   useEffect(() => {
     if (!id) return;
     let active = true;
-    const poll = async () => {
-      const result = await execTool("live_list", {});
-      if (!active || !result.ok) return;
-      try {
-        const loops = (JSON.parse(result.result) as { loops: LiveState[] }).loops;
-        const found = loops.find((loop) => loop.id === id);
-        if (found) setState(found);
-      } catch { /* show last valid frame */ }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), Math.max(250, spec?.interval_ms ?? 1000));
+    const tick = async () => { if (active) await poll(); };
+    void tick();
+    const timer = window.setInterval(() => void tick(), Math.max(250, spec?.interval_ms ?? 1000));
     return () => { active = false; window.clearInterval(timer); };
-  }, [id, spec?.interval_ms]);
+  }, [id, poll, spec?.interval_ms]);
 
   const action = async (name: string, args: object) => {
     setBusy(true);
@@ -60,8 +65,13 @@ export function LiveCard({ code }: { code: string }) {
       if (!result.ok || result.result.startsWith("ERROR:")) throw new Error(result.result);
       const next = JSON.parse(result.result) as LiveState;
       if (name === "live_start") setId(next.id);
-      setState(next);
-    } catch (e) { showError(String(e)); }
+      if (name === "live_stop") setState((previous) => (previous ? { ...previous, state: "stopped" } : previous));
+      else setState(next);
+    } catch (e) {
+      showError(String(e));
+      // 停止/暂停失败（循环已经不在了等）：立刻刷新真实状态，别让按钮继续骗人。
+      if (name === "live_stop" || name === "live_pause") void poll();
+    }
     finally { setBusy(false); }
   };
 

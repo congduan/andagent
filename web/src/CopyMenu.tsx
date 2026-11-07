@@ -116,23 +116,38 @@ export function useLongPress(onLongPress: (x: number, y: number) => void, ms = 6
   };
 }
 
+/** 菜单里的额外动作项（例如消息的「编辑」「重试」）。 */
+export interface CopyMenuAction {
+  icon: string;
+  label: string;
+  onClick: () => void;
+}
+
 interface CopyMenuProps {
-  text: string;
+  /** 要复制的全文；留空时菜单只显示 actions（例如会话条目的操作菜单）。 */
+  text?: string;
   x: number;
   y: number;
   onClose: () => void;
+  actions?: CopyMenuAction[];
 }
 
-/** One-action context menu ("复制全文") anchored at the long-press point. */
-export function CopyMenu({ text, x, y, onClose }: CopyMenuProps) {
+const MENU_ITEM_HEIGHT = 33;
+const MENU_PADDING = 8;
+
+/** Context menu anchored at the long-press point: actions + 复制全文 + 分享. */
+export function CopyMenu({ text = "", x, y, onClose, actions = [] }: CopyMenuProps) {
   const { t } = useI18n();
   const [state, setState] = useState<"idle" | "done" | "failed">("idle");
   const [shareFailed, setShareFailed] = useState(false);
   const [closing, setClosing] = useState(false);
   const exitRef = useRef<number | null>(null);
   const nativeBridge = hasBridge();
+  const hasText = text.trim().length > 0;
+  const rows = actions.length + (hasText ? 1 : 0) + (nativeBridge && hasText ? 1 : 0);
+  const menuHeight = MENU_PADDING + rows * MENU_ITEM_HEIGHT;
   const left = Math.max(8, Math.min(x, window.innerWidth - 132));
-  const top = Math.max(8, Math.min(y, window.innerHeight - (nativeBridge ? 92 : 54)));
+  const top = Math.max(8, Math.min(y, window.innerHeight - menuHeight));
 
   // 先播退场动画，再通知父级卸载，避免菜单瞬间消失。
   const dismiss = useCallback(() => {
@@ -182,6 +197,17 @@ export function CopyMenu({ text, x, y, onClose }: CopyMenuProps) {
     dismiss();
   };
 
+  // 动作项：先播退场动画再执行，避免气泡在菜单还挂着时突然变形。
+  const runAction = (action: CopyMenuAction) => {
+    if (closing) return;
+    setClosing(true);
+    exitRef.current = window.setTimeout(() => {
+      exitRef.current = null;
+      action.onClick();
+      onClose();
+    }, 130);
+  };
+
   return createPortal(
     <div className={`copy-backdrop${closing ? " closing" : ""}`} onPointerDown={dismiss}>
       <div
@@ -190,13 +216,29 @@ export function CopyMenu({ text, x, y, onClose }: CopyMenuProps) {
         onPointerDown={(event) => event.stopPropagation()}
         role="menu"
       >
-        <button type="button" className="copy-menu-item" onClick={copy} role="menuitem">
-          <span className="copy-menu-icon" aria-hidden="true">
-            ⧉
-          </span>
-          {state === "idle" ? t("copyAll") : state === "done" ? t("copied") : t("copyFailed")}
-        </button>
-        {nativeBridge && (
+        {actions.map((action) => (
+          <button
+            type="button"
+            className="copy-menu-item"
+            key={action.label}
+            onClick={() => runAction(action)}
+            role="menuitem"
+          >
+            <span className="copy-menu-icon" aria-hidden="true">
+              {action.icon}
+            </span>
+            {action.label}
+          </button>
+        ))}
+        {hasText && (
+          <button type="button" className="copy-menu-item" onClick={copy} role="menuitem">
+            <span className="copy-menu-icon" aria-hidden="true">
+              ⧉
+            </span>
+            {state === "idle" ? t("copyAll") : state === "done" ? t("copied") : t("copyFailed")}
+          </button>
+        )}
+        {nativeBridge && hasText && (
           <button type="button" className="copy-menu-item" onClick={share} role="menuitem">
             <span className="copy-menu-icon" aria-hidden="true">
               ↗

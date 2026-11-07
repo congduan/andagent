@@ -491,8 +491,17 @@ button:disabled {
   margin: 24px 0 6px;
 }
 
-.user-bubble {
+.user-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
   max-width: 84%;
+  min-width: 0;
+}
+
+.user-bubble {
+  max-width: 100%;
   padding: 11px 15px;
   border-radius: 18px 18px 5px 18px;
   background: linear-gradient(135deg, var(--user-bubble-a), var(--user-bubble-b));
@@ -506,6 +515,69 @@ button:disabled {
   font-size: 14.5px;
   line-height: 1.65;
   color: var(--user-bubble-text);
+}
+
+/* R82：已被编辑重发过的消息留个淡标记，提示该轮历史其后已重写。 */
+.user-edited {
+  font-size: 10.5px;
+  line-height: 1;
+  color: var(--faint);
+  padding-right: 2px;
+}
+
+/* R82：就地编辑框——沿用气泡的配色与圆角，但改成整宽输入区。 */
+.user-edit {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--user-bubble-a), var(--user-bubble-b));
+  border: 1px solid rgba(140, 150, 255, 0.45);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+}
+
+.user-edit-input {
+  width: 100%;
+  max-height: 220px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--user-bubble-text);
+  font-family: inherit;
+  font-size: 14.5px;
+  line-height: 1.65;
+  overflow-y: auto;
+}
+
+.user-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.user-edit-btn {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(140, 150, 255, 0.35);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.user-edit-btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #0b0e14;
+  font-weight: 600;
+}
+
+.user-edit-btn:disabled {
+  opacity: 0.45;
 }
 
 .msg-assistant {
@@ -2203,6 +2275,24 @@ button:disabled {
   gap: 8px;
 }
 
+.skill-results {
+  margin-top: 10px;
+}
+
+.skill-install {
+  flex: none;
+  padding: 4px 12px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  box-shadow: none;
+}
+
+.skill-install:disabled {
+  opacity: 0.5;
+  cursor: default;
+  box-shadow: none;
+}
+
 .skill-search input {
   flex: 1;
   min-width: 0;
@@ -2611,6 +2701,10 @@ html.theme-transition *::after {
   background: var(--panel-2);
   cursor: pointer;
   transition: background 0.15s ease;
+  /* R95: 长按弹导出菜单——禁用长按选字，否则系统选区会抢走手势。 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .drawer-item:hover {
@@ -2670,6 +2764,9 @@ html.theme-transition *::after {
   font-size: 13px;
   outline: none;
   cursor: text;
+  /* 改名需要能选字：抵消 .drawer-item 的长按禁选。 */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .drawer-item-sub {

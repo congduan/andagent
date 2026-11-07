@@ -1,6 +1,7 @@
 package com.dc.andagent.tools
 
 import android.Manifest
+import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
@@ -11,14 +12,18 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import com.dc.andagent.bridge.PermissionBroker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedInputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import android.util.Base64
@@ -51,7 +56,16 @@ private const val BROWSER_UA =
     "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
-private const val READ_CAP = 100 * 1024
+private const val READ_CAP = 256 * 1024
+private const val READ_MAX_LINES = 2000
+private const val READ_MAX_LINE_CHARS = 20_000
+private const val BINARY_PROBE = 8192
+
+/** Hard cap for a single file_write payload. */
+internal const val WRITE_CAP = 4 * 1024 * 1024
+
+/** Hard cap for read-modify-write in file_edit. */
+internal const val EDIT_CAP = 2 * 1024 * 1024
 
 private fun dirRoot(token: String?): String? = when (token?.lowercase()) {
     null, "", "downloads", "download" -> Environment.DIRECTORY_DOWNLOADS
@@ -94,8 +108,6 @@ private fun mimeFor(name: String, header: String?): String {
     }
 }
 
-private fun displayPath(root: String, name: String): String = "/sdcard/$root/$name"
-
 private suspend fun ensureLegacyWrite(permissions: PermissionBroker): Boolean {
     if (Build.VERSION.SDK_INT >= 29) return true
     return runCatching {
@@ -128,6 +140,260 @@ private fun uniqueFile(dir: File, name: String): File {
         i++
     }
     return candidate
+}
+
+/* ------------------------------------------------------------------ */
+/* shared read/write primitives (file_read / file_write / file_edit)    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One resolvable file: a plain [File] (app-private, legacy public dirs,
+ * Termux home ...) or a content URI (MediaStore / SAF).
+ *
+ * All three file tools go through this so `path`, `dir`+`name` and
+ * `content://` share a single set of rules instead of each tool growing its
+ * own.
+ */
+internal sealed class FileTarget {
+    abstract val displayPath: String
+    abstract fun openStream(): InputStream
+    abstract fun exists(): Boolean
+    abstract fun writeText(text: String): Long
+}
+
+/**
+ * Plain filesystem target. Writes go to a sibling `.tmp` file and are renamed
+ * into place, so an interrupted write can never truncate the original.
+ */
+internal class LocalTarget(val file: File) : FileTarget() {
+    override val displayPath: String get() = file.absolutePath
+
+    override fun openStream(): InputStream = file.inputStream()
+
+    override fun exists(): Boolean = file.isFile
+
+    override fun writeText(text: String): Long {
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        val parent = file.parentFile ?: error("目标没有父目录：${file.path}")
+        if (!parent.exists() && !parent.mkdirs()) error("无法创建目录：${parent.path}")
+        if (file.isDirectory) error("目标是目录：${file.path}")
+        val tmp = File(parent, ".${file.name}.andagent.tmp")
+        tmp.writeBytes(bytes)
+        if (file.exists() && !file.delete()) {
+            tmp.delete()
+            error("无法覆盖：${file.path}")
+        }
+        if (!tmp.renameTo(file)) {
+            tmp.delete()
+            error("无法写入：${file.path}")
+        }
+        return bytes.size.toLong()
+    }
+}
+
+/** content:// target (SAF document or an already-resolved MediaStore row). */
+internal class UriTarget(
+    private val resolver: ContentResolver,
+    private val uri: Uri,
+    override val displayPath: String,
+) : FileTarget() {
+
+    override fun openStream(): InputStream =
+        resolver.openInputStream(uri) ?: error("无法打开：$displayPath")
+
+    override fun exists(): Boolean = runCatching {
+        resolver.openInputStream(uri)?.use { true } ?: false
+    }.getOrDefault(false)
+
+    override fun writeText(text: String): Long {
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        val out = resolver.openOutputStream(uri, "wt")
+            ?: resolver.openOutputStream(uri)
+            ?: error("无法写入：$displayPath")
+        out.use { it.write(bytes) }
+        return bytes.size.toLong()
+    }
+}
+
+/**
+ * A public file addressed through MediaStore.
+ *
+ * Rows are looked up by (DISPLAY_NAME, RELATIVE_PATH) so writing the same name
+ * twice edits that row instead of letting MediaStore auto-suffix a second copy
+ * — the old insert-only path produced `notes.txt`, `notes (1).txt`, ...
+ */
+internal class MediaStoreTarget(
+    private val context: Context,
+    private val collection: Uri,
+    private val relativePath: String,
+    private val displayName: String,
+    override val displayPath: String,
+) : FileTarget() {
+
+    private fun findUri(): Uri? = runCatching {
+        context.contentResolver.query(
+            collection,
+            arrayOf(MediaStore.MediaColumns._ID),
+            "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+            arrayOf(displayName, "$relativePath/"),
+            "${MediaStore.MediaColumns.DATE_MODIFIED} DESC",
+        )?.use { c ->
+            if (c.moveToFirst()) ContentUris.withAppendedId(collection, c.getLong(0)) else null
+        }
+    }.getOrNull()
+
+    override fun exists(): Boolean = findUri() != null
+
+    override fun openStream(): InputStream {
+        val uri = findUri() ?: error("文件不存在：$displayPath")
+        return context.contentResolver.openInputStream(uri) ?: error("无法打开：$displayPath")
+    }
+
+    override fun writeText(text: String): Long {
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        val resolver = context.contentResolver
+
+        findUri()?.let { existing ->
+            runCatching {
+                resolver.openOutputStream(existing, "wt")?.use { it.write(bytes) }
+                    ?: error("无法打开输出流")
+            }.onSuccess { return bytes.size.toLong() }
+        }
+
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeFor(displayName, null))
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(collection, values)
+            ?: error("MediaStore 拒绝创建：$relativePath/$displayName")
+        return runCatching {
+            resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("无法打开输出流")
+            values.clear()
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            bytes.size.toLong()
+        }.getOrElse {
+            runCatching { resolver.delete(uri, null, null) }
+            throw it
+        }
+    }
+}
+
+private val BLOCKED_ROOTS = listOf("/system", "/vendor", "/proc", "/dev", "/sys", "/apex", "/data/data")
+private const val APP_DATA_PREFIX = "/data/user/0/com.dc.andagent"
+
+private fun isBlockedPath(path: String): Boolean =
+    BLOCKED_ROOTS.any { path.startsWith(it) } && !path.startsWith(APP_DATA_PREFIX)
+
+/**
+ * Normalises a user-supplied relative path. Inner `/` separators survive so
+ * `notes/2026/x.md` stays nested; `..` and blank segments are rejected.
+ */
+internal fun sanitizeRelPath(raw: String?): String? {
+    val cleaned = (raw ?: "").trim().replace('\\', '/').trimStart('/')
+    if (cleaned.isBlank()) return null
+    val parts = cleaned.split('/').filter { it.isNotBlank() && it != "." }
+    if (parts.isEmpty() || parts.any { it == ".." }) return null
+    return parts.joinToString("/").take(240)
+}
+
+/** Maps `/sdcard/Documents/a/b.md` → (`Documents`, `a/b.md`). */
+private fun splitPublicPath(path: String): Pair<String, String>? {
+    val ext = Environment.getExternalStorageDirectory().absolutePath
+    val rel = when {
+        path.startsWith("$ext/") -> path.removePrefix("$ext/")
+        path.startsWith("/sdcard/") -> path.removePrefix("/sdcard/")
+        else -> return null
+    }
+    val root = dirRoot(rel.substringBefore('/')) ?: return null
+    return root to rel.substringAfter('/', "")
+}
+
+private fun mediaStoreCollection(root: String): Uri =
+    if (root == Environment.DIRECTORY_DOWNLOADS) {
+        MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+    } else {
+        MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+    }
+
+/** downloads keeps the historical `Download/andagent/` home; others are flat. */
+private fun mediaStoreTarget(context: Context, root: String, rel: String): MediaStoreTarget {
+    val parent = rel.substringBeforeLast('/', "")
+    val display = rel.substringAfterLast('/')
+    val base = if (root == Environment.DIRECTORY_DOWNLOADS) "$root/andagent" else root
+    val relative = if (parent.isBlank()) base else "$base/$parent"
+    return MediaStoreTarget(
+        context = context,
+        collection = mediaStoreCollection(root),
+        relativePath = relative,
+        displayName = display,
+        displayPath = "/sdcard/$relative/$display",
+    )
+}
+
+/**
+ * Single entry point for `path` / `dir`+`name` resolution.
+ *
+ * [forWrite] loosens the "must already exist" rule for app-private and public
+ * targets while keeping the path-traversal and system-directory guards.
+ */
+internal fun resolveTarget(
+    context: Context,
+    path: String?,
+    dir: String?,
+    name: String?,
+    forWrite: Boolean = false,
+): FileTarget? {
+    if (!path.isNullOrBlank()) {
+        if (path.startsWith("content://")) {
+            val uri = runCatching { Uri.parse(path) }.getOrNull() ?: return null
+            return UriTarget(context.contentResolver, uri, path)
+        }
+        val file = runCatching { File(path).canonicalFile }.getOrNull() ?: return null
+        if (isBlockedPath(file.path)) return null
+        if (file.isFile && file.canRead() && (!forWrite || file.canWrite())) return LocalTarget(file)
+
+        // Scoped storage: /sdcard/... is not writable through java.io.File but
+        // the same logical path stays addressable through MediaStore.
+        if (Build.VERSION.SDK_INT >= 29) {
+            splitPublicPath(file.path)?.let { (root, rel) ->
+                if (rel.isNotBlank()) {
+                    val target = mediaStoreTarget(context, root, rel)
+                    if (forWrite || target.exists()) return target
+                }
+            }
+        }
+        return if (forWrite) LocalTarget(file) else null
+    }
+
+    val rel = sanitizeRelPath(name) ?: return null
+    val token = dir?.lowercase()
+
+    if (token == "app_private" || token == "private" || token == "app") {
+        val base = File(context.filesDir, "andagent")
+        val file = runCatching { File(base, rel).canonicalFile }.getOrNull() ?: return null
+        val basePath = runCatching { base.canonicalPath }.getOrDefault(base.absolutePath)
+        if (file.path != basePath && !file.path.startsWith("$basePath/")) return null
+        return when {
+            forWrite -> LocalTarget(file)
+            file.isFile -> LocalTarget(file)
+            else -> null
+        }
+    }
+
+    val root = dirRoot(token ?: "downloads") ?: return null
+    if (Build.VERSION.SDK_INT >= 29) {
+        val target = mediaStoreTarget(context, root, rel)
+        return if (forWrite || target.exists()) target else null
+    }
+    val file = File(Environment.getExternalStoragePublicDirectory(root), rel)
+    return when {
+        forWrite -> LocalTarget(file)
+        file.isFile && file.canRead() -> LocalTarget(file)
+        else -> null
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -266,126 +532,49 @@ class FileWriteTool(
 ) : Tool {
     override val name = "file_write"
     override val description =
-        "写入文本文件。dir: downloads（写入 Download/andagent/）、documents（写入 Documents/）或 app_private（应用私有目录）。" +
-            "返回完整路径与字节数。"
+        "写入文本文件，覆盖同名文件（不会生成 `x (1).txt` 副本）。" +
+            "dir: downloads（Download/andagent/）、documents（Documents/）或 app_private（应用私有目录）；" +
+            "name 可含子目录（如 notes/2026.md）。也可直接用 path 给绝对路径。返回路径与字节数。"
     override val parameters = schemaOf(
         "dir" to strParam("保存位置：downloads | documents | app_private，默认 downloads"),
-        "name" to strParam("文件名，例如 notes.txt"),
+        "name" to strParam("文件名或相对路径，可含子目录，例如 notes/2026.md"),
+        "path" to strParam("可选：绝对路径，优先于 dir+name"),
         "content" to strParam("文件内容（UTF-8）"),
-        required = listOf("name"),
+        required = listOf("content"),
     )
 
-    override suspend fun execute(args: JsonObject): String {
-        val target = (args.strArg("dir") ?: args.strArg("path") ?: "downloads").lowercase()
-        val name = sanitizeName(args.strArg("name")) ?: return "ERROR: 缺少有效的 name"
-        val content = args["content"]?.let {
-            (it as? kotlinx.serialization.json.JsonPrimitive)?.content
-        } ?: ""
+    override suspend fun execute(args: JsonObject): String = withContext(Dispatchers.IO) {
+        val element = args["content"] as? kotlinx.serialization.json.JsonPrimitive
+            ?: return@withContext "ERROR: 缺少 content"
+        val content = element.contentOrNull ?: ""
         val bytes = content.toByteArray(Charsets.UTF_8)
-
-        return when (target) {
-            "app_private", "private", "app" -> {
-                val dir = File(context.filesDir, "andagent")
-                if (!dir.exists() && !dir.mkdirs()) return "ERROR: 无法创建应用私有目录"
-                val file = File(dir, name)
-                runCatching {
-                    file.writeBytes(bytes)
-                    buildJsonObject {
-                        put("saved", true)
-                        put("name", file.name)
-                        put("path", file.absolutePath)
-                        put("bytes", bytes.size)
-                    }.toString()
-                }.getOrElse { "ERROR: 写入私有文件失败：${it.message ?: it.javaClass.simpleName}" }
-            }
-
-            "documents", "document" -> {
-                if (Build.VERSION.SDK_INT >= 29) {
-                    writeMediaStore(
-                        name = name,
-                        bytes = bytes,
-                        relative = Environment.DIRECTORY_DOCUMENTS,
-                    )
-                } else {
-                    if (!ensureLegacyWrite(permissions)) return "ERROR: 需要存储写入权限"
-                    writeLegacy(
-                        name = name,
-                        bytes = bytes,
-                        root = Environment.DIRECTORY_DOCUMENTS,
-                    )
-                }
-            }
-
-            else -> {
-                if (Build.VERSION.SDK_INT >= 29) {
-                    writeMediaStore(
-                        name = name,
-                        bytes = bytes,
-                        relative = "${Environment.DIRECTORY_DOWNLOADS}/andagent",
-                    )
-                } else {
-                    if (!ensureLegacyWrite(permissions)) return "ERROR: 需要存储写入权限"
-                    writeLegacy(
-                        name = name,
-                        bytes = bytes,
-                        root = "${Environment.DIRECTORY_DOWNLOADS}/andagent",
-                    )
-                }
-            }
+        if (bytes.size > WRITE_CAP) {
+            return@withContext "ERROR: 内容 ${bytes.size} 字节超过 ${WRITE_CAP / 1024 / 1024}MB 上限，" +
+                "请改用 file_edit 做局部修改"
         }
-    }
 
-    private fun writeMediaStore(name: String, bytes: ByteArray, relative: String): String {
-        val resolver = context.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, mimeFor(name, null))
-            put(MediaStore.MediaColumns.RELATIVE_PATH, relative)
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        val path = args.strArg("path")
+        if (path.isNullOrBlank() && args.strArg("name").isNullOrBlank()) {
+            return@withContext "ERROR: 需要 name（或 path）"
         }
-        val collection = if (relative.startsWith(Environment.DIRECTORY_DOWNLOADS)) {
-            MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        } else {
-            MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        if (Build.VERSION.SDK_INT < 29 && !ensureLegacyWrite(permissions)) {
+            return@withContext "ERROR: 需要存储写入权限才能保存到公共目录，请在系统设置中授予"
         }
-        val uri = runCatching { resolver.insert(collection, values) }.getOrNull()
-            ?: return "ERROR: 无法在 $relative 创建文件（MediaStore 拒绝）"
-        return runCatching {
-            resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("无法打开输出流")
-            values.clear()
-            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            val actual = runCatching {
-                resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
-                    ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
-            }.getOrNull() ?: name
+
+        val target = resolveTarget(context, path, args.strArg("dir"), args.strArg("name"), forWrite = true)
+            ?: return@withContext "ERROR: 无法解析目标路径（name 不能为空、不能含 ..、不能写入系统目录）"
+
+        runCatching {
+            val existed = target.exists()
+            target.writeText(content)
             buildJsonObject {
                 put("saved", true)
-                put("name", actual)
-                put("path", "/sdcard/$relative/$actual")
-                put("uri", uri.toString())
+                put("path", target.displayPath)
                 put("bytes", bytes.size)
+                put("lines", content.count { it == '\n' } + 1)
+                put("overwritten", existed)
             }.toString()
-        }.getOrElse {
-            runCatching { resolver.delete(uri, null, null) }
-            "ERROR: 写入 $relative 失败：${it.message ?: it.javaClass.simpleName}"
-        }
-    }
-
-    private fun writeLegacy(name: String, bytes: ByteArray, root: String): String {
-        val dir = File(Environment.getExternalStoragePublicDirectory(root), "")
-        if (!dir.exists() && !dir.mkdirs()) return "ERROR: 无法创建目录 ${dir.path}"
-        val file = uniqueFile(dir, name)
-        return runCatching {
-            file.writeBytes(bytes)
-            MediaScannerConnection.scanFile(context, arrayOf(file.path), arrayOf(mimeFor(name, null)), null)
-            buildJsonObject {
-                put("saved", true)
-                put("name", file.name)
-                put("path", file.path)
-                put("bytes", bytes.size)
-            }.toString()
-        }.getOrElse { "ERROR: 写入文件失败：${it.message ?: it.javaClass.simpleName}" }
+        }.getOrElse { "ERROR: 写入失败：${it.message ?: it.javaClass.simpleName}" }
     }
 }
 
@@ -396,114 +585,114 @@ class FileWriteTool(
 class FileReadTool(private val context: Context) : Tool {
     override val name = "file_read"
     override val description =
-        "读取文本文件。可用 path（绝对路径或 content://），也可用 dir（downloads|documents|app_private）+ name。" +
-            "上限 100KB；二进制文件会返回明确错误。"
+        "读取文本文件，按行窗口返回，每行带行号前缀（如 `    12\t内容`）。" +
+            "可用 path（绝对路径或 content://），也可用 dir（downloads|documents|app_private）+ name（可含子目录）。" +
+            "用 offset/limit 翻页，单次最多 $READ_MAX_LINES 行或 256KB；二进制文件返回明确错误。" +
+            "传给 file_edit 的 old_string 时请去掉行号前缀。"
     override val parameters = schemaOf(
         "path" to strParam("文件绝对路径或 content:// URI"),
         "dir" to strParam("与 name 搭配：downloads | documents | app_private"),
-        "name" to strParam("文件名（与 dir 搭配）"),
+        "name" to strParam("文件相对路径（与 dir 搭配，可含子目录）"),
+        "offset" to intParam("起始行号，从 1 开始，默认 1"),
+        "limit" to intParam("最多返回行数，默认 $READ_MAX_LINES，上限 $READ_MAX_LINES"),
+        "numbered" to boolParam("是否加行号前缀，默认 true"),
     )
 
-    override suspend fun execute(args: JsonObject): String {
-        val path = args.strArg("path")
-        val dir = args.strArg("dir")?.lowercase()
-        val name = sanitizeName(args.strArg("name"))
+    override suspend fun execute(args: JsonObject): String = withContext(Dispatchers.IO) {
+        val target = resolveTarget(
+            context = context,
+            path = args.strArg("path"),
+            dir = args.strArg("dir"),
+            name = args.strArg("name"),
+        ) ?: return@withContext "ERROR: 找不到文件（请检查 path 或 dir+name，公共目录需要存储读取权限）"
 
-        val resolved = resolve(path, dir, name)
-            ?: return "ERROR: 找不到文件（请检查 path 或 dir+name，公共目录需要存储读取权限）"
+        val offset = (args.intArg("offset") ?: 1).coerceAtLeast(1)
+        val limit = (args.intArg("limit") ?: READ_MAX_LINES).coerceIn(1, READ_MAX_LINES)
+        val numbered = args.boolArg("numbered") ?: true
 
-        return runCatching {
-            resolved.openStream().use { raw ->
-                val input = BufferedInputStream(raw, 8192)
-                val head = ByteArray(8)
-                input.mark(16)
-                val headLen = input.read(head)
+        runCatching {
+            target.openStream().use { raw ->
+                val input = BufferedInputStream(raw, 64 * 1024)
+                input.mark(BINARY_PROBE)
+                val head = ByteArray(BINARY_PROBE)
+                val headLen = readUpTo(input, head)
                 input.reset()
                 if (looksBinary(head, headLen)) {
                     return@use "ERROR: 这不是文本文件（检测到二进制内容），已拒绝读取"
                 }
-                val cap = READ_CAP
-                val out = ByteArrayOutputStream()
-                val buf = ByteArray(8192)
-                var total = 0
-                var truncated = false
-                while (true) {
-                    val n = input.read(buf)
-                    if (n < 0) break
-                    if (total + n > cap) {
-                        out.write(buf, 0, cap - total)
-                        total = cap
-                        truncated = true
-                        break
-                    }
-                    out.write(buf, 0, n)
-                    total += n
-                }
-                buildJsonObject {
-                    put("path", resolved.displayPath)
-                    put("bytes", total)
-                    put("truncated", truncated)
-                    put("content", out.toString(Charsets.UTF_8.name()))
-                }.toString()
+                readWindow(input, target.displayPath, offset, limit, numbered)
             }
         }.getOrElse { "ERROR: 读取文件失败：${it.message ?: it.javaClass.simpleName}" }
     }
 
-    private data class Resolved(val displayPath: String, val openStream: () -> InputStream)
-
-    private fun resolve(path: String?, dir: String?, name: String?): Resolved? {
-        if (!path.isNullOrBlank()) {
-            if (path.startsWith("content://")) {
-                val uri = runCatching { Uri.parse(path) }.getOrNull() ?: return null
-                val stream = runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
-                    ?: return null
-                return Resolved(path, { stream })
-            }
-            val file = File(path)
-            if (file.isFile && file.canRead()) {
-                return Resolved(file.absolutePath, { file.inputStream() })
-            }
-            // Scoped storage: /sdcard/... may not be directly readable but the
-            // same file is still resolvable by name through MediaStore.
-            if (name == null && !file.name.isNullOrBlank()) {
-                resolveByMediaStore(file.name, dir)?.let { return it }
-            }
+    private fun readUpTo(input: InputStream, buf: ByteArray): Int {
+        var total = 0
+        while (total < buf.size) {
+            val n = input.read(buf, total, buf.size - total)
+            if (n < 0) break
+            total += n
         }
-
-        if (name != null) {
-            if (dir == "app_private" || dir == "private" || dir == "app") {
-                val file = File(File(context.filesDir, "andagent"), name)
-                if (file.isFile && file.canRead()) {
-                    return Resolved(file.absolutePath, { file.inputStream() })
-                }
-            } else {
-                resolveByMediaStore(name, dir)?.let { return it }
-            }
-        }
-        return null
+        return total
     }
 
-    private fun resolveByMediaStore(name: String, dir: String?): Resolved? {
-        if (Build.VERSION.SDK_INT < 29) return null
-        val root = dirRoot(dir ?: "downloads") ?: return null
-        val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
-        val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME)
-        context.contentResolver.query(
-            collection,
-            projection,
-            "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
-            arrayOf(name, "$root/%"),
-            "${MediaStore.MediaColumns.DATE_MODIFIED} DESC",
-        )?.use { c ->
-            if (!c.moveToFirst()) return null
-            val id = c.getLong(0)
-            val actualName = c.getString(1) ?: name
-            val uri = ContentUris.withAppendedId(collection, id)
-            val stream = runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
-                ?: return null
-            return Resolved("/sdcard/$root/$actualName", { stream })
+    /**
+     * Reads a line window. Bounds are checked per line (not per byte) so a
+     * multi-byte character is never sliced in half, and `nextOffset` lets the
+     * model page through a file instead of guessing after `hasMore`.
+     */
+    private fun readWindow(
+        input: InputStream,
+        displayPath: String,
+        offset: Int,
+        limit: Int,
+        numbered: Boolean,
+    ): String {
+        val reader = BufferedReader(InputStreamReader(input, Charsets.UTF_8), 64 * 1024)
+        val out = StringBuilder()
+        var lineNo = 0
+        var returned = 0
+        var bytes = 0L
+        var hasMore = false
+        var encodingIssues = false
+        var lineClipped = false
+
+        while (true) {
+            val line = reader.readLine() ?: break
+            lineNo++
+            if (lineNo < offset) continue
+            if (returned >= limit || bytes >= READ_CAP) {
+                hasMore = true
+                break
+            }
+            val safe = if (line.length > READ_MAX_LINE_CHARS) {
+                lineClipped = true
+                line.substring(0, READ_MAX_LINE_CHARS)
+            } else {
+                line
+            }
+            if (safe.indexOf('\uFFFD') >= 0) encodingIssues = true
+            if (returned > 0) out.append('\n')
+            if (numbered) out.append(lineNo.toString().padStart(6)).append('\t')
+            out.append(safe)
+            returned++
+            bytes += line.encodeToByteArray().size + 1
         }
-        return null
+
+        if (returned == 0) {
+            return "ERROR: offset=$offset 超出文件行数（共 $lineNo 行）"
+        }
+
+        return buildJsonObject {
+            put("path", displayPath)
+            put("offset", offset)
+            put("returnedLines", returned)
+            put("hasMore", hasMore)
+            if (hasMore) put("nextOffset", offset + returned)
+            put("bytes", bytes)
+            if (encodingIssues) put("encodingIssues", true)
+            if (lineClipped) put("lineClipped", true)
+            put("content", out.toString())
+        }.toString()
     }
 
     private fun looksBinary(head: ByteArray, len: Int): Boolean {

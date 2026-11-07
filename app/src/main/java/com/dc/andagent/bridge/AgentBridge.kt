@@ -759,15 +759,12 @@ class AgentBridge(
      */
     @JavascriptInterface
     fun cancelTool(reqId: String) {
-        val sshKey = sshToolKeys[reqId]
-        if (sshKey != null) {
-            SshTransferCancel.request(sshKey)
-            return
-        }
-        val future = toolFutures.remove(reqId) ?: return
-        if (future.cancel(true)) {
-            emitToolResult(reqId, false, "ERROR: 已被用户中断")
-        }
+        sshToolKeys.remove(reqId)?.let { SshTransferCancel.request(it) }
+        toolFutures.remove(reqId)?.cancel(true)
+        // 无条件回一条中断结果：future 可能已经结束（cancel 返回 false）或根本
+        // 不存在，静默 return 会让 JS 侧一直等这个 reqId——卡片永远「执行中」，
+        // 而且映射已被删，第二次点停止彻底无效。重复回包在 JS 侧是幂等的。
+        emitToolResult(reqId, false, "ERROR: 已被用户中断")
     }
 
     @JavascriptInterface

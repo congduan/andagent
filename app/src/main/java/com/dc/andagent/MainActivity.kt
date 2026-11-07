@@ -111,6 +111,7 @@ import com.dc.andagent.tools.ClipboardReadRichTool
 import com.dc.andagent.tools.ClipboardClearTool
 import com.dc.andagent.tools.DeviceInfoTool
 import com.dc.andagent.tools.FileDownloadTool
+import com.dc.andagent.tools.FileEditTool
 import com.dc.andagent.tools.FileListTool
 import com.dc.andagent.tools.FileReadTool
 import com.dc.andagent.tools.FileSearchTool
@@ -181,6 +182,8 @@ import com.dc.andagent.tools.DEVTOOLS_TOOLS
 import com.dc.andagent.tools.WifiInfoTool
 import com.dc.andagent.tools.R35Tool
 import com.dc.andagent.tools.R35_TOOLS
+import com.dc.andagent.tools.HardwareStatusTool
+import com.dc.andagent.tools.HARDWARE_STATUS_TOOLS
 import com.dc.andagent.tools.AndroidReflectTool
 import com.dc.andagent.tools.RestrictedReflectExecutor
 import com.dc.andagent.tools.ApiToolFactory
@@ -446,6 +449,7 @@ class MainActivity : ComponentActivity() {
             "file_search" to FileSearchTool(appContext, permissionBroker),
             "file_write" to FileWriteTool(appContext, permissionBroker),
             "file_read" to FileReadTool(appContext),
+            "file_edit" to FileEditTool(appContext),
             "file_list" to FileListTool(appContext, permissionBroker),
             // R3a: sensors + health
             "sensor_list" to SensorListTool(appContext),
@@ -552,6 +556,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(ADB_TOOLS.associateWith { AdbTool(appContext, it) })
         // R35: 联系人新建/通话记录/应用卸载/APK 提取/二维码/传感器录制/文件加密。
         tools.putAll(R35_TOOLS.associateWith { R35Tool(appContext, permissionBroker, shizuku, it) })
+        // R84: 传感器与机身状态（高频/批量采样、心率、运动触发、热状态、电池电气量、波形触感、参数化录音、音频路由）。
+        tools.putAll(HARDWARE_STATUS_TOOLS.associateWith { HardwareStatusTool(appContext, permissionBroker, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.
         tools["android_reflect"] = AndroidReflectTool(RestrictedReflectExecutor(appContext))
         tools.putAll(com.dc.andagent.memory.MEMORY_TOOLS.associateWith { com.dc.andagent.memory.MemoryTool(memoryStore, it) })

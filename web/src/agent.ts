@@ -9,7 +9,7 @@ import type {
   UserMessage,
 } from "@mariozechner/pi-ai";
 import type { ThreadMessageLike } from "@assistant-ui/react";
-import { execTool, type Settings } from "./bridge";
+import { cancelAgentWork, execTool, STOPPED_RESULT, type Settings } from "./bridge";
 import { PERMISSION_GUIDE, PERMISSION_GUIDE_EN } from "./permissionGuide";
 import { currentLanguage } from "./i18n";
 import { isModelConfigured } from "./modelConfig";
@@ -290,29 +290,50 @@ const TOOL_DEFS = [
   {
     name: "file_write",
     description:
-      "写入文本文件。dir 为 downloads（Download/andagent/）、documents（Documents/）或 app_private（应用私有目录）；返回完整路径与字节数。",
+      "写入文本文件，覆盖同名文件（不会生成 x (1).txt 副本）。dir 为 downloads（Download/andagent/）、documents（Documents/）或 app_private（应用私有目录）；name 可含子目录。也可用 path 给绝对路径。返回完整路径与字节数。",
     parameters: {
       type: "object",
       properties: {
         dir: { type: "string", description: "downloads | documents | app_private，默认 downloads" },
-        name: { type: "string", description: "文件名，例如 notes.txt" },
+        name: { type: "string", description: "文件名或相对路径，可含子目录，例如 notes/2026.md" },
+        path: { type: "string", description: "可选：绝对路径，优先于 dir+name" },
         content: { type: "string", description: "文件内容（UTF-8）" },
       },
-      required: ["name"],
+      required: ["content"],
     },
   },
   {
     name: "file_read",
     description:
-      "读取文本文件。可用 path（绝对路径或 content://），也可用 dir（downloads|documents|app_private）+ name。上限 100KB，二进制文件返回错误。",
+      "读取文本文件，按行窗口返回，每行带行号前缀（如 `    12\\t内容`）。可用 path（绝对路径或 content://），也可用 dir（downloads|documents|app_private）+ name。用 offset/limit 翻页，单次最多 2000 行或 256KB。传给 file_edit 的 old_string 时请去掉行号前缀。",
     parameters: {
       type: "object",
       properties: {
         path: { type: "string", description: "文件绝对路径或 content:// URI" },
         dir: { type: "string", description: "与 name 搭配：downloads | documents | app_private" },
-        name: { type: "string", description: "文件名（与 dir 搭配）" },
+        name: { type: "string", description: "文件相对路径（与 dir 搭配，可含子目录）" },
+        offset: { type: "integer", description: "起始行号，从 1 开始，默认 1" },
+        limit: { type: "integer", description: "最多返回行数，默认 2000，上限 2000" },
+        numbered: { type: "boolean", description: "是否加行号前缀，默认 true" },
       },
       required: [],
+    },
+  },
+  {
+    name: "file_edit",
+    description:
+      "精确替换文件中的文本：把 old_string 换成 new_string。old_string 必须与文件内容完全一致且唯一（重复时报错并给出行号）；一次替换多处设 replace_all=true，删除内容时 new_string 传空字符串。修改已有文件请优先用它，而不是 file_write 整体重写。",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "文件绝对路径或 content:// URI" },
+        dir: { type: "string", description: "与 name 搭配：downloads | documents | app_private" },
+        name: { type: "string", description: "文件相对路径（与 dir 搭配）" },
+        old_string: { type: "string", description: "要替换的原文本，需与文件内容完全一致" },
+        new_string: { type: "string", description: "替换后的文本；空字符串表示删除该片段" },
+        replace_all: { type: "boolean", description: "为 true 时替换所有匹配，默认 false" },
+      },
+      required: ["old_string", "new_string"],
     },
   },
   {
@@ -469,6 +490,7 @@ const TOOL_DEFS = [
         base64: { type: "string", description: "图片 base64（可含 data:image/...;base64, 前缀）" },
         filename: { type: "string", description: "可选：文件名" },
         display_name: { type: "string", description: "可选：相册显示名" },
+        share: { type: "boolean", description: "可选：保存后直接打开系统分享面板" },
       },
       required: ["base64"],
     },
@@ -788,6 +810,7 @@ const HARDWARE_GUIDE = [
   "airpods_monitor_start 开启可从通知停止的后台监听；airpods_monitor_stop 停止；airpods_history 取电量与佩戴历史，可用 ```chart 画续航趋势。",
   "监听值写入 KV 的 airpods/latest 和 airpods/history。```live 循环可用 andagent.kv.get('airpods','latest') 读取；检测佩戴状态 true→false 时用 media_send_key(keycode=pause) 暂停。低电量可调用 notify_send；跨 tick 保存上次状态避免重复触发。",
   "系统事件：媒体会话与通知需先用 notif_permission 在系统设置授权，再开启 media_events_on / notif_events_on；音频设备用 audio_events_on。各通道的 KV 命名空间为 media_events、notif_events、audio_events，latest 与 history 键可供 live 轮询；使用 timestamp 去重。用对应 off 工具或前台通知停止监听。音频设备回调报告添加/移除，不保证获知实际音频路由切换。",
+  "传感器与机身状态：要振动/姿态数据用 sensor_stream（默认 200Hz、多传感器并行落 CSV，返回每轴 stats 与 vibration 判定）；低功耗长序列用 sensor_batch（看 hardwareFifo/avgEventsPerBatch 判断是否真批量）；单点瞬时读数仍用 sensor_read。心率用 heart_rate——多数手机没有该硬件，缺失或 NO_DATA 时如实告知，不要编造数值。「有人动了再叫我」用 significant_motion（一次硬件触发，最长 300s）。发热/降频先看 thermal_status，充放电电流电压与功率用 battery_electrical。触感反馈用 vibrate_waveform（preset 或 timings+amplitudes）。指定录音源/采样率/声道用 audio_record_ex（wav 会返回 peakDbfs/rmsDbfs，可据此确认真的录到声音）；切换扬声器/听筒/蓝牙用 audio_route（只影响通话/通信路由，媒体走向由系统按已连接设备自动选择）。",
 ].join("\n");
 
 const HARDWARE_GUIDE_EN = [
@@ -796,6 +819,7 @@ const HARDWARE_GUIDE_EN = [
   "airpods_monitor_start enables background monitoring with a notification stop action; airpods_monitor_stop stops it. airpods_history supplies battery and in-ear history for a ```chart trend.",
   "Monitor data is available in KV at airpods/latest and airpods/history. A ```live loop can read andagent.kv.get('airpods','latest'). On an in-ear true-to-false transition, call media_send_key(keycode=pause); use notify_send for low charge. Save prior state across ticks to avoid repeats.",
   "System events: media sessions and notifications require notification access via notif_permission before media_events_on / notif_events_on. Audio devices use audio_events_on. Poll latest or history in media_events, notif_events and audio_events KV namespaces from live, deduplicating by timestamp. Use the matching off tool or foreground notification to stop. Audio callbacks report device additions/removals, not guaranteed route changes.",
+  "Sensors and body state: sensor_stream for vibration/attitude data (default 200Hz, multiple sensors in parallel, CSV plus per-axis stats and a vibration verdict); sensor_batch for low-power long captures (read hardwareFifo and avgEventsPerBurst to see whether batching really applies); sensor_read for a single instantaneous value. heart_rate reads TYPE_HEART_RATE — most phones lack it, so report missing hardware or NO_DATA honestly instead of inventing numbers. Use significant_motion for 'tell me when someone moves' (single hardware trigger, up to 300s). thermal_status for heat/throttling, battery_electrical for current, voltage and charge power. Haptics: vibrate_waveform with a preset or timings+amplitudes. For a specific audio source/rate/channels use audio_record_ex (wav returns peakDbfs/rmsDbfs so you can verify audio was captured); switch speaker/earpiece/Bluetooth with audio_route (communication routing only — media follows the system-selected device).",
 ].join("\n");
 
 const SHORTCUT_GUIDE = [
@@ -930,6 +954,17 @@ export interface AgentSnapshot {
   usage: { session: UsageSum; last: LastUsage | null };
 }
 
+/** UI 层用户消息 id：`u-<消息下标>-<时间戳>`（下标指向完整的 PiMessage 数组）。 */
+function userUiId(index: number, timestamp: number): string {
+  return `u-${index}-${timestamp}`;
+}
+
+/** 从 UI 消息 id 反解出完整消息数组里的下标；不是用户消息 id 时返回 -1。 */
+export function userMessageIndexFromUiId(uiId: string): number {
+  const match = /^u-(\d+)-\d+$/.exec(uiId);
+  return match ? Number(match[1]) : -1;
+}
+
 /** 供测试直接校验快照状态映射。 */
 export function toUiMessages(messages: PiMessage[], draft: Draft | null): ThreadMessageLike[] {
   const results = new Map<string, { text: string; isError: boolean }>();
@@ -949,10 +984,13 @@ export function toUiMessages(messages: PiMessage[], draft: Draft | null): Thread
         typeof message.content === "string"
           ? message.content
           : message.content.map((p) => (p.type === "text" ? p.text : "")).join("");
+      // R82: 「已编辑」标记是挂在消息对象上的 sidecar，随会话一并持久化。
+      const edited = (message as { edited?: boolean }).edited === true;
       ui.push({
-        id: `u-${index}-${message.timestamp}`,
+        id: userUiId(index, message.timestamp),
         role: "user",
         content: [{ type: "text", text }],
+        ...(edited ? { metadata: { custom: { edited: true } } } : {}),
         createdAt: new Date(message.timestamp),
       });
       return;
@@ -1182,8 +1220,82 @@ export class AgentEngine {
     this.emit();
   }
 
+  /**
+   * R104: 停止必须对「等待模型」「等待工具」「等待确认」三种状态同时生效。
+   * 只 abort 模型请求时，正在跑的工具（60s～30min）会让停止按钮看起来毫无作用。
+   */
   stop(): void {
-    this.abort?.abort();
+    const controller = this.abort;
+    if (!controller) return;
+    controller.abort();
+    cancelAgentWork();
+  }
+
+  /* --------------------- edit & resend (R82) ------------------------- */
+
+  /**
+   * 编辑已发送的用户消息：截断这条消息及其之后的全部历史（含工具结果与
+   * 助手回复），用新文本重新发起一轮。
+   *
+   * 截断不可逆——调用方负责先向用户确认「已执行的工具操作不会撤销」。
+   * 返回 false 表示目标消息不存在或本轮无法开始。
+   */
+  async editAndResend(uiMessageId: string, text: string): Promise<boolean> {
+    const content = text.trim();
+    if (!content) return false;
+    return this.resendFrom(uiMessageId, content, true);
+  }
+
+  /** 重试本轮：截断这条消息之后的历史，用原文重发。 */
+  async retryFrom(uiMessageId: string): Promise<boolean> {
+    const index = userMessageIndexFromUiId(uiMessageId);
+    const target = index >= 0 ? this.messages[index] : undefined;
+    if (!target || target.role !== "user") return false;
+    const text =
+      typeof target.content === "string"
+        ? target.content
+        : target.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+    if (!text.trim()) return false;
+    return this.resendFrom(uiMessageId, text, false);
+  }
+
+  /**
+   * 截断到目标用户消息并重发。editing=true 时用新文本替换原消息，
+   * 否则原样重发（重试本轮），两种入口共用同一套截断/持久化逻辑。
+   */
+  private async resendFrom(uiMessageId: string, text: string, editing: boolean): Promise<boolean> {
+    if (!(await this.waitIdle())) return false;
+    const index = userMessageIndexFromUiId(uiMessageId);
+    const target = index >= 0 ? this.messages[index] : undefined;
+    if (!target || target.role !== "user") return false;
+    // 没配置模型时不能先截断（否则历史白丢）：交给 send 只写错误提示。
+    if (!isModelConfigured(this.settings)) {
+      await this.send(text, { edited: editing });
+      return false;
+    }
+
+    // 截断 → 会话 token 统计重算 → 立即落盘，避免中途退出留下半截历史。
+    this.messages = this.messages.slice(0, index);
+    this.sessionUsage = sumMessageUsage(this.messages);
+    this.draft = null;
+    this.error = null;
+    this.persist();
+    this.emit();
+
+    // send 内部会追加新的用户消息；editing 时给它打上「已编辑」标记。
+    await this.send(text, { edited: editing });
+    return true;
+  }
+
+  /** 生成中先中断当前轮（复用 stop 的取消链路），等本轮 finally 收尾后再动手。 */
+  private async waitIdle(timeoutMs = 5000): Promise<boolean> {
+    if (!this.running) return true;
+    this.stop();
+    const deadline = Date.now() + timeoutMs;
+    while (this.running && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    return !this.running;
   }
 
   private emit(): void {
@@ -1202,7 +1314,48 @@ export class AgentEngine {
     this.sessions = SessionStore.save(this.sessionId, this.messages);
   }
 
-  async send(text: string): Promise<void> {
+  /** 记录一条工具结果；同一 toolCallId 只写一次（停止补记时幂等）。 */
+  private recordToolResult(call: ToolCall, text: string, isError: boolean): void {
+    if (this.messages.some((m) => m.role === "toolResult" && m.toolCallId === call.id)) return;
+    const toolResult: ToolResultMessage = {
+      role: "toolResult",
+      toolCallId: call.id,
+      toolName: call.name,
+      content: [{ type: "text", text }],
+      isError,
+      timestamp: Date.now(),
+    };
+    this.messages = [...this.messages, toolResult];
+    this.persist();
+    this.emit();
+  }
+
+  /**
+   * R104: 卡片上的「停止」兜底。工具已经不在跑时（历史会话里没落结果的
+   * toolCall、原生回包丢失、本轮刚被整体停止），把卡片补记成中断态，
+   * 否则卡片永远显示「执行中」，而且再点也没有任何反应。
+   */
+  cancelToolCall(callId: string): void {
+    if (!callId) return;
+    if (this.draft && this.draft.tools.some((tool) => tool.id === callId)) {
+      this.draft = { ...this.draft, tools: this.draft.tools.filter((tool) => tool.id !== callId) };
+      this.emit();
+      return;
+    }
+    if (this.messages.some((m) => m.role === "toolResult" && m.toolCallId === callId)) return;
+    for (const message of this.messages) {
+      if (message.role !== "assistant") continue;
+      const call = message.content.find(
+        (part): part is ToolCall => part.type === "toolCall" && part.id === callId,
+      );
+      if (call) {
+        this.recordToolResult(call, STOPPED_RESULT, true);
+        return;
+      }
+    }
+  }
+
+  async send(text: string, options?: { edited?: boolean }): Promise<void> {
     const content = text.trim();
     if (!content || this.running) return;
     if (!isModelConfigured(this.settings)) {
@@ -1221,6 +1374,8 @@ export class AgentEngine {
     const turnSessionId = this.sessionId;
     const sessionChanged = (): boolean => this.sessionId !== turnSessionId;
     const userMessage: UserMessage = { role: "user", content, timestamp: Date.now() };
+    // R82: 「已编辑」是挂在消息对象上的 sidecar，随会话一并持久化。
+    if (options?.edited) (userMessage as { edited?: boolean }).edited = true;
     this.messages = [...this.messages, userMessage];
     this.persist();
     this.emit();
@@ -1232,9 +1387,17 @@ export class AgentEngine {
     setStreamingFlag(true);
     try {
       const pi = await loadPi();
+      if (controller.signal.aborted) {
+        this.finishAborted(pendingText);
+        return;
+      }
       let rounds = 0;
       let finished = false;
       while (rounds < MAX_TOOL_ROUNDS) {
+        if (controller.signal.aborted) {
+          this.finishAborted(pendingText);
+          return;
+        }
         rounds++;
         const model = buildModel(this.settings);
         const stream = pi.stream(
@@ -1280,6 +1443,8 @@ export class AgentEngine {
         let liveTools: ToolView[] = [];
         const roundStart = Date.now();
         for await (const event of stream as AsyncIterable<AssistantMessageEvent>) {
+          // 停止后不再继续消费流事件（原生请求已 cancel，但已排队的行还会到达）。
+          if (controller.signal.aborted) break;
           if (event.type === "text_delta") {
             liveText += event.delta;
             pendingText = liveText;
@@ -1313,6 +1478,11 @@ export class AgentEngine {
           }
         }
 
+        // 停止时不再等 result()（流可能仍挂在原生回包上），直接收尾。
+        if (controller.signal.aborted) {
+          this.finishAborted(pendingText);
+          return;
+        }
         const final = await stream.result();
         if (controller.signal.aborted || final.stopReason === "aborted") {
           this.finishAborted(pendingText);
@@ -1340,20 +1510,24 @@ export class AgentEngine {
         }
 
         for (const call of toolCalls) {
-          const result = await execTool(call.name, call.arguments ?? {}, call.id);
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted) break;
+          // signal 让工具在停止时立刻结算，而不是等 60s/30min 超时。
+          const result = await execTool(
+            call.name,
+            call.arguments ?? {},
+            call.id,
+            undefined,
+            controller.signal,
+          );
           if (sessionChanged()) return; // 会话已删除/切换：本轮作废
-          const toolResult: ToolResultMessage = {
-            role: "toolResult",
-            toolCallId: call.id,
-            toolName: call.name,
-            content: [{ type: "text", text: result.result }],
-            isError: !result.ok,
-            timestamp: Date.now(),
-          };
-          this.messages = [...this.messages, toolResult];
-          this.persist();
-          this.emit();
+          const aborted = controller.signal.aborted;
+          this.recordToolResult(call, aborted ? STOPPED_RESULT : result.result, aborted || !result.ok);
+          if (aborted) break;
+        }
+        if (controller.signal.aborted) {
+          // 停止时尚未执行的 toolCall 也要落一个中断结果，否则卡片一直转圈。
+          for (const call of toolCalls) this.recordToolResult(call, STOPPED_RESULT, true);
+          return;
         }
 
       }

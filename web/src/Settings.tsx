@@ -45,6 +45,8 @@ type DevToolsStatus = ReturnType<typeof getDevToolsStatus> | null;
 type CronTask = ReturnType<typeof cronList>[number];
 type MemoryEntry = { id: string; content: string; category: string; core: boolean };
 type SkillEntry = { name: string; description: string; enabled: boolean; toolCount: number; source: string };
+/** 搜索结果项：source 可直接交给 skillManage("install") 安装。 */
+type SkillResult = { name?: string; description?: string; repo?: string; source: string; installed?: boolean };
 
 const THEME_OPTIONS: ThemeMode[] = ["system", "light", "dark"];
 const CONFIRM_OPTIONS: ConfirmMode[] = ["off", "destructive", "all"];
@@ -68,6 +70,9 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   const [skillsLoaded, setSkillsLoaded] = useState(false);
   const [skillSource, setSkillSource] = useState("");
   const [skillQuery, setSkillQuery] = useState("");
+  const [skillResults, setSkillResults] = useState<SkillResult[] | null>(null);
+  const [skillSearching, setSkillSearching] = useState(false);
+  const [skillInstalling, setSkillInstalling] = useState("");
   const [skillIndex, setSkillIndex] = useState("");
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
   const [memoriesLoaded, setMemoriesLoaded] = useState(false);
@@ -106,6 +111,35 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
 
   const refreshCron = () => { setCronTasks(cronList()); setExactAllowed(cronExactAllowed()); };
   const refreshSkills = () => { try { setSkills(JSON.parse(skillManage("list"))); } catch { setSkills([]); } };
+
+  // 桥调用是同步阻塞的：先把「搜索中 / 安装中」画出来再发起请求，否则按钮毫无反馈。
+  const searchSkills = () => {
+    const query = skillQuery.trim();
+    if (!query) { setSkillResults([]); return; }
+    setSkillSearching(true);
+    window.setTimeout(() => {
+      const raw = skillManage("search", "", query);
+      let next: SkillResult[] = [];
+      try { next = (JSON.parse(raw) as SkillResult[]).filter((item) => !!item?.source); }
+      catch { showResult(raw.startsWith("ERROR:") ? raw : "ERROR: 搜索结果解析失败"); }
+      setSkillResults(next);
+      setSkillSearching(false);
+    }, 0);
+  };
+  const installSkill = (source: string, onSuccess?: () => void) => {
+    const value = source.trim();
+    if (!value) return;
+    setSkillInstalling(value);
+    window.setTimeout(() => {
+      const raw = skillManage("install", "", value);
+      setSkillInstalling("");
+      showResult(raw);
+      if (raw.startsWith("ERROR:")) return;
+      refreshSkills();
+      setSkillResults((prev) => prev?.map((item) => (item.source === value ? { ...item, installed: true } : item)) ?? prev);
+      onSuccess?.();
+    }, 0);
+  };
   const refreshMemories = () => {
     try { setMemories(memoryCall<MemoryEntry[]>("memory_get_all")); }
     catch (e) { showError(String(e)); }
@@ -412,15 +446,39 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
           autoCapitalize="none" autoCorrect="off" spellCheck={false} />
       </label>
       <div className="settings-card-actions">
-        <button type="button" className="btn-primary" onClick={() => { showResult(skillManage("install", "", skillSource)); refreshSkills(); }}>{t("install")}</button>
+        <button type="button" className="btn-primary" disabled={!!skillInstalling}
+          onClick={() => installSkill(skillSource, () => setSkillSource(""))}>{t("install")}</button>
       </div>
       <p className="settings-card-note">{t("skillInstallNote")}</p>
     </>)}
     {section(t("skillDiscoverTitle"), <>
       <div className="skill-search">
-        <input value={skillQuery} onChange={(e) => setSkillQuery(e.target.value)} placeholder={t("skillSearch")} />
-        <button type="button" className="btn-ghost" onClick={() => showResult(skillManage("search", "", skillQuery))}>{t("search")}</button>
+        <input value={skillQuery} onChange={(e) => setSkillQuery(e.target.value)} placeholder={t("skillSearch")}
+          onKeyDown={(e) => { if (e.key === "Enter") searchSkills(); }} />
+        <button type="button" className="btn-ghost" disabled={skillSearching} onClick={searchSkills}>
+          {skillSearching ? t("skillSearching") : t("search")}
+        </button>
       </div>
+      {skillResults !== null && (skillResults.length === 0
+        ? <p className="settings-empty">{skillSearching ? t("skillSearching") : t("skillSearchEmpty")}</p>
+        : <div className="skill-list skill-results">{skillResults.map((item) => {
+            const busy = !!skillInstalling && skillInstalling === item.source;
+            return (
+              <div key={item.source} className="skill-row">
+                <div className="skill-row-main">
+                  <span className="skill-name">{item.name || item.repo || item.source}</span>
+                  <button type="button" className="btn-primary skill-install" disabled={item.installed || busy}
+                    onClick={() => installSkill(item.source)}>
+                    {item.installed ? t("skillInstalled") : busy ? t("installing") : t("install")}
+                  </button>
+                </div>
+                {item.description && <p className="skill-desc">{item.description}</p>}
+                <div className="skill-row-foot">
+                  <span className="skill-source" title={item.source}>{item.repo || item.source}</span>
+                </div>
+              </div>
+            );
+          })}</div>)}
       <details className="settings-details">
         <summary>{t("skillIndexTitle")}</summary>
         <div className="skill-search">

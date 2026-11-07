@@ -122,12 +122,14 @@ class ImageSaveTool(
 ) : Tool {
     override val name = "image_save"
     override val description =
-        "把 base64 编码的图片保存到系统相册（Pictures/AndAgent 目录），保存后立即在相册应用可见。"
+        "把 base64 编码的图片保存到系统相册（Pictures/AndAgent 目录），保存后立即在相册应用可见。" +
+            "share=true 时保存后直接拉起系统分享面板（R95 长图导出）。"
 
     override val parameters = schemaOf(
         "base64" to strParam("图片的 base64 编码（含 data:image/...;base64, 前缀也可）"),
         "filename" to strParam("可选：文件名（省略 .png 等后缀会自动补）"),
         "display_name" to strParam("可选：相册中显示的名称"),
+        "share" to boolParam("可选：true 时保存后直接打开系统分享面板"),
     )
 
     override suspend fun execute(args: JsonObject): String {
@@ -172,6 +174,21 @@ class ImageSaveTool(
             values.clear()
             values.put(MediaStore.Images.Media.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
+            // R95: 长图导出可直接分享——MediaStore 的 content:// 自带读权限授予，
+            // 不需要经过 FileProvider，也不需要把路径回传给前端。
+            if (args.boolArg("share") == true) {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "image/$ext"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                runCatching {
+                    context.startActivity(
+                        Intent.createChooser(send, tr("分享图片", "Share image"))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
+            }
             "WRITTEN: " + tr(
                 "图片已保存到相册 Pictures/AndAgent/$display（${bytes.size / 1024}KB，$ext）",
                 "image saved to Pictures/AndAgent/$display (${bytes.size / 1024}KB, $ext)",

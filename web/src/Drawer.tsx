@@ -4,6 +4,7 @@ import { resolvedTheme, toggleTheme } from "./theme";
 import { useI18n } from "./i18n";
 import { fmtTokens, type UsageSum } from "./usage";
 import { appConfirm } from "./ConfirmDialog";
+import { CopyMenu, useLongPress } from "./CopyMenu";
 
 /* --------------------------- 时间分组折叠 --------------------------- */
 
@@ -68,6 +69,8 @@ function SessionRow({
   onRename,
   onDelete,
   onExport,
+  onExportImage,
+  onShareImage,
   managing,
   selected,
   onToggle,
@@ -79,6 +82,8 @@ function SessionRow({
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onExport: (id: string) => void;
+  onExportImage: (id: string) => void;
+  onShareImage: (id: string) => void;
   managing: boolean;
   selected: boolean;
   onToggle: (id: string) => void;
@@ -87,8 +92,35 @@ function SessionRow({
   const s = session;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(s.title);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // 长按抬起时浏览器还会补一个 click；用它吞掉，避免菜单刚弹出就切走会话。
+  const suppressClick = useRef(false);
   // Esc 取消后 blur 仍会触发，用它避免把旧草稿写回去。
   const cancelRef = useRef(false);
+
+  const openMenu = (x: number, y: number) => {
+    suppressClick.current = true;
+    setMenu({ x, y });
+  };
+  const longPress = useLongPress((x, y) => {
+    if (editing || managing) return;
+    openMenu(x, y);
+  });
+  const menuActions = [
+    { icon: "🖼", label: t("exportLongImage"), onClick: () => onExportImage(s.id) },
+    { icon: "↗", label: t("shareLongImage"), onClick: () => onShareImage(s.id) },
+    { icon: "⤓", label: t("exportMarkdown"), onClick: () => onExport(s.id) },
+    { icon: "✏️", label: t("rename"), onClick: () => startEdit() },
+    {
+      icon: "🗑",
+      label: t("delete"),
+      onClick: () => {
+        void appConfirm(t("confirmDeleteSession", { name: s.title })).then((ok) => {
+          if (ok) onDelete(s.id);
+        });
+      },
+    },
+  ];
 
   const startEdit = () => {
     cancelRef.current = false;
@@ -110,7 +142,16 @@ function SessionRow({
   return (
     <div
       className={`drawer-item ${!managing && active ? "active" : ""} ${selected ? "selected" : ""} ${managing ? "managing" : ""}`}
+      {...longPress}
+      onPointerDown={(event) => {
+        suppressClick.current = false;
+        longPress.onPointerDown(event);
+      }}
       onClick={() => {
+        if (suppressClick.current) {
+          suppressClick.current = false;
+          return;
+        }
         if (editing) return;
         if (managing) { onToggle(s.id); return; }
         onSwitch(s.id);
@@ -201,7 +242,12 @@ function SessionRow({
             className="drawer-action"
             aria-label={t("exportSession", { name: s.title })}
             title={t("export")}
-            onClick={(e) => { e.stopPropagation(); onExport(s.id); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              // R95: 导出图标改成菜单入口（Markdown / 长图 / 分享长图），单点即可选择。
+              const rect = e.currentTarget.getBoundingClientRect();
+              setMenu({ x: rect.right - 120, y: rect.bottom + 6 });
+            }}
           >
             <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="none">
               <path
@@ -235,6 +281,7 @@ function SessionRow({
           </button>
         </span>}
       </span>
+      {menu && <CopyMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} actions={menuActions} />}
     </div>
   );
 }
@@ -256,6 +303,8 @@ export function Drawer({
   onRename,
   onDelete,
   onExport,
+  onExportImage,
+  onShareImage,
   onDeleteMany,
   onExportMany,
   onSettings,
@@ -271,6 +320,8 @@ export function Drawer({
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onExport: (id: string) => void;
+  onExportImage: (id: string) => void;
+  onShareImage: (id: string) => void;
   onDeleteMany: (ids: string[]) => void;
   onExportMany: (ids: string[]) => void;
   onSettings: () => void;
@@ -394,6 +445,8 @@ export function Drawer({
                         onRename={onRename}
                         onDelete={onDelete}
                         onExport={onExport}
+                        onExportImage={onExportImage}
+                        onShareImage={onShareImage}
                         managing={managing}
                         selected={selectedIds.has(s.id)}
                         onToggle={toggleSelected}

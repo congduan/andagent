@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -24,11 +34,12 @@ import {
   type DeeplinkDetail,
   type Settings,
 } from "./bridge";
-import { CopyMenu, selectedText, useLongPress } from "./CopyMenu";
+import { CopyMenu, selectedText, useLongPress, type CopyMenuAction } from "./CopyMenu";
 import { SshTransferHost } from "./SshTransferCard";
 import { Drawer } from "./Drawer";
-import { ConfirmDialog } from "./ConfirmDialog";
+import { appConfirm, ConfirmDialog } from "./ConfirmDialog";
 import { batchConversationMarkdown, conversationMarkdown } from "./exportConversation";
+import { exportConversationImage } from "./exportImage";
 import { MarkdownText } from "./Markdown";
 import { MessageNav, type MessageNavItem } from "./MessageNav";
 import { SettingsPanel, type SettingsPage } from "./Settings";
@@ -38,7 +49,7 @@ import { TEMPLATE_GROUPS } from "./templates";
 import { ToolCard } from "./ToolCard";
 import { fmtTokens } from "./usage";
 import { useI18n } from "./i18n";
-import { showError, showSuccess } from "./toast";
+import { showError, showInfo, showResult, showSuccess } from "./toast";
 import { usePresence } from "./usePresence";
 
 /** metadata.custom 透传的每条消息消耗（agent.ts toUiMessages 写入）。 */
@@ -132,19 +143,154 @@ function UserText({ text }: TextMessagePartProps) {
   return <div className="user-text">{text}</div>;
 }
 
+/** R82：消息编辑/重发需要拿到引擎实例；消息组件由 assistant-ui 渲染，无法透传 props。 */
+const EngineContext = createContext<AgentEngine | null>(null);
+
+/**
+ * 就地编辑已发送的消息。回车换行（与主输入框的触摸行为一致），
+ * Ctrl/Cmd+Enter 或「重新发送」提交，Esc 取消。
+ */
+function UserEditBox({
+  initial,
+  busy,
+  onSubmit,
+  onCancel,
+}: {
+  initial: string;
+  busy: boolean;
+  onSubmit: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const [value, setValue] = useState(initial);
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+
+  // 高度跟随内容，超过上限后内部滚动（与输入框的 maxRows 一致）。
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+  }, [value]);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+
+  const submit = () => {
+    if (busy || !value.trim()) return;
+    onSubmit(value);
+  };
+
+  return (
+    <div className="user-edit">
+      <textarea
+        ref={ref}
+        className="user-edit-input"
+        value={value}
+        rows={1}
+        aria-label={t("editMessage")}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onCancel();
+          } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            submit();
+          }
+        }}
+      />
+      <div className="user-edit-actions">
+        <button type="button" className="user-edit-btn" onClick={onCancel}>
+          {t("cancel")}
+        </button>
+        <button
+          type="button"
+          className="user-edit-btn primary"
+          disabled={busy || !value.trim()}
+          onClick={submit}
+        >
+          {t("resend")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function UserMessage() {
+  const { t } = useI18n();
   const text = useMessageText();
   const messageId = useAuiState((state) => state.message.id);
+  const edited = useAuiState(
+    (state) => (state.message.metadata?.custom as { edited?: boolean } | undefined)?.edited === true,
+  );
+  const running = useAuiState((state) => state.thread.isRunning);
+  const engine = useContext(EngineContext);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // null = 未编辑；字符串 = 编辑草稿（点「重新发送」才截断重发）。
+  const [editing, setEditing] = useState<string | null>(null);
   const longPress = useLongPress((x, y) => setMenu({ x, y }));
+
+  const actions: CopyMenuAction[] =
+    engine && !running
+      ? [
+          { icon: "✎", label: t("editMessage"), onClick: () => setEditing(text) },
+          {
+            icon: "↻",
+            label: t("retryMessage"),
+            onClick: () => {
+              void (async () => {
+                if (!(await appConfirm(t("retryConfirm")))) return;
+                void engine.retryFrom(messageId);
+              })();
+            },
+          },
+        ]
+      : [];
+
+  const submitEdit = (value: string) => {
+    if (!engine) return;
+    void (async () => {
+      if (!(await appConfirm(t("editConfirm")))) return;
+      setEditing(null);
+      void engine.editAndResend(messageId, value);
+    })();
+  };
+
   return (
     // id 供「对话记录」快捷导航定位（MessageNav 用 msg-<id> 查找节点）。
-    <MessagePrimitive.Root id={`msg-${messageId}`} className="msg msg-user" {...longPress}>
-      <div className="user-bubble">
-        <MessagePrimitive.Parts components={{ Text: UserText }} />
-      </div>
-      {menu && text && (
-        <CopyMenu text={text} x={menu.x} y={menu.y} onClose={() => setMenu(null)} />
+    <MessagePrimitive.Root
+      id={`msg-${messageId}`}
+      className="msg msg-user"
+      {...(editing !== null ? {} : longPress)}
+    >
+      {editing !== null ? (
+        <UserEditBox
+          initial={editing}
+          busy={running}
+          onSubmit={submitEdit}
+          onCancel={() => setEditing(null)}
+        />
+      ) : (
+        <div className="user-col">
+          <div className="user-bubble">
+            <MessagePrimitive.Parts components={{ Text: UserText }} />
+          </div>
+          {edited && <div className="user-edited">{t("editedMark")}</div>}
+        </div>
+      )}
+      {menu && text && editing === null && (
+        <CopyMenu
+          text={text}
+          x={menu.x}
+          y={menu.y}
+          actions={actions}
+          onClose={() => setMenu(null)}
+        />
       )}
     </MessagePrimitive.Root>
   );
@@ -607,12 +753,18 @@ export default function App() {
       setDrawerOpen(false);
     };
     window.addEventListener("andagent:session-switch", switchByEvent);
+    // R104: 卡片上的「停止」——工具已不在跑时也要把卡片落成中断态。
+    const cancelToolCard = (event: Event) => {
+      engine.cancelToolCall(String((event as CustomEvent<string>).detail ?? ""));
+    };
+    window.addEventListener("andagent:tool-cancel", cancelToolCard);
     // Links received before the JS bundle mounted are queued by MainActivity.
     const timer = window.setTimeout(drain, 250);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener("andagent:deeplink-flush", drain);
       window.removeEventListener("andagent:session-switch", switchByEvent);
+      window.removeEventListener("andagent:tool-cancel", cancelToolCard);
     };
   }, [engine]);
 
@@ -639,6 +791,12 @@ export default function App() {
   };
 
   const hasMessages = snapshot.messages.length > 0;
+  // R95: 会话导出长图（相册 + 可选直接分享）。标题取自会话索引，缺省用「新对话」。
+  const exportLongImage = (id: string, share = false) => {
+    const title = snapshot.sessions.find((item) => item.id === id)?.title ?? t("newChat");
+    showInfo(t(share ? "longImageSharing" : "longImageExporting"));
+    void exportConversationImage(id, title, { share }).then((result) => showResult(result));
+  };
   // 「对话记录」列表：本次会话里输入过的每一条消息（保持发送顺序）。
   const userInputs = useMemo<MessageNavItem[]>(() => {
     const items: MessageNavItem[] = [];
@@ -655,165 +813,188 @@ export default function App() {
   }, [snapshot.messages]);
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <div className="app">
-        <header className="app-head">
-          <div className="head-left">
-            <button
-              type="button"
-              className="icon-btn"
-              title={t("sessions")}
-              aria-label={t("sessions")}
-              onClick={() => setDrawerOpen(true)}
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                <path
-                  d="M4 6h16M4 12h16M4 18h16"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-            <div className="brand">
-              <div className="brand-text">
-                <strong>AndAgent</strong>
-                <span>{hasBridge() ? `v${appVersion}` : t("browserPreviewVersion", { version: appVersion })}</span>
+    <EngineContext.Provider value={engine}>
+      <AssistantRuntimeProvider runtime={runtime}>
+        <div className="app">
+          <header className="app-head">
+            <div className="head-left">
+              <button
+                type="button"
+                className="icon-btn"
+                title={t("sessions")}
+                aria-label={t("sessions")}
+                onClick={() => setDrawerOpen(true)}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path
+                    d="M4 6h16M4 12h16M4 18h16"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+              <div className="brand">
+                <div className="brand-text">
+                  <strong>AndAgent</strong>
+                  <span>{hasBridge() ? `v${appVersion}` : t("browserPreviewVersion", { version: appVersion })}</span>
+                </div>
               </div>
             </div>
-          </div>
-          <div className="head-actions">
-            <button
-              type="button"
-              className="model-chip"
-              title={t("modelSettings")}
-              onClick={openModelSetup}
-            >
-              {settings.model || t("connectModel")}
-            </button>
-            {/* 会话切换时用 key 重置：面板收起，列表重新按新会话计算。 */}
-            <MessageNav key={snapshot.sessionId} items={userInputs} />
-            <button
-              type="button"
-              className="head-chip"
-              title={t("newChat")}
-              aria-label={t("newChat")}
-              disabled={!hasMessages || snapshot.running}
-              onClick={() => engine.newSession()}
-            >
-              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
-                <path
-                  d="M12 5v14M5 12h14"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-          </div>
-        </header>
-
-        {!isModelConfigured(settings) && (
-          <div className="banner">
-            <span>{t("modelNotConfigured")}</span>
-            <button type="button" onClick={openModelSetup}>
-              {t("modelConfigure")}
-            </button>
-          </div>
-        )}
-
-        <ThreadPrimitive.Root className="thread">
-          <ThreadPrimitive.Viewport className="viewport" autoScroll>
-            <div className="thread-inner">
-              <ThreadPrimitive.Empty>
-                <div className="empty">
-                  <h1>{t("emptyTitle")}</h1>
-                  <p>{t("emptyBody")}</p>
-                  <TemplateGrid />
-                </div>
-              </ThreadPrimitive.Empty>
-              <ThreadPrimitive.Messages
-                components={{
-                  UserMessage,
-                  AssistantMessage,
-                }}
-              />
-              <ThreadWaitingHint />
+            <div className="head-actions">
+              <button
+                type="button"
+                className="model-chip"
+                title={t("modelSettings")}
+                onClick={openModelSetup}
+              >
+                {settings.model || t("connectModel")}
+              </button>
+              {/* 会话切换时用 key 重置：面板收起，列表重新按新会话计算。 */}
+              <MessageNav key={snapshot.sessionId} items={userInputs} />
+              <button
+                type="button"
+                className="head-chip"
+                title={t("exportLongImage")}
+                aria-label={t("exportLongImage")}
+                disabled={!hasMessages || !hasBridge() || snapshot.running}
+                onClick={() => exportLongImage(snapshot.sessionId)}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                  <path
+                    d="M4 6.5A2.5 2.5 0 016.5 4h11A2.5 2.5 0 0120 6.5v11a2.5 2.5 0 01-2.5 2.5h-11A2.5 2.5 0 014 17.5v-11z"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    fill="none"
+                  />
+                  <path d="M4 15.5l4.2-4 3.4 3.1 2.6-2.3 5.8 5.2" stroke="currentColor" strokeWidth="1.7" fill="none" strokeLinecap="round" />
+                  <circle cx="9" cy="8.6" r="1.5" fill="currentColor" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="head-chip"
+                title={t("newChat")}
+                aria-label={t("newChat")}
+                disabled={!hasMessages || snapshot.running}
+                onClick={() => engine.newSession()}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                  <path
+                    d="M12 5v14M5 12h14"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
             </div>
-          </ThreadPrimitive.Viewport>
-        </ThreadPrimitive.Root>
+          </header>
 
-        <SshTransferHost />
-        <Composer hasKey={isModelConfigured(settings)} />
+          {!isModelConfigured(settings) && (
+            <div className="banner">
+              <span>{t("modelNotConfigured")}</span>
+              <button type="button" onClick={openModelSetup}>
+                {t("modelConfigure")}
+              </button>
+            </div>
+          )}
 
-        {settingsPresence.rendered && (
-          <SettingsPanel
-            settings={settings}
-            page={settingsPage}
-            closing={settingsPresence.closing}
-            onNavigate={setSettingsPage}
-            // 子页返回只改 UI 状态；history 层由 backLayers.sync() 收回，
-            // 其程序化 back() 的回响由 pendingBacks 吸收，不会连带关掉设置本身。
-            onBack={() => setSettingsPage("home")}
-            onClose={closeSettings}
-            onSave={saveSettings}
-            onModelSetup={openModelSetup}
-          />
-        )}
+          <ThreadPrimitive.Root className="thread">
+            <ThreadPrimitive.Viewport className="viewport" autoScroll>
+              <div className="thread-inner">
+                <ThreadPrimitive.Empty>
+                  <div className="empty">
+                    <h1>{t("emptyTitle")}</h1>
+                    <p>{t("emptyBody")}</p>
+                    <TemplateGrid />
+                  </div>
+                </ThreadPrimitive.Empty>
+                <ThreadPrimitive.Messages
+                  components={{
+                    UserMessage,
+                    AssistantMessage,
+                  }}
+                />
+                <ThreadWaitingHint />
+              </div>
+            </ThreadPrimitive.Viewport>
+          </ThreadPrimitive.Root>
 
-        {modelPresence.rendered && (
-          <ModelSetup
-            settings={settings}
-            onboarding={modelOnboarding}
-            closing={modelPresence.closing}
-            onClose={closeModelSetup}
-            onSave={saveSettings}
-          />
-        )}
+          <SshTransferHost />
+          <Composer hasKey={isModelConfigured(settings)} />
 
-        <ConfirmDialog />
+          {settingsPresence.rendered && (
+            <SettingsPanel
+              settings={settings}
+              page={settingsPage}
+              closing={settingsPresence.closing}
+              onNavigate={setSettingsPage}
+              // 子页返回只改 UI 状态；history 层由 backLayers.sync() 收回，
+              // 其程序化 back() 的回响由 pendingBacks 吸收，不会连带关掉设置本身。
+              onBack={() => setSettingsPage("home")}
+              onClose={closeSettings}
+              onSave={saveSettings}
+              onModelSetup={openModelSetup}
+            />
+          )}
 
-        <Drawer
-          open={drawerOpen}
-          sessions={snapshot.sessions}
-          currentId={snapshot.sessionId}
-          version={appVersion}
-          sessionUsage={snapshot.usage.session}
-          onClose={() => setDrawerOpen(false)}
-          onNew={() => {
-            engine.newSession();
-            setDrawerOpen(false);
-          }}
-          onSwitch={(id) => engine.switchSession(id)}
-          onRename={(id, title) => engine.renameSession(id, title)}
-          onSettings={() => { setDrawerOpen(false); setSettingsPage("home"); setShowSettings(true); }}
-          onDelete={(id) => engine.deleteSession(id)}
-          onDeleteMany={(ids) => engine.deleteSessions(ids)}
-          onExportMany={(ids) => {
-            const selected = ids.flatMap((id) => {
+          {modelPresence.rendered && (
+            <ModelSetup
+              settings={settings}
+              onboarding={modelOnboarding}
+              closing={modelPresence.closing}
+              onClose={closeModelSetup}
+              onSave={saveSettings}
+            />
+          )}
+
+          <ConfirmDialog />
+
+          <Drawer
+            open={drawerOpen}
+            sessions={snapshot.sessions}
+            currentId={snapshot.sessionId}
+            version={appVersion}
+            sessionUsage={snapshot.usage.session}
+            onClose={() => setDrawerOpen(false)}
+            onNew={() => {
+              engine.newSession();
+              setDrawerOpen(false);
+            }}
+            onSwitch={(id) => engine.switchSession(id)}
+            onRename={(id, title) => engine.renameSession(id, title)}
+            onSettings={() => { setDrawerOpen(false); setSettingsPage("home"); setShowSettings(true); }}
+            onDelete={(id) => engine.deleteSession(id)}
+            onDeleteMany={(ids) => engine.deleteSessions(ids)}
+            onExportMany={(ids) => {
+              const selected = ids.flatMap((id) => {
+                const session = snapshot.sessions.find((s) => s.id === id);
+                return session ? [session] : [];
+              });
+              if (selected.length === 0) return;
+              const today = new Date();
+              const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+              const title = selected.length === 1
+                ? selected[0].title
+                : `conversations-batch-${date}`;
+              const markdown = selected.length === 1
+                ? conversationMarkdown(selected[0].id, selected[0].title)
+                : batchConversationMarkdown(selected);
+              const result = exportConversation(title, markdown);
+              if (result.startsWith("ERROR:")) showError(result);
+            }}
+            onExport={(id) => {
               const session = snapshot.sessions.find((s) => s.id === id);
-              return session ? [session] : [];
-            });
-            if (selected.length === 0) return;
-            const today = new Date();
-            const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-            const title = selected.length === 1
-              ? selected[0].title
-              : `conversations-batch-${date}`;
-            const markdown = selected.length === 1
-              ? conversationMarkdown(selected[0].id, selected[0].title)
-              : batchConversationMarkdown(selected);
-            const result = exportConversation(title, markdown);
-            if (result.startsWith("ERROR:")) showError(result);
-          }}
-          onExport={(id) => {
-            const session = snapshot.sessions.find((s) => s.id === id);
-            if (!session) return;
-            const result = exportConversation(session.title, conversationMarkdown(id, session.title));
-            if (result.startsWith("ERROR:")) showError(result);
-          }}
-        />
-      </div>
-    </AssistantRuntimeProvider>
+              if (!session) return;
+              const result = exportConversation(session.title, conversationMarkdown(id, session.title));
+              if (result.startsWith("ERROR:")) showError(result);
+            }}
+            onExportImage={(id) => exportLongImage(id)}
+            onShareImage={(id) => exportLongImage(id, true)}
+          />
+        </div>
+      </AssistantRuntimeProvider>
+    </EngineContext.Provider>
   );
 }

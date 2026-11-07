@@ -14,7 +14,7 @@ export type TransferEvent = {
   savedPath?: string;
 };
 
-export type TransferRow = TransferEvent & { at: number; speed: number; cancelling?: boolean };
+export type TransferRow = TransferEvent & { at: number; speed: number; cancelling?: boolean; cancellingAt?: number };
 
 export function updateTransfer(rows: TransferRow[], event: TransferEvent, at: number): TransferRow[] {
   if (!event.key || !event.name || !["download", "upload"].includes(event.direction)) return rows;
@@ -53,12 +53,25 @@ export function SshTransferHost() {
     const sweep = window.setInterval(() => {
       setRows(previous => {
         const now = Date.now();
-        const next = previous.filter(row => {
-          if (row.type !== "ssh.transfer.done") return true;
-          const keepMs = row.ok ? 4000 : 8000;
-          return now - row.at < keepMs;
+        let changed = false;
+        const next = previous.flatMap(row => {
+          if (row.type === "ssh.transfer.done") {
+            const keepMs = row.ok ? 4000 : 8000;
+            if (now - row.at >= keepMs) {
+              changed = true;
+              return [];
+            }
+            return [row];
+          }
+          // 取消请求可能被忽略（key 不匹配 / 传输线程没响应）：超时后恢复按钮，
+          // 否则卡片会永远停在「正在取消」，用户再也点不了第二次。
+          if (row.cancelling && row.cancellingAt && now - row.cancellingAt > 6000) {
+            changed = true;
+            return [{ ...row, cancelling: false, cancellingAt: undefined }];
+          }
+          return [row];
         });
-        return next.length === previous.length ? previous : next;
+        return changed ? next : previous;
       });
     }, 1000);
     return () => {
@@ -86,7 +99,7 @@ export function SshTransferHost() {
           {failed && <span className="ssh-transfer-failed-label">{t("sshTransferFailed")}</span>}
           {!done && <button type="button" disabled={row.cancelling} onClick={() => {
             cancelSshTransfer(row.key);
-            setRows(previous => previous.map(item => item.key === row.key ? { ...item, cancelling: true } : item));
+            setRows(previous => previous.map(item => item.key === row.key ? { ...item, cancelling: true, cancellingAt: Date.now() } : item));
           }}>{t(row.cancelling ? "sshTransferCancelling" : "sshTransferCancel")}</button>}
           {done && <button type="button" className="ssh-transfer-dismiss" aria-label={t("close")} onClick={() => {
             setRows(previous => previous.filter(item => item.key !== row.key));

@@ -18,6 +18,19 @@ export function appConfirm(message: string): Promise<boolean> {
   });
 }
 
+/**
+ * 关闭当前确认弹窗并按「拒绝」处理。用户点「停止」时调用：
+ * 否则工具会一直卡在确认弹窗上，停止按钮看起来毫无反应。
+ */
+export function cancelConfirmDialog(): boolean {
+  if (!pending) return false;
+  const req = pending;
+  pending = null;
+  req.resolve(false);
+  listeners.forEach((l) => l(null));
+  return true;
+}
+
 export function ConfirmDialog() {
   const { t } = useI18n();
   const [req, setReq] = useState<ConfirmRequest | null>(null);

@@ -1,8 +1,9 @@
 import { currentLanguage, translate } from "./i18n";
-import { appConfirm } from "./ConfirmDialog";
+import { appConfirm, cancelConfirmDialog } from "./ConfirmDialog";
 import { loadConfirmMode } from "./confirmMode";
 import { TOOL_DESTRUCTIVE, TOOL_META } from "./toolMeta";
-const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec"]);
+// significant_motion (R84) 会主动阻塞等待硬件触发，最长 300s，必须走长任务超时。
+const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "significant_motion"]);
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
  *
@@ -38,7 +39,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "## 能力总览（按用户意图选择工具）",
   "- 网络搜索：web_search（无需 key）/ web_read（读网页正文）；问时效性问题先用搜索。",
   "- 设备状态：device_info / battery_detail / sensor_list / sensor_read / location_get / location_status / steps_today / steps_history",
-  "- 文件与相册：storage_scan / album_stats / file_download / file_search / file_read / file_write / file_list / file_pick / image_save / image_info / image_preview / image_edit / image_collage / open_folder",
+  "- 文件与相册：storage_scan / album_stats / file_download / file_search / file_read / file_write / file_edit / file_list / file_pick / image_save / image_info / image_preview / image_edit / image_collage / open_folder",
   "- 日历与提醒：calendar_list / calendar_events / calendar_add / calendar_delete / alarm_set / timer_set",
   "- 通讯：phone_call / sms_send / clipboard_read / clipboard_write / clipboard_write_rich（HTML/URI/图片）/ clipboard_read_rich（全类型+预览）/ clipboard_clear / notify_send / contact 查询暂不支持",
   "- 网络与连接：wifi_info / wifi_toggle / wifi_connect / wifi_connect_strong / wifi_saved_list / wifi_forget / bt_scan / bt_paired_list / bt_connect / bt_connect_direct / bt_toggle",
@@ -61,7 +62,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "",
   "## 工作纪律",
   "1. 先读懂意图再选工具；一次任务里相关工具可连续调用，但每步等结果再决定下一步。",
-  "2. 写入/破坏性操作（calendar_add、calendar_delete、alarm_set、file_write、file_download、image_save、sms_send、phone_call、wifi_forget、bt_toggle、wifi_toggle、input_*、pkg_install、nfc_write_*、nfc_mf_write_block、nfc_ul_write_page、ssh_exec、adb_shell、adb_pull、adb_push、adb_input、adb_scrcpy_record）：执行前用一句话说明将改动什么；用户已明确要求的可直接执行。nfc_mf_write_block 写块 0（厂商块/UID）可能使卡永久变砖，必须 allow_block0 + confirm_block0 双重确认并如实告知风险。ssh_exec 命中破坏性 pattern 时返回 CONFIRM_REQUIRED，必须先取得用户确认再以 confirm=true 重试。adb_shell 复用同一破坏性命令 guard：命中 rm -rf/mkfs/dd/reboot 等会返回 CONFIRM_REQUIRED，须向用户说明并以 confirm=true 重试；adb_connect 首次连接需在目标手机弹框点「允许」后重连一次。",
+  "2. 写入/破坏性操作（calendar_add、calendar_delete、alarm_set、file_write、file_edit、file_download、image_save、sms_send、phone_call、wifi_forget、bt_toggle、wifi_toggle、input_*、pkg_install、nfc_write_*、nfc_mf_write_block、nfc_ul_write_page、ssh_exec、adb_shell、adb_pull、adb_push、adb_input、adb_scrcpy_record）：执行前用一句话说明将改动什么；用户已明确要求的可直接执行。nfc_mf_write_block 写块 0（厂商块/UID）可能使卡永久变砖，必须 allow_block0 + confirm_block0 双重确认并如实告知风险。ssh_exec 命中破坏性 pattern 时返回 CONFIRM_REQUIRED，必须先取得用户确认再以 confirm=true 重试。adb_shell 复用同一破坏性命令 guard：命中 rm -rf/mkfs/dd/reboot 等会返回 CONFIRM_REQUIRED，须向用户说明并以 confirm=true 重试；adb_connect 首次连接需在目标手机弹框点「允许」后重连一次。",
   "3. 权限被拒时按权限纪律处理（见下），不要反复重试同一权限。",
   "4. 涉及删除、发送短信、拨打电话：除非用户明确给出对象和内容，否则先复述待执行动作等确认。",
   "",
@@ -89,7 +90,7 @@ export const DEFAULT_SYSTEM_PROMPT_EN = [
   "## Capabilities (choose tools based on user intent)",
   "- Web: web_search (no key required) / web_read (page text). Search first for time-sensitive questions.",
   "- Device: device_info / battery_detail / sensor_list / sensor_read / location_get / location_status / steps_today / steps_history",
-  "- Files and photos: storage_scan / album_stats / file_download / file_search / file_read / file_write / file_list / file_pick / image_save / image_info / image_preview / image_edit / image_collage / open_folder",
+  "- Files and photos: storage_scan / album_stats / file_download / file_search / file_read / file_write / file_edit / file_list / file_pick / image_save / image_info / image_preview / image_edit / image_collage / open_folder",
   "- Calendar and reminders: calendar_list / calendar_events / calendar_add / calendar_delete / alarm_set / timer_set",
   "- Communication: phone_call / sms_send / clipboard_read / clipboard_write / clipboard_write_rich (HTML/URI/image) / clipboard_read_rich (all types and previews) / clipboard_clear / notify_send. Contact lookup is not supported yet.",
   "- Connectivity: wifi_info / wifi_toggle / wifi_connect / wifi_connect_strong / wifi_saved_list / wifi_forget / bt_scan / bt_paired_list / bt_connect / bt_connect_direct / bt_toggle",
@@ -112,7 +113,7 @@ export const DEFAULT_SYSTEM_PROMPT_EN = [
   "",
   "## Working rules",
   "1. Understand the request before choosing tools. Related tools can be used in sequence, but wait for each result before deciding the next step.",
-  "2. Before writes or destructive actions (calendar_add, calendar_delete, alarm_set, file_write, file_download, image_save, sms_send, phone_call, wifi_forget, bt_toggle, wifi_toggle, input_*, pkg_install, nfc_write_*, nfc_mf_write_block, nfc_ul_write_page, ssh_exec, adb_shell, adb_pull, adb_push, adb_input, adb_scrcpy_record), state what will change in one sentence. If the user already clearly asked, proceed. Writing MIFARE block 0 can permanently brick a card; require allow_block0 and confirm_block0 and explain the risk. ssh_exec returns CONFIRM_REQUIRED for destructive patterns; obtain user confirmation, then retry with confirm=true. adb_shell reuses the same command guard: rm -rf/mkfs/dd/reboot etc. return CONFIRM_REQUIRED — explain the impact, then retry with confirm=true. adb_connect first connection needs the user to tap Allow on the target phone, then reconnect once.",
+  "2. Before writes or destructive actions (calendar_add, calendar_delete, alarm_set, file_write, file_edit, file_download, image_save, sms_send, phone_call, wifi_forget, bt_toggle, wifi_toggle, input_*, pkg_install, nfc_write_*, nfc_mf_write_block, nfc_ul_write_page, ssh_exec, adb_shell, adb_pull, adb_push, adb_input, adb_scrcpy_record), state what will change in one sentence. If the user already clearly asked, proceed. Writing MIFARE block 0 can permanently brick a card; require allow_block0 and confirm_block0 and explain the risk. ssh_exec returns CONFIRM_REQUIRED for destructive patterns; obtain user confirmation, then retry with confirm=true. adb_shell reuses the same command guard: rm -rf/mkfs/dd/reboot etc. return CONFIRM_REQUIRED — explain the impact, then retry with confirm=true. adb_connect first connection needs the user to tap Allow on the target phone, then reconnect once.",
   "3. Follow the permission rules below if access is denied. Do not repeat the same permission request.",
   "4. For deletion, SMS, or calls, restate the action and wait for confirmation unless the user explicitly specified the target and content.",
   "",
@@ -490,15 +491,58 @@ const toolPending = new Map<string, ToolPending>();
 const toolReqByCallId = new Map<string, string>();
 let seq = 0;
 
-/** R39: 中断一个正在执行的工具调用（通过模型侧 toolCallId 找到原生 reqId）。 */
+/** 卡片上「停止」写入中断结果的固定文案（ToolCard 据此显示「已中断」）。 */
+export const STOPPED_RESULT = "ERROR: 已被用户中断";
+
+/**
+ * R104: 卡片上的「停止」。以前只发一条原生 cancelTool 就返回，一旦原生没有
+ * 回包（future 已完成、事件丢失、历史会话里的 toolCall 根本没有对应任务），
+ * JS 侧的 Promise 就永远挂着：卡片一直转圈，再点一次因为映射已被删而彻底无效。
+ * 现在三条路径都有结果：
+ *  1) 工具在跑：原生 cancel + 立刻结算 JS Promise，不等回包；
+ *  2) 原生已结束/历史卡片：派发事件让引擎把卡片补记成中断态；
+ *  3) 重复点击依然有效。
+ */
 export function cancelToolByCallId(callId: string): void {
   const reqId = toolReqByCallId.get(callId);
-  if (!reqId) return;
-  toolReqByCallId.delete(callId);
-  try {
-    bridge()?.cancelTool?.(reqId);
-  } catch {
-    /* bridge method missing on older APKs */
+  if (reqId) {
+    toolReqByCallId.delete(callId);
+    const pending = toolPending.get(reqId);
+    try {
+      bridge()?.cancelTool?.(reqId);
+    } catch {
+      /* bridge method missing on older APKs */
+    }
+    if (pending) {
+      window.clearTimeout(pending.timer);
+      toolPending.delete(reqId);
+      pending.resolve({ ok: false, result: STOPPED_RESULT });
+    }
+  }
+  window.dispatchEvent(new CustomEvent("andagent:tool-cancel", { detail: callId }));
+}
+
+/**
+ * R104: 「停止」必须立即生效。之前只 abort 了 LLM 请求，正在跑的工具
+ * （最长 60s，长任务 30min）和等待用户确认的弹窗完全不受影响，用户会觉得
+ * 停止按钮没反应。这里一次性清掉确认弹窗 + 所有在跑的工具调用，并把 JS 侧
+ * 的 Promise 立刻结算，不等原生 tool.result 回包。
+ */
+export function cancelAgentWork(): void {
+  cancelConfirmDialog();
+  if (toolPending.size === 0) return;
+  const entries = [...toolPending.entries()];
+  toolPending.clear();
+  toolReqByCallId.clear();
+  const b = bridge();
+  for (const [id, pending] of entries) {
+    window.clearTimeout(pending.timer);
+    try {
+      b?.cancelTool?.(id);
+    } catch {
+      /* bridge method missing on older APKs */
+    }
+    pending.resolve({ ok: false, result: STOPPED_RESULT });
   }
 }
 
@@ -509,7 +553,8 @@ export function cancelSshTransfer(key: string): void {
 const recentConfirmations = new Map<string, { decision: Promise<boolean>; expiresAt: number }>();
 let confirmationQueue = Promise.resolve();
 
-function confirmTool(name: string, argsJson: string): Promise<boolean> {
+function confirmTool(name: string, argsJson: string, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
   const key = `${name}\0${argsJson}`;
   const now = Date.now();
   for (const [oldKey, entry] of recentConfirmations) {
@@ -522,12 +567,16 @@ function confirmTool(name: string, argsJson: string): Promise<boolean> {
   const label = currentLanguage() === "en" ? (meta?.labelEn ?? name) : (meta?.label ?? name);
   const summary = argsJson.length > 200 ? `${argsJson.slice(0, 200)}…` : argsJson;
   const message = translate("toolConfirmPrompt", { label, args: summary });
-  const decision = confirmationQueue.then(() => appConfirm(message));
+  // 排队期间可能已被「停止」：abort 后不再弹窗，避免停止后又冒出一个确认框。
+  const decision = confirmationQueue.then(() => (signal?.aborted ? false : appConfirm(message)));
   confirmationQueue = decision.then(() => undefined, () => undefined);
   recentConfirmations.set(key, { decision, expiresAt: Infinity });
   void decision.then(() => {
     const entry = recentConfirmations.get(key);
-    if (entry?.decision === decision) entry.expiresAt = Date.now() + 3_000;
+    if (entry?.decision !== decision) return;
+    // 被停止的确认不算「用户拒绝」，不缓存，下一次调用仍要正常询问。
+    if (signal?.aborted) recentConfirmations.delete(key);
+    else entry.expiresAt = Date.now() + 3_000;
   }, () => { recentConfirmations.delete(key); });
   return decision;
 }
@@ -538,6 +587,7 @@ export function execTool(
   args: unknown,
   callId?: string,
   timeoutMs = LONG_TASK_TOOLS.has(name) ? 1_800_000 : 65_000,
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; result: string }> {
   if (name === "widget_generate") {
     return Promise.resolve({ ok: true, result: "请根据 spec_description 生成符合 WidgetSpec v2 的完整 JSON，然后调用 widget_save_and_pin({spec_json: JSON.stringify(spec)})。" });
@@ -549,15 +599,18 @@ export function execTool(
       result: "ERROR: 设备桥不可用（当前在浏览器中运行，工具需要在 App 内执行）",
     });
   }
+  if (signal?.aborted) return Promise.resolve({ ok: false, result: STOPPED_RESULT });
   const argsJson = JSON.stringify(args ?? {});
   const mode = loadConfirmMode();
   if (mode === "all" || (mode === "destructive" && TOOL_DESTRUCTIVE.has(name))) {
-    return confirmTool(name, argsJson).then((approved) =>
-      approved ? executeNativeTool(b, name, argsJson, callId, timeoutMs)
-        : { ok: false, result: translate("toolConfirmRejected") },
-    );
+    return confirmTool(name, argsJson, signal).then((approved) => {
+      // 确认期间用户点了停止：不再落地这次工具调用。
+      if (signal?.aborted) return { ok: false, result: STOPPED_RESULT };
+      return approved ? executeNativeTool(b, name, argsJson, callId, timeoutMs, signal)
+        : { ok: false, result: translate("toolConfirmRejected") };
+    });
   }
-  return executeNativeTool(b, name, argsJson, callId, timeoutMs);
+  return executeNativeTool(b, name, argsJson, callId, timeoutMs, signal);
 }
 
 function executeNativeTool(
@@ -566,22 +619,40 @@ function executeNativeTool(
   argsJson: string,
   callId?: string,
   timeoutMs = 65_000,
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; result: string }> {
   const id = `tool-${Date.now()}-${++seq}`;
   if (callId) toolReqByCallId.set(callId, id);
   return new Promise((resolve) => {
-    const timer = window.setTimeout(() => {
+    let settled = false;
+    let timer = 0;
+    function settle(result: { ok: boolean; result: string }): void {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
       toolPending.delete(id);
       if (callId) toolReqByCallId.delete(callId);
-      resolve({ ok: false, result: LONG_TASK_TOOLS.has(name) ? "ERROR: 长任务超时（30min）" : "ERROR: 工具执行超时（60s）" });
+      signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    }
+    function onAbort(): void {
+      // 原生线程也一起打断：future.cancel(true) 会唤醒阻塞中的工具。
+      try {
+        b.cancelTool?.(id);
+      } catch {
+        /* older APK */
+      }
+      settle({ ok: false, result: STOPPED_RESULT });
+    }
+    timer = window.setTimeout(() => {
+      settle({ ok: false, result: LONG_TASK_TOOLS.has(name) ? "ERROR: 长任务超时（30min）" : "ERROR: 工具执行超时（60s）" });
     }, timeoutMs);
-    toolPending.set(id, { resolve, timer });
+    toolPending.set(id, { resolve: settle, timer });
+    signal?.addEventListener("abort", onAbort, { once: true });
     try {
       b.toolExec(id, name, argsJson);
     } catch (e) {
-      window.clearTimeout(timer);
-      toolPending.delete(id);
-      resolve({ ok: false, result: `ERROR: 无法调用工具桥：${String(e)}` });
+      settle({ ok: false, result: `ERROR: 无法调用工具桥：${String(e)}` });
     }
   });
 }
