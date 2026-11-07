@@ -165,6 +165,92 @@ class AdbClient(
         }
     }
 
+    /**
+     * R100 ③：打开【裸流】（scrcpy 视频单向流）——只做 OPEN 握手，返回可持续读取的流对象，
+     * 不像 [openStream] 那样消费到 CLSE（后者不适合跑常驻进程）。
+     *
+     * never-crash：未连接 / 服务被拒（CLSE）/ 读写异常一律返回 null，绝不向调用方抛异常。
+     *
+     * 并发约束（重要）：一条 ADB TCP 连接上的流是锁步协议，返回的流会持续占用该连接的读循环。
+     * scrcpy 会话【必须】使用独立 AdbClient 连接（见 AdbSessionHub.newClient()），不要在共享
+     * live 池的 client 上开裸流，也不要在流存活期间对该 client 调用 openStream/syncPush 等方法，
+     * 否则帧会互相踩。视频是单向流，写侧仅需 OPEN 握手，故不提供通用写 API。
+     */
+    fun openDuplex(service: String): AdbDuplexStream? = synchronized(lock) {
+        runCatching {
+            if (input == null) {
+                null // 未连接：先 connect()
+            } else {
+                val localId = nextLocalId++
+                // ADB OPEN 的 service 串以 NUL 结尾（对齐 openStream/SyncStream）。
+                write(AdbMessage(A_OPEN, localId, 0, "$service\u0000".toByteArray()))
+                var remoteId: Int? = null
+                var rejected = false
+                for (i in 0 until HANDSHAKE_MAX_MESSAGES) {
+                    if (remoteId != null || rejected) break
+                    val msg = read()
+                    when (msg.command) {
+                        A_OKAY -> remoteId = msg.arg0 // arg0 = 对端 id
+                        A_CLSE -> rejected = true // 服务被拒绝 / 打开失败
+                        else -> Unit // 忽略未知命令
+                    }
+                }
+                if (rejected) null else remoteId?.let { AdbDuplexStream(localId, it) }
+            }
+        }.getOrElse { null }
+    }
+
+    /**
+     * R100 ③：单条 ADB 裸流（视频单向）。见 [openDuplex] 的并发约束。
+     * 生命周期：读完调用 [close] 发 CLSE 关流；底层 socket 由调用方（独立 client）在会话结束时 close()。
+     */
+    inner class AdbDuplexStream(private val localId: Int, private val remoteId: Int) {
+        private val buffer = ByteArrayOutputStream()
+        @Volatile private var closed = false
+
+        /**
+         * 阻塞读满 n 字节。专用读循环：收 WRTE 时按 remoteId 匹配、把 payload 累积进缓冲并回 OKAY；
+         * 收 CLSE/EOF 且缓冲不足时抛 IOException（由会话 runCatching 收敛）；支持跨 WRTE 帧累积。
+         */
+        fun readN(n: Int): ByteArray = synchronized(lock) {
+            if (n < 0) throw IOException("readN 长度无效：$n")
+            while (buffer.size() < n) {
+                if (closed) throw IOException("ADB 裸流已关闭，仅剩 ${buffer.size()}/$n 字节")
+                val msg = read() // 可能抛 EOFException / IOException
+                when (msg.command) {
+                    A_WRTE -> {
+                        // Codex 必修④：按两端 ID 严格匹配（AOSP：WRTE arg0=对端 id、arg1=本地 id），
+                        // 只累积本流数据帧；不匹配的迟到帧（重试残留）静默丢弃、不回 OKAY。
+                        if (msg.arg0 == remoteId && msg.arg1 == localId) {
+                            buffer.write(msg.data)
+                            // 对端 WRTE 必须回传输 OKAY（本地 id, 对端 id），否则对端停发。
+                            runCatching { write(AdbMessage(A_OKAY, localId, msg.arg0, ByteArray(0))) }
+                        }
+                    }
+                    A_OKAY -> Unit // 本流不写，忽略
+                    A_CLSE ->
+                        // Codex 必修④：仅本流的 CLSE 才关流（arg0/arg1 任一命中本地 id，
+                        // 兼容 adbd 两种回填约定），其它流的迟到 CLSE 忽略。
+                        if (msg.arg0 == localId || msg.arg1 == localId) closed = true
+                    else -> Unit
+                }
+            }
+            val all = buffer.toByteArray()
+            val result = all.copyOfRange(0, n)
+            buffer.reset()
+            if (all.size > n) buffer.write(all, n, all.size - n) // 余量留回缓冲供下次 readN
+            result
+        }
+
+        /** 发 CLSE 关流、幂等（重复调用只发一次）；不关闭底层 socket。 */
+        fun close() = synchronized(lock) {
+            if (!closed) {
+                closed = true
+                runCatching { write(AdbMessage(A_CLSE, localId, remoteId, ByteArray(0))) }
+            }
+        }
+    }
+
     /** 拉取远程文件（SYNC RECV）；maxBytes 为大小上限。 */
     fun syncPull(remotePath: String, maxBytes: Long): AdbSyncResult = synchronized(lock) {
         runCatching {

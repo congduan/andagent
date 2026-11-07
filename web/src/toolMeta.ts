@@ -94,6 +94,10 @@ export const TOOL_META: Record<string, ToolMeta> = {
   adb_push: { label: "ADB 推送", labelEn: "ADB push", icon: "📤", destructive: true },
   // R100 ③: 无线调试配对码配对（配对本身无损，destructive=false，与 Kotlin AdbTool.destructive 对齐）
   adb_pair: { label: "ADB 无线配对", labelEn: "ADB wireless pairing", icon: "🔐" },
+  // R100 ③: ADB 通道 scrcpy 投屏 / 录制 / 操控（destructive 与 Kotlin AdbTool.destructive 对齐）
+  adb_scrcpy_shot: { label: "ADB 投屏截图", labelEn: "ADB scrcpy shot", icon: "🖼️" },
+  adb_scrcpy_record: { label: "ADB 投屏录制", labelEn: "ADB scrcpy record", icon: "🎥", destructive: true },
+  adb_input: { label: "ADB 远程操控", labelEn: "ADB input", icon: "👆", destructive: true },
   // R101: devtools_errors（只返回 error 级 console）
   devtools_errors: { label: "页面错误", labelEn: "Page errors", icon: "🐞" },
   screen_capture: { label: "屏幕截图", labelEn: "Screenshot", icon: "🖼️" },

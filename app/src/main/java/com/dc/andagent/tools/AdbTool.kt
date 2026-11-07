@@ -26,7 +26,7 @@ val ADB_TOOLS = listOf(
     "adb_connect", "adb_devices", "adb_disconnect",
     "adb_shell", "adb_screencap", "adb_pull", "adb_push",
     AdbPairTool.NAME,
-) + AdbScrcpyToolSpec.NAMES
+)
 
 /**
  * R100 ②：ADB 会话中枢（进程内单例）。7 个 AdbTool 实例共享同一份状态：
@@ -183,7 +183,7 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         "adb_push" ->
             "把本机文件上传到目标手机（SYNC SEND）。local_path/remote_path 必填；max_mb 对齐 ssh_download。"
         AdbPairTool.NAME -> AdbPairTool.description
-        in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.description(name)
+        // adb_screencast/adb_record 工具延后（R103 TLS 刀一并重建）
         else -> "ADB 工具"
     }
 
@@ -223,7 +223,7 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             required = listOf("target", "local_path", "remote_path"),
         )
         AdbPairTool.NAME -> AdbPairTool.parameters
-        in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.parameters(name)
+        // (removed: scrcpy spec pending rebuild)
         else -> schemaOf()
     }
 
@@ -245,7 +245,7 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             "adb_pull" -> doPull(args)
             "adb_push" -> doPush(args)
             AdbPairTool.NAME -> AdbPairTool.execute(args) { AdbSessionHub.adbPublicKey() }
-            in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.execute(context, name, args)
+            // (removed: scrcpy spec pending rebuild)
             else -> "ERROR: 未知 ADB 工具"
         }
     }
