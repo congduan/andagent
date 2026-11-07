@@ -123,9 +123,18 @@ object AdbToolRules {
             fp.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
     /**
+     * R103 必修 1：TLS 目标必须锁定非空指纹。空指纹会让原生层 pinned 为空
+     * （= 信任任意自签证书），故 tls=true 而指纹空白时必须由 AdbSessionHub 拒绝，
+     * 原生层 VerifyCb 另做 NO_PIN 纵深防御。纯函数便于 JVM 单测。
+     */
+    fun tlsPinMissing(tls: Boolean, fingerprint: String?): Boolean =
+        tls && fingerprint.isNullOrBlank()
+
+    /**
      * R103 A：配对注册表（host -> 设备证书指纹，null 表示已配对但未取到指纹）。
-     * 用 JsonObject 存，值为 "" 时解码回 null，但 key 仍在 → isPaired 仍为真，
-     * 可自动尝试 TLS（原生层 pinned 空列表 = 信任自签、仅 TLS 1.3）。
+     * 用 JsonObject 存，值为 "" 时解码回 null，但 key 仍在 → isPaired 仍为真。
+     * 注意：空指纹不再走 TLS（Kotlin AdbSessionHub 守门 + 原生 VerifyCb 拒绝），
+     * 需重新 adb_pair 锁定指纹或显式 tls=false。
      */
     fun encodePairings(pairings: Map<String, String?>): JsonObject = buildJsonObject {
         for ((host, fp) in pairings) put(host, fp ?: "")

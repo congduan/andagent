@@ -137,4 +137,16 @@ class AdbToolRulesTest {
         assertNull(decoded["10.0.0.2"])
         assertEquals(emptyMap<String, String?>(), AdbToolRules.decodePairings(null))
     }
+
+    // ---- R103 必修 1: TLS 空指纹守门 -------------------------------
+    @Test
+    fun tlsPinMissingRejectsBlankFingerprint() {
+        val fp = "ab".repeat(32)
+        assertTrue("tls=true + null 指纹必须拒绝", AdbToolRules.tlsPinMissing(true, null))
+        assertTrue("tls=true + 空串必须拒绝", AdbToolRules.tlsPinMissing(true, ""))
+        assertTrue("tls=true + 全空白必须拒绝", AdbToolRules.tlsPinMissing(true, "   "))
+        assertFalse("已锁定指纹的 TLS 目标放行", AdbToolRules.tlsPinMissing(true, fp))
+        assertFalse("明文路径不受指纹影响", AdbToolRules.tlsPinMissing(false, null))
+        assertFalse(AdbToolRules.tlsPinMissing(false, ""))
+    }
 }

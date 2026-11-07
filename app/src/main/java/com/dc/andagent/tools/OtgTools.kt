@@ -39,6 +39,25 @@ fun otgPathParts(path: String): List<String>? {
     return if (parts.any { it == ".." || it.contains('\u0000') }) null else parts
 }
 
+/**
+ * R103 必修 3：export 源白名单 canonical 前缀匹配（纯函数，便于 JVM 单测）。
+ * 只认「目录 canonical + /」前缀：目录自身路径不算命中，防 `AndAgentSshEvil` 之类前缀碰撞。
+ */
+internal fun exportWhitelisted(canonPath: String, whitelistDirs: List<File>): Boolean =
+    whitelistDirs.any { dir ->
+        val root = runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath)
+        canonPath.startsWith(root + "/")
+    }
+
+/**
+ * R103 必修 5：import 输入流统一用 use 消费，保证成功 / 超限 / 异常三条路径都关闭。
+ * 纯函数，便于 JVM 单测用「未关闭会抛异常的包装 InputStream」验证。
+ */
+internal fun useOtgImportInput(
+    input: java.io.InputStream?,
+    save: (java.io.InputStream) -> String,
+): String? = input?.use(save)
+
 class OtgTool(private val context: Context, override val name: String) : Tool {
     override val description = when (name) {
         "otg_status" -> "检测已挂载 OTG U 盘及 USB 设备和授权状态。"
@@ -178,7 +197,7 @@ class OtgTool(private val context: Context, override val name: String) : Tool {
         else -> "application/octet-stream"
     }
 
-    /** 手机侧导出源白名单路径 → 绝对 File；不在白名单返回 null。 */
+    /** 手机侧导出源白名单路径 → 绝对 File；不在白名单返回 null（无 fallback，必修 3）。 */
     private fun exportSource(localPath: String): File? {
         val f = File(localPath).normalize()
         if (f.isAbsolute.not()) return null
@@ -188,10 +207,9 @@ class OtgTool(private val context: Context, override val name: String) : Tool {
             File(context.filesDir, "ssh_downloads"),
             File(context.filesDir, "otg_downloads"),
         )
-        return candidates.firstOrNull { dir ->
-            val canon = runCatching { f.canonicalPath }.getOrNull() ?: return@firstOrNull false
-            canon.startsWith(runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath) + "/")
-        }?.takeIf { f.isFile && f.canRead() } ?: run { if (f.isFile && f.canRead()) f else null }
+        val canon = runCatching { f.canonicalPath }.getOrNull() ?: return null
+        // 白名单外一律返回 null（走既有 ERROR 文案），不再放行任意可读文件。
+        return if (exportWhitelisted(canon, candidates) && f.isFile && f.canRead()) f else null
     }
 
     /** R101c: U 盘 ↔ 手机二进制复制（otg_transfer）。流式对拷，max_mb 上限，二进制安全。 */
@@ -214,8 +232,10 @@ class OtgTool(private val context: Context, override val name: String) : Tool {
                     val docId = resolve(tree, rootId, parts, "write")
                         ?: return "ERROR: U 盘文件不存在：$remotePath"
                     val uri = DocumentsContract.buildDocumentUriUsingTree(tree, docId)
-                    val saved = saveImportToDownloads(resolver, name, mimeFor(name), resolver.openInputStream(uri)
-                        ?: return "ERROR: 无法打开 U 盘文件", maxBytes)
+                    // R103 必修 5：use 包住整个调用，成功/超限/异常三条路径都关闭输入流。
+                    val saved = useOtgImportInput(resolver.openInputStream(uri)) { input ->
+                        saveImportToDownloads(resolver, name, mimeFor(name), input, maxBytes)
+                    } ?: return "ERROR: 无法打开 U 盘文件"
                     "IMPORTED: $remotePath → $saved"
                 }
                 "export" -> {
