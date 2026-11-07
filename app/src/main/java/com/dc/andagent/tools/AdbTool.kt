@@ -21,11 +21,12 @@ import kotlinx.serialization.json.put
 import java.io.File
 import java.security.KeyPair
 
-/** 注册进 MainActivity 工具表的 ADB 工具族（7 个）。 */
+/** 注册进 MainActivity 工具表的 ADB 工具族（R100 ② 7 个 + R100 ③ scrcpy/操控 3 个 + 配对 1 个）。 */
 val ADB_TOOLS = listOf(
     "adb_connect", "adb_devices", "adb_disconnect",
     "adb_shell", "adb_screencap", "adb_pull", "adb_push",
-)
+    AdbPairTool.NAME,
+) + AdbScrcpyToolSpec.NAMES
 
 /**
  * R100 ②：ADB 会话中枢（进程内单例）。7 个 AdbTool 实例共享同一份状态：
@@ -108,6 +109,9 @@ object AdbSessionHub {
         "已断开 ADB 目标 ${t.host}:${t.port}"
     }
 
+    /** R100 ③：配对时把现有 ADB RSA 公钥（adbkey.pub 格式）交给原生层放进 PeerInfo。 */
+    fun adbPublicKey(): ByteArray = AdbAuth.encodePublicKey(keyPair.public)
+
     /** 操作工具取用：必要时（重连/app 重启后 live 空）自动连接。 */
     fun client(ref: String): AdbClient? = synchronized(lock) {
         val t = registry.resolve(ref) ?: return null
@@ -123,6 +127,14 @@ object AdbSessionHub {
         live.remove(t.key)
         null
     }
+
+    /**
+     * R100 ③：创建【独立】AdbClient（复用共享 keyPair，但不放入 live 池）。
+     * scrcpy 会话用它开常驻视频裸流（openDuplex 的读循环会长期占用连接），避免与共享池其它
+     * 工具锁步互踩。返回未连接实例；调用方负责 connect(host, port) 并在会话结束后 close()。
+     * 复用同一 keyPair → 目标机对 adb_connect 时授权过的公钥仍然授信，无需二次授权。
+     */
+    fun newClient(): AdbClient = AdbClient(keyPair)
 
     /** adb_devices：列出已保存目标 + 状态；离线目标做一次 best-effort 重连。 */
     fun devices(): String = synchronized(lock) {
@@ -170,11 +182,15 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             "从目标手机拉取单个文件到本机 Download/AndAgentSsh（或 app_private），返回 savedPath。max_mb 对齐 ssh_download（默认 512，钳制 1..4096）。"
         "adb_push" ->
             "把本机文件上传到目标手机（SYNC SEND）。local_path/remote_path 必填；max_mb 对齐 ssh_download。"
+        AdbPairTool.NAME -> AdbPairTool.description
+        in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.description(name)
         else -> "ADB 工具"
     }
 
-    /** 安全边界：shell/pull/push 都标 destructive（web 确认闸 + 提示词覆盖）。 */
-    override val destructive = name in setOf("adb_shell", "adb_pull", "adb_push")
+    /** 安全边界：shell/pull/push + 远程操控 adb_input + 录制 adb_scrcpy_record 标 destructive（web 确认闸 + 提示词覆盖）。 */
+    override val destructive = name in setOf(
+        "adb_shell", "adb_pull", "adb_push", "adb_input", "adb_scrcpy_record",
+    )
 
     override val parameters = when (name) {
         "adb_connect" -> schemaOf(
@@ -206,6 +222,8 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             "max_mb" to intParam("大小上限 MB，默认 512，钳制 1..4096"),
             required = listOf("target", "local_path", "remote_path"),
         )
+        AdbPairTool.NAME -> AdbPairTool.parameters
+        in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.parameters(name)
         else -> schemaOf()
     }
 
@@ -226,6 +244,8 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             "adb_screencap" -> doScreencap(args)
             "adb_pull" -> doPull(args)
             "adb_push" -> doPush(args)
+            AdbPairTool.NAME -> AdbPairTool.execute(args) { AdbSessionHub.adbPublicKey() }
+            in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.execute(context, name, args)
             else -> "ERROR: 未知 ADB 工具"
         }
     }

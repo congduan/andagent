@@ -434,6 +434,11 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   // ===== SSH 凭据（独立分类）=====
   const sshPage = sub(t("sshCredentials"), <>
     <p className="settings-page-note">{t("sshCredentialsNote")}</p>
+    {section(t("adbPairGuideTitle"), <>
+      <p className="settings-card-note">{t("adbPairGuideStep1")}</p>
+      <p className="settings-card-note">{t("adbPairGuideStep2")}</p>
+      <p className="settings-card-note">{t("adbPairGuideStep3")}</p>
+    </>)}
     {section(`${t("sshCredentialList")} (${creds.length})`, <>
       <div className="settings-card-actions">
         <button type="button" className="btn-primary" onClick={() => showResult(sshCredentialsOpen())}>{t("sshCredentialAdd")}</button>
