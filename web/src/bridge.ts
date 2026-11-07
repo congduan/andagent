@@ -1,4 +1,7 @@
-import { currentLanguage } from "./i18n";
+import { currentLanguage, translate } from "./i18n";
+import { appConfirm } from "./ConfirmDialog";
+import { loadConfirmMode } from "./confirmMode";
+import { TOOL_DESTRUCTIVE, TOOL_META } from "./toolMeta";
 const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload"]);
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
@@ -496,10 +499,33 @@ export function cancelToolByCallId(callId: string): void {
   }
 }
 
-/**
- * Execute a device tool in Kotlin. The bridge call is async; the result arrives
- * through window.__andagent.receive({type:"tool.result", ...}).
- */
+const recentConfirmations = new Map<string, { decision: Promise<boolean>; expiresAt: number }>();
+let confirmationQueue = Promise.resolve();
+
+function confirmTool(name: string, argsJson: string): Promise<boolean> {
+  const key = `${name}\0${argsJson}`;
+  const now = Date.now();
+  for (const [oldKey, entry] of recentConfirmations) {
+    if (entry.expiresAt <= now) recentConfirmations.delete(oldKey);
+  }
+  const existing = recentConfirmations.get(key);
+  if (existing) return existing.decision;
+
+  const meta = TOOL_META[name];
+  const label = currentLanguage() === "en" ? (meta?.labelEn ?? name) : (meta?.label ?? name);
+  const summary = argsJson.length > 200 ? `${argsJson.slice(0, 200)}…` : argsJson;
+  const message = translate("toolConfirmPrompt", { label, args: summary });
+  const decision = confirmationQueue.then(() => appConfirm(message));
+  confirmationQueue = decision.then(() => undefined, () => undefined);
+  recentConfirmations.set(key, { decision, expiresAt: Infinity });
+  void decision.then(() => {
+    const entry = recentConfirmations.get(key);
+    if (entry?.decision === decision) entry.expiresAt = Date.now() + 3_000;
+  }, () => { recentConfirmations.delete(key); });
+  return decision;
+}
+
+/** Execute a device tool after any configured user confirmation. */
 export function execTool(
   name: string,
   args: unknown,
@@ -516,6 +542,24 @@ export function execTool(
       result: "ERROR: 设备桥不可用（当前在浏览器中运行，工具需要在 App 内执行）",
     });
   }
+  const argsJson = JSON.stringify(args ?? {});
+  const mode = loadConfirmMode();
+  if (mode === "all" || (mode === "destructive" && TOOL_DESTRUCTIVE.has(name))) {
+    return confirmTool(name, argsJson).then((approved) =>
+      approved ? executeNativeTool(b, name, argsJson, callId, timeoutMs)
+        : { ok: false, result: translate("toolConfirmRejected") },
+    );
+  }
+  return executeNativeTool(b, name, argsJson, callId, timeoutMs);
+}
+
+function executeNativeTool(
+  b: NonNullable<ReturnType<typeof bridge>>,
+  name: string,
+  argsJson: string,
+  callId?: string,
+  timeoutMs = 65_000,
+): Promise<{ ok: boolean; result: string }> {
   const id = `tool-${Date.now()}-${++seq}`;
   if (callId) toolReqByCallId.set(callId, id);
   return new Promise((resolve) => {
@@ -526,7 +570,7 @@ export function execTool(
     }, timeoutMs);
     toolPending.set(id, { resolve, timer });
     try {
-      b.toolExec(id, name, JSON.stringify(args ?? {}));
+      b.toolExec(id, name, argsJson);
     } catch (e) {
       window.clearTimeout(timer);
       toolPending.delete(id);

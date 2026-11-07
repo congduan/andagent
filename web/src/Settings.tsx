@@ -14,6 +14,7 @@ import noticesText from "../../THIRD-PARTY-NOTICES.md?raw";
 import { loadThemeMode, setTheme, type ThemeMode } from "./theme";
 import { setLanguageMode, useI18n, type LanguageMode } from "./i18n";
 import { appConfirm } from "./ConfirmDialog";
+import { loadConfirmMode, setConfirmMode, type ConfirmMode } from "./confirmMode";
 import { ModelFields } from "./ModelFields";
 import { SettingsHead } from "./SettingsHead";
 import { showError, showResult, showSuccess } from "./toast";
@@ -46,12 +47,15 @@ type MemoryEntry = { id: string; content: string; category: string; core: boolea
 type SkillEntry = { name: string; description: string; enabled: boolean; toolCount: number; source: string };
 
 const THEME_OPTIONS: ThemeMode[] = ["system", "light", "dark"];
+const CONFIRM_OPTIONS: ConfirmMode[] = ["off", "destructive", "all"];
+const CONFIRM_LABELS = { off: "confirmModeOff", destructive: "confirmModeDestructive", all: "confirmModeAll" } as const;
 
 export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onSave, onModelSetup, closing }: Props) {
   const { t, mode, language } = useI18n();
   const [draft, setDraft] = useState<Settings>(settings);
   useEffect(() => { setDraft(prev => !hasSavedSystemPrompt() && isDefaultSystemPrompt(prev.systemPrompt) ? { ...prev, systemPrompt: defaultSystemPrompt() } : prev); }, [language]);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
+  const [confirmMode, updateConfirmMode] = useState<ConfirmMode>(() => loadConfirmMode());
   const [shizuku, setShizuku] = useState<ShizukuStatus>(() => getShizukuStatus());
   const [termuxStatus, setTermuxStatus] = useState(() => getTermuxStatus());
   const [cronTasks, setCronTasks] = useState<CronTask[]>([]);
@@ -239,6 +243,15 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
             onClick={() => setLanguageMode(value)}>{value === "system" ? t("system") : value === "zh" ? t("chinese") : t("english")}</button>
         ))}
       </div>
+    </>)}
+    {section(t("operationConfirm"), <>
+      <div className="theme-segmented" role="radiogroup" aria-label={t("operationConfirm")}>
+        {CONFIRM_OPTIONS.map(value => (
+          <button key={value} type="button" role="radio" aria-checked={confirmMode === value} className={confirmMode === value ? "active" : ""}
+            onClick={() => { setConfirmMode(value); updateConfirmMode(value); }}>{t(CONFIRM_LABELS[value])}</button>
+        ))}
+      </div>
+      <p className="settings-card-note">{t("confirmModeNote")}</p>
     </>)}
   </>);
 
