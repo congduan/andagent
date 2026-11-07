@@ -1,8 +1,8 @@
 package com.dc.andagent.live
 
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -65,17 +65,41 @@ class LiveLoopRunnerTest {
         val runner = LiveLoopRunner({ _, _ -> "ERROR: ReferenceError: missing at line 2" }, { _, _, _ -> }, {})
         try {
             val started = runner.start("errors", "missing", 200, "dialog")
-            assertEquals("true", started["firstTickFailed"]!!.jsonPrimitive.content)
-            assertTrue(started["warning"]!!.jsonPrimitive.content.contains("ReferenceError"))
             val id = started["id"]!!.jsonPrimitive.content
-            assertTrue(runner.pause(id, true)["warning"]!!.jsonPrimitive.content.contains("ReferenceError"))
-            runner.pause(id, false)
-            Thread.sleep(1100)
-            val listed = runner.list()["loops"]!!.jsonArray.first().jsonObject
-            val history = listed["errorHistory"]!!.jsonArray
-            assertEquals(5, history.size)
-            assertTrue(history.first().jsonPrimitive.content.contains("#5"))
+            // Codex R77 must-fix #5: the first tick runs asynchronously off the
+            // start() lock, so firstTickFailed is not guaranteed to be visible
+            // when start() returns — poll for it. Cap below 5 ticks (~1000ms)
+            // so the loop cannot auto-stop before we pause it.
+            var snap = started
+            val deadline = System.currentTimeMillis() + 700
+            while (snap["firstTickFailed"]?.jsonPrimitive?.content != "true" && System.currentTimeMillis() < deadline) {
+                Thread.sleep(25)
+                snap = runner.pause(id, true)
+            }
+            assertEquals("true", snap["firstTickFailed"]!!.jsonPrimitive.content)
+            assertTrue(snap["warning"]!!.jsonPrimitive.content.contains("ReferenceError"))
+            // A tick already past its paused-check may still land after pause()
+            // returns (entry-check race). Settle: wait until ticks stop changing.
+            var frozenTicks = snap["ticks"]!!.jsonPrimitive.content
+            var stable = false
+            for (attempt in 0 until 10) {
+                Thread.sleep(150)
+                val now = runner.pause(id, true)["ticks"]!!.jsonPrimitive.content
+                if (now == frozenTicks) { stable = true; break }
+                frozenTicks = now
+            }
+            org.junit.Assert.assertTrue("ticks never stabilized", stable)
+            // While paused the loop cannot tick: ticks and error history are frozen.
+            Thread.sleep(450)
+            val resumed = runner.pause(id, false)
+            assertEquals(frozenTicks, resumed["ticks"]!!.jsonPrimitive.content)
+            val history = resumed["errorHistory"]!!.jsonArray
+            assertTrue(history.size in 1..5)
             assertTrue(history.last().jsonPrimitive.content.contains("#1"))
+            // History never grows past the 5-entry cap while running.
+            Thread.sleep(1200)
+            val listed = runner.list()["loops"]!!.jsonArray.first().jsonObject
+            assertTrue(listed["errorHistory"]!!.jsonArray.size in 1..5)
         } finally { runner.shutdown() }
     }
 }

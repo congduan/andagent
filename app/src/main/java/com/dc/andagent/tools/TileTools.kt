@@ -65,7 +65,8 @@ class TileTool(private val context: android.content.Context, override val name: 
     }
 
     private fun get(): String {
-        val config = TileStore(context).read()
+        // Codex R77 must-fix #4: read() must not throw on corrupted prefs.
+        val config = runCatching { TileStore(context).read() }.getOrNull()
             ?: return buildJsonObject { put("configured", false) }.toString()
         return buildJsonObject {
             put("configured", true)
@@ -76,8 +77,10 @@ class TileTool(private val context: android.content.Context, override val name: 
     }
 
     private fun clear(): String {
-        val had = TileStore(context).read() != null
-        TileStore(context).clear()
+        // Codex R77 must-fix #4: clear unconditionally so a corrupted config
+        // can always be repaired via tile_clear.
+        val had = runCatching { TileStore(context).read() != null }.getOrDefault(false)
+        TileStore(context).clearUnchecked()
         AndagentTileService.requestRefresh(context)
         return if (had) {
             tr("磁贴配置已清除；磁贴点击回落为打开主界面", "Tile config cleared; tapping the tile now opens the main screen")

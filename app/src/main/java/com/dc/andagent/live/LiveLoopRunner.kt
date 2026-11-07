@@ -49,8 +49,11 @@ class LiveLoopRunner(
             val oldest = loops.entries.firstOrNull { it.value.stopped } ?: break
             loops.remove(oldest.key)
         }
-        // Surface syntax/runtime failures in live_start itself.
-        tick(loop)
+        // Surface syntax/runtime failures in live_start itself. Codex R77
+        // must-fix #5: run the first tick off the runner monitor — a legal
+        // script calling live_list/live_stop would deadlock on the same lock
+        // while start() holds it for the whole first evaluation.
+        scheduler.execute { tick(loop) }
         return snapshot(loop)
     }
 
@@ -116,7 +119,7 @@ class LiveLoopRunner(
                 }
             }
         }
-        synchronized(this) { if (!loop.stopped) schedule(loop, loop.intervalMs) }
+        synchronized(loops) { if (!loop.stopped) schedule(loop, loop.intervalMs) }
     }
 
     private fun snapshot(loop: Loop): JsonObject = buildJsonObject {

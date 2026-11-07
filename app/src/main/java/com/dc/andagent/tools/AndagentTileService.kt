@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.app.PendingIntent
 import android.net.Uri
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
@@ -31,8 +32,11 @@ internal class TileStore(context: Context) {
     data class Config(val label: String, val prompt: String, val updatedAt: Long)
 
     fun read(): Config? {
-        val label = prefs.getString("label", null) ?: return null
-        val prompt = prefs.getString("prompt", null) ?: return null
+        // Codex R77 must-fix #4: a corrupted prefs entry (wrong value type,
+        // e.g. after a backup/restore) throws ClassCastException — treat it as
+        // unconfigured instead of crashing the tile or the tool.
+        val label = runCatching { prefs.getString("label", null) }.getOrNull() ?: return null
+        val prompt = runCatching { prefs.getString("prompt", null) }.getOrNull() ?: return null
         if (!TileConfig.validLabel(label) || !TileConfig.validPrompt(prompt)) return null
         return Config(label, prompt, prefs.getLong("updatedAt", 0L))
     }
@@ -50,6 +54,11 @@ internal class TileStore(context: Context) {
     fun clear() {
         check(prefs.edit().clear().commit()) { "磁贴配置清除失败" }
     }
+
+    /** Best-effort clear for the repair path — never crash on commit failure. */
+    fun clearUnchecked() {
+        runCatching { prefs.edit().clear().commit() }
+    }
 }
 
 /**
@@ -66,6 +75,16 @@ class AndagentTileService : TileService() {
 
     override fun onClick() {
         runCatching {
+            // Codex R77 must-fix #2: the QS tile can be tapped on the lock
+            // screen — complete the unlock challenge before doing anything
+            // (especially before firing an auto-send deeplink).
+            if (!isLocked) { tap(); return }
+            unlockAndRun { tap() }
+        }
+    }
+
+    private fun tap() {
+        runCatching {
             val config = TileStore(applicationContext).read()
             val intent: Intent = if (config != null) {
                 Intent(
@@ -76,7 +95,21 @@ class AndagentTileService : TileService() {
                 packageManager.getLaunchIntentForPackage(packageName) ?: return
             }
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivityAndCollapse(intent)
+            // Codex R77 must-fix #1: the plain-Intent overload of
+            // startActivityAndCollapse throws UnsupportedOperationException on
+            // Android 14 (API 34)+; use the PendingIntent overload there.
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                val pi = PendingIntent.getActivity(
+                    applicationContext,
+                    0,
+                    intent,
+                    PendingIntent.FLAG_IMMUTABLE,
+                )
+                startActivityAndCollapse(pi)
+            } else {
+                @Suppress("DEPRECATION")
+                startActivityAndCollapse(intent)
+            }
         }
     }
 
