@@ -3647,3 +3647,19 @@ html.theme-transition *::after {
 .html-card.fullscreen { position: fixed; inset: 0; z-index: 1200; margin: 0; border-radius: 0; display: flex; flex-direction: column; background: var(--code-bg); }
 .html-card.fullscreen iframe { flex: 1; height: auto; min-height: 0; border-radius: 0; }
 .html-card.fullscreen > .webview-bar { margin-top: var(--safe-top); margin-bottom: 0; }
+
+/* R99.5 fixup: failed label color + dismiss button on terminal transfer cards */
+.ssh-transfer-failed-label { color: var(--danger); font-weight: 600; }
+.ssh-transfer-dismiss {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+}
+.ssh-transfer-dismiss:active { transform: scale(0.94); }

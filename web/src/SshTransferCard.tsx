@@ -44,11 +44,27 @@ export function SshTransferHost() {
     const receive = (raw: Event) => {
       const event = (raw as CustomEvent<TransferEvent>).detail;
       if (event?.type === "ssh.transfer.progress" || event?.type === "ssh.transfer.done") {
-        setRows(previous => updateTransfer(previous, event, Date.now()));
+        // done 事件也刷新 at：自动淡出计时以终态到达时刻为起点。
+        setRows(previous => updateTransfer(previous, event, event.type === "ssh.transfer.done" ? Date.now() : Date.now()));
       }
     };
     window.addEventListener("andagent:ssh-transfer", receive);
-    return () => window.removeEventListener("andagent:ssh-transfer", receive);
+    // 终态卡片（完成/失败）自动淡出：成功 4s、失败 8s（给用户看清错误），或手动 ✕ 关闭。
+    const sweep = window.setInterval(() => {
+      setRows(previous => {
+        const now = Date.now();
+        const next = previous.filter(row => {
+          if (row.type !== "ssh.transfer.done") return true;
+          const keepMs = row.ok ? 4000 : 8000;
+          return now - row.at < keepMs;
+        });
+        return next.length === previous.length ? previous : next;
+      });
+    }, 1000);
+    return () => {
+      window.removeEventListener("andagent:ssh-transfer", receive);
+      window.clearInterval(sweep);
+    };
   }, []);
   if (!rows.length) return null;
   return <div className="ssh-transfer-host" aria-live="polite">
@@ -67,11 +83,14 @@ export function SshTransferHost() {
         <div className="ssh-transfer-detail">
           <span>{formatBytes(row.bytes ?? 0)} / {row.total ? formatBytes(row.total) : "—"}</span>
           {!done && <span>{(row.speed / 1_048_576).toFixed(1)} MB/s</span>}
-          {failed && <span>{t("sshTransferFailed")}</span>}
+          {failed && <span className="ssh-transfer-failed-label">{t("sshTransferFailed")}</span>}
           {!done && <button type="button" disabled={row.cancelling} onClick={() => {
             cancelSshTransfer(row.key);
             setRows(previous => previous.map(item => item.key === row.key ? { ...item, cancelling: true } : item));
           }}>{t(row.cancelling ? "sshTransferCancelling" : "sshTransferCancel")}</button>}
+          {done && <button type="button" className="ssh-transfer-dismiss" aria-label={t("close")} onClick={() => {
+            setRows(previous => previous.filter(item => item.key !== row.key));
+          }}>✕</button>}
         </div>
         {done && row.savedPath && <div className="ssh-transfer-path">
           <span title={row.savedPath}>{row.savedPath}</span>

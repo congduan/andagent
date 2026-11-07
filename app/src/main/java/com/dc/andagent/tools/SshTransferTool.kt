@@ -318,8 +318,17 @@ class SshTransferTool(private val context: Context, override val name: String,
                 val tmpFile = sftp.open(tmp, java.util.EnumSet.of(net.schmizz.sshj.sftp.OpenMode.CREAT, net.schmizz.sshj.sftp.OpenMode.WRITE))
                 tmpFile.use { rf ->
                     java.io.BufferedInputStream(file.inputStream().buffered(1 shl 20), 1 shl 20).use { input ->
-                        val out = rf.RemoteFileOutputStream(1L shl 20) as java.io.OutputStream
-                        out.use { output -> input.copyTo(output, 1 shl 20) }
+                        rf.RemoteFileOutputStream(1L shl 20).use { output ->
+                            val chunk = ByteArray(64 * 1024)
+                            while (true) {
+                                if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
+                                val n = input.read(chunk)
+                                if (n < 0) break
+                                output.write(chunk, 0, n)
+                                progress.count(n.toLong())
+                            }
+                            output.flush()
+                        }
                     }
                 }
                 if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
@@ -339,8 +348,17 @@ class SshTransferTool(private val context: Context, override val name: String,
         val remoteFile = sftp.open(remote, java.util.EnumSet.of(net.schmizz.sshj.sftp.OpenMode.CREAT, net.schmizz.sshj.sftp.OpenMode.WRITE))
         remoteFile.use { rf ->
             java.io.BufferedInputStream(file.inputStream().buffered(1 shl 20), 1 shl 20).use { input ->
-                val out = rf.RemoteFileOutputStream(1L shl 20) as java.io.OutputStream
-                out.use { output -> input.copyTo(output, 1 shl 20) }
+                rf.RemoteFileOutputStream(1L shl 20).use { output ->
+                    val chunk = ByteArray(64 * 1024)
+                    while (true) {
+                        if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
+                        val n = input.read(chunk)
+                        if (n < 0) break
+                        output.write(chunk, 0, n)
+                        progress.count(n.toLong())
+                    }
+                    output.flush()
+                }
             }
         }
         if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")

@@ -19,6 +19,7 @@ describe("SSH transfer card", () => {
     expect(screen.getByText("1.0 MB / 2.0 MB")).toBeTruthy();
     fireEvent(window, new CustomEvent("andagent:ssh-transfer", { detail: { type: "ssh.transfer.done", key: "s\n/a", name: "a.zip", direction: "download", ok: false } }));
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("50");
-    expect(screen.queryByRole("button")).toBeNull();
+    // 终态卡片保留 ✕ 手动关闭按钮（失败态 8s 后自动淡出，用户也可立即关）。
+    expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
   });
 });
