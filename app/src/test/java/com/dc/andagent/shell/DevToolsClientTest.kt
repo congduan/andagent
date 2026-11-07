@@ -119,6 +119,56 @@ class DevToolsClientTest {
     }
 
     @Test
+    fun consoleEntryGroupsLevelsAndCarriesLineNumbers() {
+        val warn = Json.parseToJsonElement(
+            """{"type":"warning","args":[{"type":"string","value":"deprecated"}]}""",
+        ).jsonObject
+        assertEquals(ConsoleLevel.WARN, consoleEntry("Runtime.consoleAPICalled", warn)!!.level)
+
+        val log = Json.parseToJsonElement(
+            """{"type":"log","args":[{"type":"string","value":"ready"}]}""",
+        ).jsonObject
+        assertEquals(ConsoleLevel.LOG, consoleEntry("Runtime.consoleAPICalled", log)!!.level)
+
+        val thrown = Json.parseToJsonElement(
+            """{"exceptionDetails":{"text":"Uncaught","lineNumber":4,"exception":{"type":"object","description":"TypeError: bad"}}}""",
+        ).jsonObject
+        val exc = consoleEntry("Runtime.exceptionThrown", thrown)!!
+        assertEquals(ConsoleLevel.ERROR, exc.level)
+        assertEquals(5, exc.lineNumber) // CDP 0-based → 1-based
+
+        val withStack = Json.parseToJsonElement(
+            """{"type":"error","args":[{"type":"string","value":"oops"}],"stackTrace":{"callFrames":[{"lineNumber":9,"url":"x.js"}]}}""",
+        ).jsonObject
+        assertEquals(10, consoleEntry("Runtime.consoleAPICalled", withStack)!!.lineNumber)
+
+        assertNull(consoleEntry("Network.loadingFinished", Json.parseToJsonElement("{}").jsonObject))
+        assertNull(consoleEntry("Log.entryAdded", Json.parseToJsonElement("{}").jsonObject))
+    }
+
+    @Test
+    fun logEntryAddedReplaysPageLoadErrors() {
+        // Log.enable 补发 attach 前的历史条目 → 页面加载期报错可被捕获。
+        val params = Json.parseToJsonElement(
+            """{"entry":{"source":"javascript","level":"error","text":"Uncaught ReferenceError: x is not defined","url":"https://appassets.androidplatform.net/local/page_1.html","lineNumber":11}}""",
+        ).jsonObject
+        val e = consoleEntry("Log.entryAdded", params)!!
+        assertEquals(ConsoleLevel.ERROR, e.level)
+        assertEquals("error", e.tag)
+        assertEquals(12, e.lineNumber)
+        assertTrue(e.text.contains("Uncaught ReferenceError"))
+        assertTrue(e.text.contains("page_1.html"))
+        val legacy = formatConsoleEvent("Log.entryAdded", params)!!
+        assertTrue(legacy.startsWith("error:"))
+        assertTrue(legacy.contains("(line 12)"))
+
+        val warning = Json.parseToJsonElement(
+            """{"entry":{"level":"warning","text":"slow network"}}""",
+        ).jsonObject
+        assertEquals(ConsoleLevel.WARN, consoleEntry("Log.entryAdded", warning)!!.level)
+    }
+
+    @Test
     fun scansDevToolsSocketNamesFromProcNetUnix() {
         val content = listOf(
             "Num       RefCount Protocol Flags    Stype Path",

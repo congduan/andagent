@@ -84,6 +84,16 @@ export const TOOL_META: Record<string, ToolMeta> = {
   ssh_remote_ls: { label: "远程文件", labelEn: "Remote files", icon: "📂" },
   credential_list: { label: "SSH 凭据", labelEn: "SSH credentials", icon: "🗝️" },
   credential_delete: { label: "删除 SSH 凭据", labelEn: "Delete SSH credential", icon: "🗝️", destructive: true },
+  // R100 ②: ADB 工具族（shell/pull/push 走破坏性确认闸，与 Kotlin destructive 对齐）
+  adb_connect: { label: "ADB 连接", labelEn: "ADB connect", icon: "🔌" },
+  adb_devices: { label: "ADB 设备", labelEn: "ADB devices", icon: "📱" },
+  adb_disconnect: { label: "ADB 断开", labelEn: "ADB disconnect", icon: "🔌" },
+  adb_shell: { label: "ADB Shell", labelEn: "ADB shell", icon: "🖥️", destructive: true },
+  adb_screencap: { label: "ADB 截屏", labelEn: "ADB screenshot", icon: "🖼️" },
+  adb_pull: { label: "ADB 拉取", labelEn: "ADB pull", icon: "📥", destructive: true },
+  adb_push: { label: "ADB 推送", labelEn: "ADB push", icon: "📤", destructive: true },
+  // R101: devtools_errors（只返回 error 级 console）
+  devtools_errors: { label: "页面错误", labelEn: "Page errors", icon: "🐞" },
   screen_capture: { label: "屏幕截图", labelEn: "Screenshot", icon: "🖼️" },
   image_edit: { label: "图片编辑", labelEn: "Edit image", icon: "🎨" },
   image_preview: { label: "图片预览", labelEn: "Preview image", icon: "🖼️" },

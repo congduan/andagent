@@ -185,7 +185,7 @@ const TOOL_DEFS = [
   { name: "nfc_read", description: "等待贴卡最多 60 秒，读取 UID、技术和 NDEF 记录。调用前提示用户贴卡。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "nfc_write_text", description: "覆盖 NFC 卡片的 NDEF 内容为文本；调用前说明写入内容并提示贴卡。", parameters: { type: "object", properties: { text: { type: "string", description: "写入文本" } }, required: ["text"] } },
   { name: "nfc_write_uri", description: "覆盖 NFC 卡片的 NDEF 内容为 URI；调用前说明写入 URI 并提示贴卡。", parameters: { type: "object", properties: { uri: { type: "string", description: "写入 URI" } }, required: ["uri"] } },
-  { name: "web_embed", description: "在对话中展示内嵌浏览器按钮，支持 HTTPS 网站；打开后可用 devtools_eval 在该页面执行 JS 检查（需 DevTools 调试开启）。", parameters: { type: "object", properties: { uri: { type: "string", description: "HTTPS 网站地址" } }, required: ["uri"] } },
+  { name: "web_embed", description: "在对话中展示内嵌浏览器：支持 HTTPS 网站，以及本地 HTML 文件（file:///、content:// 或 /sdcard/... 绝对路径）。本地 HTML 会在原生内嵌 WebView 打开，可用 devtools_console / devtools_errors 查加载期报错、devtools_eval 验证 DOM（需 DevTools 调试开启；见网页开发工作流）。", parameters: { type: "object", properties: { uri: { type: "string", description: "HTTPS 网站地址，或本地 HTML 的 file:///、content:// URI / 绝对路径" } }, required: ["uri"] } },
   { name: "screen_capture", description: "经 scrcpy-server 取一帧屏幕并返回 JPEG 缩略图。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "screen_record_h264", description: "用 scrcpy H.264 录屏到 Movies，可设置时长、码率和最大边长。", parameters: { type: "object", properties: { duration_s: { type: "integer", description: "秒数，默认 30" }, bit_rate: { type: "integer", description: "码率 bps" }, max_size: { type: "integer", description: "最大边长" } }, required: [] } },
   { name: "input_tap", description: "经 Shizuku 模拟屏幕点击。", parameters: { type: "object", properties: { x: { type: "integer", description: "横坐标" }, y: { type: "integer", description: "纵坐标" } }, required: ["x", "y"] } },
@@ -717,6 +717,35 @@ const LIVE_GUIDE_EN = [
   "- For full HTML pages, rich text, CSS animations, or interactive components, use an ```html fence: complete document or body fragment, rendered as-is in a sandboxed iframe (same zero-code-execution model as canvas; touch/click/form interactions work). Prefer the a2ui fence when collecting structured form input.",
 ].join("\n");
 
+/**
+ * R101：网页开发闭环提示词。教 AI「生成网页 → 落盘 → 嵌入 → 用 CDP 查错/验证 → 修 → 交付」，
+ * 而不是只在回复里贴一段代码让用户自己贴到浏览器。参考 CHART_GUIDE / LIVE_GUIDE 模式，
+ * 中英双语，随语言注入 systemPrompt。
+ */
+const WEB_DEV_GUIDE = [
+  "网页 / H5 页面开发工作流（**不要只给代码让用户自己贴到浏览器**）：",
+  "1. 用户要开发网页、H5 页面、单页应用或可视化页面时，直接生成一份完整 HTML 文档（含内联 <style> / <script>，尽量不依赖外部 CDN 也能运行），而不是只在回复里贴代码片段。",
+  "2. 用 file_write 把完整 HTML 存到 Download/andagent/web/ 下（例如 dir=downloads、filename=page.html），记下工具返回的 savedPath。",
+  "3. 用 web_embed(uri=<该文件的绝对路径或 file:/// URI>) 打开；本地 HTML 会进入原生内嵌 WebView（stageLocalHtml 路径，是本进程 DevTools target）。",
+  "4. 必要时先用 devtools_debugging(enable=true)，再用 devtools_status 确认页面已被枚举；用 devtools_errors / devtools_console 查加载期报错——console 从 attach 起实时监听，Log 域会补发页面加载期的错误。",
+  "5. 用 devtools_eval 在页面上验证功能与 DOM（例如 document.title、document.querySelector(...)、关键元素数量、按钮点击后的状态；支持 awaitPromise）。",
+  "6. 若有报错：用 file_write 覆盖修改本地 HTML 文件，再 web_embed 打开新页面复查；重复 4-5 直到 devtools_errors 为空且功能验证通过。",
+  "7. 全绿后交付：明确告知 savedPath、页面功能与验证结果；需要展示时可用 web_embed 或 ```html 围栏预览。",
+  "要点：```html 围栏适合静态预览，但「生成 → 嵌入 → 查错 → 修」闭环必须走 file_write + web_embed + devtools_*，这样才能用 CDP 真正确认页面在 WebView 里加载无误。",
+].join("\n");
+
+const WEB_DEV_GUIDE_EN = [
+  "Web / H5 page development loop (do NOT just hand the user code to paste into a browser):",
+  "1. When asked to build a web page, H5 page, single-page app, or visual page, produce a complete self-contained HTML document (inline <style> / <script>, ideally runnable without external CDNs), not just a code snippet in the reply.",
+  "2. Save the full HTML with file_write into Download/andagent/web/ (e.g. dir=downloads, filename=page.html) and note the returned savedPath.",
+  "3. Open it with web_embed(uri=<absolute path or file:/// URI>). A local HTML file is staged into a native embedded WebView (stageLocalHtml), which is a same-process DevTools target.",
+  "4. If needed, enable devtools_debugging(enable=true), then use devtools_status to confirm the page is listed; use devtools_errors / devtools_console for load-time errors — console is captured live from attach, and the Log domain replays errors that happened during page load.",
+  "5. Verify functionality and DOM with devtools_eval (e.g. document.title, document.querySelector(...), element counts, state after a button click; awaitPromise supported).",
+  "6. On errors: overwrite the local HTML with file_write, reopen via web_embed, and repeat 4-5 until devtools_errors is empty and features pass.",
+  "7. Deliver when green: state the savedPath, the page features, and the verification result; use web_embed or an ```html fence for preview.",
+  "Note: an ```html fence is fine for a static preview, but the generate -> embed -> check -> fix loop must go through file_write + web_embed + devtools_* so CDP can actually confirm the page loads cleanly in the WebView.",
+].join("\n");
+
 const NETWORK_GUIDE = [
   "网络访问：http_request 是通用 HTTP 客户端，支持 GET/POST/PUT/DELETE/PATCH/HEAD，可用 headers_json 传 Authorization 等请求头、body 传请求体；它允许 http:// 与 https://，局域网设备（Home Assistant 的 http://192.168.x.x:8123/api/、ESPHome、路由器 API）优先用它，网页正文仍用 web_read（仅 HTTPS）。",
   "调用局域网 API 前先用 lan_scan 找设备：mode=ping 默认扫当前 Wi-Fi 的 /24，返回存活 IP 与反查主机名；已知端口（如 8123、80、1883）用 mode=port。仅扫描自己所在的网络，不要扫描他人网段；不要用 http_request 对同一地址高频轮询。",
@@ -1219,6 +1248,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? "Reflection: android_reflect can call only allowlisted methods of AudioManager, MediaRouter, CameraManager/CameraCharacteristics, SensorManager, PowerManager, ActivityManager, ConnectivityManager, Build/SystemClock, Settings.System/Global/Secure, TelephonyManager, DisplayManager, and PackageManager. See declared api_* tools; prefer dedicated tools." : "反射桥：android_reflect 仅能调用 AudioManager、MediaRouter、CameraManager/CameraCharacteristics、SensorManager、PowerManager、ActivityManager、ConnectivityManager、Build/SystemClock、Settings.System/Global/Secure、TelephonyManager、DisplayManager、PackageManager 的白名单方法。批量 api_* 工具见工具列表；优先用专门工具，反射用于长尾查询。",
               currentLanguage() === "en" ? CHART_GUIDE_EN : CHART_GUIDE,
               currentLanguage() === "en" ? LIVE_GUIDE_EN : LIVE_GUIDE,
+              currentLanguage() === "en" ? WEB_DEV_GUIDE_EN : WEB_DEV_GUIDE,
               currentLanguage() === "en" ? HARDWARE_GUIDE_EN : HARDWARE_GUIDE,
               currentLanguage() === "en" ? NETWORK_GUIDE_EN : NETWORK_GUIDE,
               currentLanguage() === "en" ? A11Y_GUIDE_EN : A11Y_GUIDE,

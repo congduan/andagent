@@ -50,7 +50,11 @@ class AdbClient(
 
             write(AdbMessage(A_CNXN, A_VERSION, MAX_DATA, "host::\u0000".toByteArray()))
             when (val r = handshake()) {
-                is Handshake.Connected -> "OK: ADB 连接已建立（${host}:${port}）"
+                is Handshake.Connected -> {
+                    // 握手期可能把 soTimeout 调到 AUTH_WAIT_MS；连上后放宽，避免长 shell/传输被连接超时误杀。
+                    s.soTimeout = SESSION_TIMEOUT_MS
+                    "OK: ADB 连接已建立（${host}:${port}）"
+                }
                 is Handshake.AuthRequired -> {
                     close()
                     "AUTH_REQUIRED: 已向目标发送本机公钥，请在手机弹出的「允许 USB 调试 / 无线调试」授权框点「允许」，然后重新调用 adb_connect(host, port)。"
@@ -380,5 +384,7 @@ class AdbClient(
         const val MAX_OUTPUT_BYTES = 8 * 1024
         const val HANDSHAKE_MAX_MESSAGES = 8
         const val AUTH_WAIT_MS = 3000
+        /** 建连后的读超时：shell/文件传输可能长时间无输出，不沿用 connect 的短超时。 */
+        const val SESSION_TIMEOUT_MS = 30_000
     }
 }

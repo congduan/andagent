@@ -132,7 +132,7 @@ export function ToolCard(props: ToolCallMessagePartProps) {
   const shown = canFold && !expanded ? lines.slice(0, COLLAPSE_LINES).join("\n") : formatted.text;
   const written = /^(WRITTEN|DELETED|TOGGLED)/.test(raw);
   let captureImage: string | null = null;
-  if (["screen_capture", "image_edit", "image_preview", "image_collage", "devtools_screenshot"].includes(props.toolName) && !running && !failed) {
+  if (["screen_capture", "image_edit", "image_preview", "image_collage", "devtools_screenshot", "adb_screencap"].includes(props.toolName) && !running && !failed) {
     try { const result = JSON.parse(raw) as { thumbnailBase64?: string; thumbnailMime?: string }; if (result.thumbnailBase64) captureImage = `data:${result.thumbnailMime ?? "image/jpeg"};base64,${result.thumbnailBase64}`; } catch { /* no image */ }
   }
   let beforeImage: string | null = null;
@@ -144,6 +144,7 @@ export function ToolCard(props: ToolCallMessagePartProps) {
   const parsed = useMemo(() => { try { return formatted.json ? JSON.parse(raw) : null; } catch { return null; } }, [raw, formatted.json]);
   const media = !running && !failed && ["file_download", "tts_to_file", "mic_record", "screen_record_h264", "screen_record", "screen_record_stop"].includes(props.toolName) ? mediaFromResult(raw) : null;
   const webUri = props.toolName === "web_embed" && parsed?.type === "webview" && typeof parsed.uri === "string" ? parsed.uri : null;
+  const webLocal = props.toolName === "web_embed" && parsed?.local === true;
   const photoGrid = !running && !failed && props.toolName === "album_photos" && Array.isArray(parsed?.photos) && parsed.photos.length > 0;
 
   return (
@@ -210,7 +211,7 @@ export function ToolCard(props: ToolCallMessagePartProps) {
         </div>
       )}
 
-      {webUri && <WebViewCard uri={webUri} />}
+      {webUri && <WebViewCard uri={webUri} local={webLocal} />}
       {photoGrid && <PhotosCard code={JSON.stringify(parsed?.photos ?? [])} />}
       {media && <MediaCard kind={media.kind} uri={media.uri} />}
       {captureImage && <div className="tool-image-comparison">{beforeImage && <figure><img src={beforeImage} alt={t("beforeEdit")} /><figcaption>{t("beforeEdit")}</figcaption></figure>}<figure><img src={captureImage} alt={t("afterEdit")} /><figcaption>{beforeImage ? t("afterEdit") : t("imagePreview")}</figcaption></figure></div>}

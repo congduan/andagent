@@ -1,6 +1,8 @@
 package com.dc.andagent.tools
 
 import android.content.Context
+import com.dc.andagent.shell.ConsoleEntry
+import com.dc.andagent.shell.ConsoleLevel
 import com.dc.andagent.shell.DevToolsClient
 import com.dc.andagent.shell.DevToolsPage
 import com.dc.andagent.shell.devtoolsScreenshotJson
@@ -26,7 +28,8 @@ class DevToolsTool(private val context: Context, override val name: String) : To
         "devtools_status" -> "查询 WebView 远程调试开关状态与可调试页面列表（序号/标题/URL）。"
         "devtools_debugging" -> "运行时开关 WebView 远程调试（release 包同样生效，持久化到设置）。开启后 devtools_* 工具与 USB chrome://inspect 均可用。"
         "devtools_eval" -> "在指定页面执行 JavaScript 并返回结果（awaitPromise，可做 DOM 检查/抓取内容）。page 为 devtools_status 的序号或 URL/标题关键词，缺省第一个页面；web_embed 打开的页面可用此工具检查。"
-        "devtools_console" -> "读取指定页面的 console 输出缓存（log/warn/error 与未捕获异常，自建立监听起）。先用 devtools_eval 在页面产生输出，再调用本工具。"
+        "devtools_console" -> "读取指定页面的 console 输出（log/warn/error 与未捕获异常）。从 attach 起实时监听 Runtime + Log 域，Log.enable 会补发页面加载期报错，无需先 devtools_eval 制造输出；按 error/warn/log 分组返回，错误带行号。"
+        "devtools_errors" -> "只返回指定页面的 error 级 console/异常（含加载期报错，按行号）。排查「生成网页→嵌入→查错→修」工作流里的加载失败很方便。"
         else -> "截取指定页面当前画面为 PNG 存入相册 Pictures/AndAgent；缩略图由工具卡片展示。"
     }
     override val parameters = when (name) {
@@ -36,6 +39,11 @@ class DevToolsTool(private val context: Context, override val name: String) : To
             schemaOf(
                 "page" to strParam("页面序号或 URL/标题关键词，缺省第一个页面"),
                 "lines" to intParam("返回最近行数，默认 50，上限 300"),
+            )
+        "devtools_errors" ->
+            schemaOf(
+                "page" to strParam("页面序号或 URL/标题关键词，缺省第一个页面"),
+                "lines" to intParam("返回最近 error 行数，默认 50，上限 300"),
             )
         "devtools_screenshot" ->
             schemaOf("page" to strParam("页面序号或 URL/标题关键词，缺省第一个页面"))
@@ -53,6 +61,7 @@ class DevToolsTool(private val context: Context, override val name: String) : To
             "devtools_debugging" -> setDevToolsDebugging(context, args.boolArg("enable") ?: error("缺少 enable"))
             "devtools_eval" -> eval(args)
             "devtools_console" -> console(args)
+            "devtools_errors" -> errors(args)
             else -> screenshot(args)
         }
     }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
@@ -101,17 +110,59 @@ class DevToolsTool(private val context: Context, override val name: String) : To
         }.toString()
     }
 
+    /** 单条 console 的结构化 JSON：level 供卡片按 error(红)/warn(黄)/log(灰) 着色，错误带 line。 */
+    private fun entryJson(e: ConsoleEntry): JsonObject = buildJsonObject {
+        put(
+            "level",
+            when (e.level) {
+                ConsoleLevel.ERROR -> "error"
+                ConsoleLevel.WARN -> "warn"
+                ConsoleLevel.LOG -> "log"
+            },
+        )
+        put("text", e.legacyLine())
+        e.lineNumber?.let { put("line", it) }
+    }
+
     private suspend fun console(args: JsonObject): String {
         val lines = (args.intArg("lines") ?: 50).coerceIn(1, 300)
         val page = DevToolsClient.resolvePage(args.strArg("page"))
         val entries = DevToolsClient.consoleLines(page, lines)
+        val errors = entries.filter { it.level == ConsoleLevel.ERROR }
+        val warns = entries.filter { it.level == ConsoleLevel.WARN }
+        val logs = entries.filter { it.level == ConsoleLevel.LOG }
         return buildJsonObject {
             put("page", pageJson(page))
             put("count", entries.size)
+            put("levels", buildJsonObject {
+                put("error", errors.size)
+                put("warn", warns.size)
+                put("log", logs.size)
+            })
             if (entries.isEmpty()) {
-                put("note", "暂无缓存输出（监听从此刻开始；先用 devtools_eval 让页面产生 console/异常再读取）")
+                put("note", "暂无 console 输出（已从 attach 起实时监听 Runtime + Log 域；Log.enable 会补发页面加载期日志，可稍后重读）")
             } else {
-                put("entries", JsonArray(entries.map { JsonPrimitive(it) }))
+                // 按级别分组（error 红 / warn 黄 / log 灰），同时保留按时间顺序的扁平 entries。
+                put("groups", buildJsonObject {
+                    put("error", JsonArray(errors.map { entryJson(it) }))
+                    put("warn", JsonArray(warns.map { entryJson(it) }))
+                    put("log", JsonArray(logs.map { entryJson(it) }))
+                })
+                put("entries", JsonArray(entries.map { entryJson(it) }))
+            }
+        }.toString()
+    }
+
+    private suspend fun errors(args: JsonObject): String {
+        val lines = (args.intArg("lines") ?: 50).coerceIn(1, 300)
+        val page = DevToolsClient.resolvePage(args.strArg("page"))
+        val entries = DevToolsClient.consoleErrors(page, lines)
+        return buildJsonObject {
+            put("page", pageJson(page))
+            put("count", entries.size)
+            put("errors", JsonArray(entries.map { entryJson(it) }))
+            if (entries.isEmpty()) {
+                put("note", "未发现 error 级 console/异常（加载期报错由 Log.enable 补发）")
             }
         }.toString()
     }
@@ -134,5 +185,6 @@ val DEVTOOLS_TOOLS = listOf(
     "devtools_debugging",
     "devtools_eval",
     "devtools_console",
+    "devtools_errors",
     "devtools_screenshot",
 )

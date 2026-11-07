@@ -45,6 +45,24 @@ data class DevToolsPage(
     val webSocketDebuggerUrl: String,
 )
 
+/** console 级别分组（error 红 / warn 黄 / log 灰）。 */
+enum class ConsoleLevel { ERROR, WARN, LOG }
+
+/**
+ * R101：结构化 console 条目。环形缓冲从 attach（Runtime/Log.enable）起实时记录，
+ * 不再依赖「先 devtools_eval 制造输出」。tag 保留原事件前缀以兼容旧单行文本。
+ */
+data class ConsoleEntry(
+    val level: ConsoleLevel,
+    val tag: String,
+    val text: String,
+    val lineNumber: Int?,
+) {
+    /** 兼容旧 devtools_console 的单行文本（如 "error: xxx"、"exception: xxx"）。 */
+    fun legacyLine(): String =
+        "$tag: " + if (lineNumber != null) "$text (line $lineNumber)" else text
+}
+
 private fun JsonObject.str(key: String): String? =
     this[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
 
@@ -89,22 +107,56 @@ fun renderRemoteObject(el: kotlinx.serialization.json.JsonElement): String {
         ?: o["type"]?.jsonPrimitive?.contentOrNull ?: "object"
 }
 
-/** Runtime.consoleAPICalled / exceptionThrown 事件 → 一行 console 文本；其他事件返回 null。 */
-fun formatConsoleEvent(method: String, params: JsonObject): String? = when (method) {
+/**
+ * R101：CDP 事件 → 结构化 [ConsoleEntry]。
+ *  - Runtime.consoleAPICalled：type→级别，args→文本，stackTrace 首帧→行号
+ *  - Runtime.exceptionThrown：一律 error，exceptionDetails.lineNumber→行号
+ *  - Log.entryAdded：entry.level→级别，entry.text/url/lineNumber；Log.enable 会补发
+ *    attach 前的历史条目，故能捕获「页面加载期」报错
+ * 其他事件返回 null。
+ */
+fun consoleEntry(method: String, params: JsonObject): ConsoleEntry? = when (method) {
     "Runtime.consoleAPICalled" -> {
         val type = params.str("type") ?: "log"
         val args = (params["args"] as? JsonArray ?: JsonArray(emptyList()))
             .joinToString(" ") { renderRemoteObject(it) }
-        "$type: $args"
+        val level = when (type.lowercase()) {
+            "error" -> ConsoleLevel.ERROR
+            "warning", "warn" -> ConsoleLevel.WARN
+            else -> ConsoleLevel.LOG
+        }
+        val frames = (params["stackTrace"] as? JsonObject)?.get("callFrames") as? JsonArray
+        val frame = frames?.firstOrNull() as? JsonObject
+        val line = frame?.get("lineNumber")?.jsonPrimitive?.intOrNull?.let { it + 1 }
+        ConsoleEntry(level, type, args, line)
     }
     "Runtime.exceptionThrown" -> {
         val d = params["exceptionDetails"] as? JsonObject ?: return null
         val text = d.str("text") ?: ""
         val desc = (d["exception"] as? JsonObject)?.str("description") ?: ""
-        "exception: ${desc.ifBlank { text }}"
+        val line = d["lineNumber"]?.jsonPrimitive?.intOrNull?.let { it + 1 }
+        ConsoleEntry(ConsoleLevel.ERROR, "exception", desc.ifBlank { text }, line)
+    }
+    "Log.entryAdded" -> {
+        val e = params["entry"] as? JsonObject ?: return null
+        val levelStr = e.str("level") ?: "log" // verbose / info / warning / error
+        val level = when (levelStr.lowercase()) {
+            "error" -> ConsoleLevel.ERROR
+            "warning", "warn" -> ConsoleLevel.WARN
+            else -> ConsoleLevel.LOG
+        }
+        val text = e.str("text") ?: ""
+        val url = e.str("url")
+        val line = e["lineNumber"]?.jsonPrimitive?.intOrNull?.let { it + 1 }
+        val full = if (url != null) "$text [$url]" else text
+        ConsoleEntry(level, levelStr, full, line)
     }
     else -> null
 }
+
+/** 兼容旧调用/测试：结构化条目 → 单行文本。 */
+fun formatConsoleEvent(method: String, params: JsonObject): String? =
+    consoleEntry(method, params)?.legacyLine()
 
 /** /proc/net/unix 内容 → devtools socket 名（abstract 前导 @ 去掉，绝对路径保留）。 */
 fun scanDevToolsSocketNames(content: String): List<String> =
@@ -228,13 +280,19 @@ object DevToolsClient {
             ?: throw IOException("截图失败：${resp["error"] ?: resp}")
     }
 
-    /** 读取某页的 console 环形缓冲；首次调用会建立连接并挂 Runtime.enable。 */
-    suspend fun consoleLines(page: DevToolsPage, max: Int): List<String> {
+    /** 读取某页的结构化 console 环形缓冲；首次调用建立连接并 enable Runtime + Log。 */
+    suspend fun consoleLines(page: DevToolsPage, max: Int): List<ConsoleEntry> {
         val s = session(page)
-        // 等 Runtime.enable 落地（最多 800ms），顺便接住连接后立刻到达的事件。
+        // 等 Runtime.enable 落地（最多 800ms），顺便接住 Log.enable 补发的历史条目。
         runCatching { withTimeout(800) { s.awaitEnabled() } }
         return s.consoleLines(max)
     }
+
+    /** devtools_errors：只返回 error 级条目（含 Log.enable 补发的加载期报错）。 */
+    suspend fun consoleErrors(page: DevToolsPage, max: Int): List<ConsoleEntry> =
+        consoleLines(page, CONSOLE_CAP)
+            .filter { it.level == ConsoleLevel.ERROR }
+            .takeLast(max)
 
     fun shutdown() {
         sessions.values.forEach { it.close() }
@@ -260,17 +318,19 @@ object DevToolsClient {
         private val nextId = AtomicInteger(1)
         private val pending = ConcurrentHashMap<Int, CompletableDeferred<JsonObject>>()
         private val enabled = CompletableDeferred<Unit>()
-        @Volatile private var enableCommandId = -1
-        private val consoleBuffer = ArrayDeque<String>()
+        /** enable 控制命令的响应 id（不进 pending）；Runtime.enable 的 id 用于 awaitEnabled。 */
+        private val enableIds = java.util.Collections.newSetFromMap(ConcurrentHashMap<Int, Boolean>())
+        @Volatile private var runtimeEnableId = -1
+        private val consoleBuffer = ArrayDeque<ConsoleEntry>()
         @Volatile private var socket: WebSocket? = null
 
-        fun consoleLines(max: Int): List<String> =
+        fun consoleLines(max: Int): List<ConsoleEntry> =
             synchronized(consoleBuffer) { consoleBuffer.toList().takeLast(max) }
 
-        private fun appendConsole(line: String?) {
-            if (line == null) return
+        private fun appendConsole(entry: ConsoleEntry?) {
+            if (entry == null) return
             synchronized(consoleBuffer) {
-                consoleBuffer.addLast(line)
+                consoleBuffer.addLast(entry)
                 while (consoleBuffer.size > CONSOLE_CAP) consoleBuffer.removeFirst()
             }
         }
@@ -283,22 +343,31 @@ object DevToolsClient {
                         .build(),
                     object : WebSocketListener() {
                         override fun onOpen(webSocket: WebSocket, response: Response) {
-                            // 打开 console 事件流；其响应用 enableCommandId 认领，不进 pending。
-                            enableCommandId = nextId.getAndIncrement()
-                            webSocket.send(buildCdpRequest(enableCommandId, "Runtime.enable", null))
+                            // R101：从 attach 起就开 console 事件流。Runtime 提供 consoleAPICalled /
+                            // exceptionThrown；Log.enable 会补发 attach 前的历史日志（含页面加载期报错）。
+                            // 两条 enable 的响应按 id 认领，不进 pending。
+                            val rid = nextId.getAndIncrement()
+                            val lid = nextId.getAndIncrement()
+                            enableIds.add(rid); enableIds.add(lid)
+                            runtimeEnableId = rid
+                            webSocket.send(buildCdpRequest(rid, "Runtime.enable", null))
+                            webSocket.send(buildCdpRequest(lid, "Log.enable", null))
                         }
 
                         override fun onMessage(webSocket: WebSocket, text: String) {
                             val obj = runCatching { Json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
                             val id = obj["id"]?.jsonPrimitive?.intOrNull
                             if (id != null) {
-                                if (id == enableCommandId) enabled.complete(Unit)
-                                else pending.remove(id)?.complete(obj)
+                                if (enableIds.remove(id)) {
+                                    if (id == runtimeEnableId) enabled.complete(Unit)
+                                } else {
+                                    pending.remove(id)?.complete(obj)
+                                }
                                 return
                             }
                             val method = obj["method"]?.jsonPrimitive?.contentOrNull ?: return
                             appendConsole(
-                                formatConsoleEvent(method, obj["params"] as? JsonObject ?: JsonObject(emptyMap())),
+                                consoleEntry(method, obj["params"] as? JsonObject ?: JsonObject(emptyMap())),
                             )
                         }
 
@@ -315,6 +384,7 @@ object DevToolsClient {
 
         private fun drop(reason: String) {
             socket = null
+            enableIds.clear()
             pending.values.forEach { it.completeExceptionally(IOException("DevTools $reason")) }
             pending.clear()
         }

@@ -82,6 +82,8 @@ import com.dc.andagent.tools.SshTool
 import com.dc.andagent.tools.SshCredentialActivity
 import com.dc.andagent.tools.SshCredentialStore
 import com.dc.andagent.tools.SshCredentialTool
+import com.dc.andagent.tools.ADB_TOOLS
+import com.dc.andagent.tools.AdbTool
 import com.dc.andagent.tools.ScreenCaptureTool
 import com.dc.andagent.tools.ProjectionConsentActivity
 import com.dc.andagent.tools.ProjectionConsentBridge
@@ -545,6 +547,8 @@ class MainActivity : ComponentActivity() {
         } })
         // R91.5: 凭据元数据（nickname/host/user），secret 只留在 Keystore 加密文件里。
         tools.putAll(SSH_CREDENTIAL_TOOLS.associateWith { SshCredentialTool(appContext, it) })
+        // R100 ②: ADB 真实对接（连接/设备/断开/shell/截图/pull/push，共享 AdbSessionHub 状态）。
+        tools.putAll(ADB_TOOLS.associateWith { AdbTool(appContext, it) })
         // R35: 联系人新建/通话记录/应用卸载/APK 提取/二维码/传感器录制/文件加密。
         tools.putAll(R35_TOOLS.associateWith { R35Tool(appContext, permissionBroker, shizuku, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.
