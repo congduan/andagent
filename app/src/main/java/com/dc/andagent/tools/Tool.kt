@@ -51,6 +51,11 @@ fun boolParam(description: String): JsonObject = buildJsonObject {
     put("description", description)
 }
 
+fun numParam(description: String): JsonObject = buildJsonObject {
+    put("type", "number")
+    put("description", description)
+}
+
 /* ------------------------- argument accessors ------------------------- */
 
 /** String argument; null for missing/blank/json-null. */
@@ -58,6 +63,8 @@ fun JsonObject.strArg(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
 
 fun JsonObject.intArg(key: String): Int? = strArg(key)?.toIntOrNull()
+
+fun JsonObject.floatArg(key: String): Float? = strArg(key)?.toFloatOrNull()
 
 fun JsonObject.longArg(key: String): Long? = strArg(key)?.toLongOrNull()
 

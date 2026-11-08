@@ -118,3 +118,17 @@ export async function testModel(settings: Settings, signal: AbortSignal): Promis
   }) as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { name?: string } }> } }> };
   return result.choices?.some(c => c.message?.tool_calls?.some(call => call.function?.name === "ping")) ?? false;
 }
+
+/**
+ * R88: 视觉能力启发式。
+ *
+ * 设置里只有模型 ID（没有模型元数据表），所以用主流视觉模型的命名特征判断：
+ * 命中即认为能看图（`Model.input` 会带上 "image"），未命中只给出提示、不阻断
+ * 发送——自建/新模型名字可能不在名单里，交给服务端如实报错更可靠。
+ */
+const VISION_MODEL =
+  /(gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|o3|o4-mini|vision|pixtral|llava|internvl|minicpm-v|moondream|qvq|-vl\b|vl-|glm-4v|glm-4\.1v|glm-4\.5v|claude|gemini|grok-2v|grok-4|step-1v|yi-vl|doubao-.*vision)/i;
+
+export function visionCapable(model: string): boolean {
+  return VISION_MODEL.test(model.trim());
+}

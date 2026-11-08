@@ -46,6 +46,7 @@ The WebView loads `https://appassets.androidplatform.net/assets/web/index.html` 
 | Calendar / alarms / timers / cron | 14 | `calendar_list/events/add/delete`, `alarm_set`, `timer_set`, `countdown`, `cron_create/list/toggle/delete/run_now` |
 | Calls / location / recording / contacts / SMS | 8 | `phone_call`, `sms_send/read`, `location_get`, `mic_record`, `contacts_search`, `provider_query` |
 | Bluetooth / Wi-Fi | 11 | `bt_scan/connect/toggle`, `wifi_connect/saved_list/forget/toggle`, `wifi_info` |
+| Local VPN (VpnService, no root) | 7 | `vpn_start/stop/status` (DNS-only tun, one system consent), `vpn_split` (per-app allow/deny list), `vpn_hosts` (hosts-level ad blocking, remote list import), `vpn_traffic` (per-app usage via `NetworkStatsManager`), `vpn_diag` (DNS log, blocked ranking, pcap export) |
 | Sensors / health | 4 | `sensor_list/read`, `steps_today/history` |
 | Screen capture / recording (MediaProjection) | 6 | `screen_capture`, `screen_record`, `screen_record_stop`, `screen_record_list`, `screen_record_h264`, `screenshot_quick` |
 | Termux / shell | 4 | `termux_setup`, `shell_exec`, `pkg_install`, `apt_status` |
@@ -62,6 +63,7 @@ The WebView loads `https://appassets.androidplatform.net/assets/web/index.html` 
 | Intents | 3 | `intent_send`, `intent_resolve`, `intent_broadcast` |
 | WebView DevTools | 5 | `devtools_status/debugging/eval/console/screenshot` |
 | Layered memory / LiveLoop | — | Core and archived memory, continuous background work |
+| Camera (capture / manual / depth) | 9 | `camera_capture` (manual ISO/shutter/EV/focus, ultrawide/tele/macro lens switch, optical zoom ratio), `camera_raw` (RAW_SENSOR → DNG + Bayer preview), `camera_depth` (DEPTH16 PNG/colormap/PLY point cloud), `camera_stream` (ImageAnalysis luma/motion/QR frame analytics), `camera_extension` (OEM night/HDR/bokeh), `camera_record`, `camera_scan`, `camera_info`, `camera_overlay_*` |
 | Camera overlay / scheduled work | — | Floating preview, chat camera card, cron management |
 
 Other features:

@@ -132,6 +132,10 @@ import com.dc.andagent.tools.CameraInfoTool
 import com.dc.andagent.tools.CameraCaptureTool
 import com.dc.andagent.tools.CameraRecordTool
 import com.dc.andagent.tools.CameraScanTool
+import com.dc.andagent.tools.CameraRawTool
+import com.dc.andagent.tools.CameraDepthTool
+import com.dc.andagent.tools.CameraStreamTool
+import com.dc.andagent.tools.CameraExtensionTool
 import com.dc.andagent.tools.OcrTextTool
 import com.dc.andagent.tools.SensorInfoTool
 import com.dc.andagent.tools.CameraOverlayTool
@@ -185,6 +189,8 @@ import com.dc.andagent.tools.HardwareStatusTool
 import com.dc.andagent.tools.HARDWARE_STATUS_TOOLS
 import com.dc.andagent.tools.BtUsbExtTool
 import com.dc.andagent.tools.BT_USB_EXT_TOOLS
+import com.dc.andagent.tools.VpnTool
+import com.dc.andagent.tools.VPN_TOOLS
 import com.dc.andagent.tools.AndroidReflectTool
 import com.dc.andagent.tools.RestrictedReflectExecutor
 import com.dc.andagent.tools.ApiToolFactory
@@ -466,6 +472,10 @@ class MainActivity : ComponentActivity() {
             "camera_capture" to CameraCaptureTool(appContext, permissionBroker),
             "camera_record" to CameraRecordTool(appContext, permissionBroker),
             "camera_scan" to CameraScanTool(appContext, permissionBroker),
+            "camera_raw" to CameraRawTool(appContext, permissionBroker),
+            "camera_depth" to CameraDepthTool(appContext, permissionBroker),
+            "camera_stream" to CameraStreamTool(appContext, permissionBroker),
+            "camera_extension" to CameraExtensionTool(appContext, permissionBroker),
             // OCR：ML Kit 中文 bundled 模型（随 APK 出厂，离线推理，零权限）。
             "ocr_text" to OcrTextTool(appContext),
             "mic_list" to MicListTool(appContext),
@@ -561,6 +571,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(HARDWARE_STATUS_TOOLS.associateWith { HardwareStatusTool(appContext, permissionBroker, it) })
         // R86: 蓝牙扩展刀（BLE 外设广播、A2DP 媒体路由、标准 GATT 电量、USB 拓扑、USB MIDI）。
         tools.putAll(BT_USB_EXT_TOOLS.associateWith { BtUsbExtTool(appContext, permissionBroker, it) })
+        // R120: 本地 VPN（VpnService，纯应用权限）：DNS ads 拦截 + 分应用分流 + 流量统计 + pcap 诊断。
+        tools.putAll(VPN_TOOLS.associateWith { VpnTool(appContext, permissionBroker, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.
         tools["android_reflect"] = AndroidReflectTool(RestrictedReflectExecutor(appContext))
         tools.putAll(com.dc.andagent.memory.MEMORY_TOOLS.associateWith { com.dc.andagent.memory.MemoryTool(memoryStore, it) })

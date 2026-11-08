@@ -1004,6 +1004,43 @@ class AgentBridge(
         }
     }
 
+    /* --------------------- R88: 对话内图片附件（多模态） --------------- */
+
+    /**
+     * 导入一张图片为对话附件：解码 + EXIF 转正 + 压到长边 ≤1568 JPEG，落盘到
+     * `chat-images/`，返回 `{ok,path,url,width,height,bytes,mimeType}`。
+     * `source` 只接受 content:// 或应用自己的落盘目录（见 ChatImageStore）。
+     */
+    @JavascriptInterface
+    fun chatImageImport(source: String): String {
+        val ctx = appContext
+            ?: return buildJsonObject { put("ok", false); put("message", "bridge 无 context") }.toString()
+        return runCatching {
+            val image = com.dc.andagent.tools.ChatImageStore.import(ctx, source)
+            buildJsonObject {
+                put("ok", true)
+                put("path", image.path)
+                put("url", image.url)
+                put("width", image.width)
+                put("height", image.height)
+                put("bytes", image.bytes)
+                put("mimeType", "image/jpeg")
+            }.toString()
+        }.getOrElse {
+            buildJsonObject {
+                put("ok", false)
+                put("message", it.message ?: it.javaClass.simpleName)
+            }.toString()
+        }
+    }
+
+    /** 按相对路径读回附件 base64（模型消息用）；失败返回空串。 */
+    @JavascriptInterface
+    fun chatImageBase64(path: String): String {
+        val ctx = appContext ?: return ""
+        return com.dc.andagent.tools.ChatImageStore.readBase64(ctx, path).orEmpty()
+    }
+
     /** R39: WebView 回报解析后的主题（true=夜间），原生侧同步背景与系统栏。 */
     @JavascriptInterface
     fun reportTheme(isDark: Boolean) {

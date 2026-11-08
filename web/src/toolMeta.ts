@@ -120,6 +120,14 @@ export const TOOL_META: Record<string, ToolMeta> = {
   camera_overlay_show: { label: "打开相机浮窗", labelEn: "Open camera overlay", icon: "camera" },
   camera_overlay_update: { label: "调整相机浮窗", labelEn: "Adjust camera overlay", icon: "camera" },
   camera_overlay_hide: { label: "关闭相机浮窗", labelEn: "Close camera overlay", icon: "camera" },
+  camera_info: { label: "摄像头能力", labelEn: "Camera capabilities", icon: "camera" },
+  camera_capture: { label: "拍照", labelEn: "Take photo", icon: "camera" },
+  camera_record: { label: "相机录像", labelEn: "Record video", icon: "video" },
+  camera_scan: { label: "扫码识别", labelEn: "Scan code", icon: "scan-text" },
+  camera_raw: { label: "RAW 拍摄", labelEn: "RAW capture", icon: "camera" },
+  camera_depth: { label: "深度图", labelEn: "Depth map", icon: "image" },
+  camera_stream: { label: "连续帧分析", labelEn: "Frame analysis", icon: "activity" },
+  camera_extension: { label: "厂商相机扩展", labelEn: "Camera extensions", icon: "sparkles" },
   mic_list: { label: "录音列表", labelEn: "List recordings", icon: "music" },
   screen_orientation_get: { label: "屏幕方向", labelEn: "Screen orientation", icon: "compass" },
   screen_orientation_set: { label: "旋转屏幕", labelEn: "Rotate screen", icon: "refresh" },
@@ -156,6 +164,14 @@ export const TOOL_META: Record<string, ToolMeta> = {
   usb_midi: { label: "USB MIDI", labelEn: "USB MIDI", icon: "music" },
   steps_today: { label: "今日步数", labelEn: "Today’s steps", icon: "activity" },
   steps_history: { label: "步数历史", labelEn: "Step history", icon: "activity" },
+  // R120: 本地 VPN（VpnService，纯应用权限）—— DNS 广告拦截 / 分流 / 流量 / 诊断
+  vpn_start: { label: "开启本地 VPN", labelEn: "Start local VPN", icon: "globe" },
+  vpn_stop: { label: "关闭本地 VPN", labelEn: "Stop local VPN", icon: "stop" },
+  vpn_status: { label: "VPN 状态", labelEn: "VPN status", icon: "info" },
+  vpn_traffic: { label: "全机流量统计", labelEn: "Device traffic", icon: "activity" },
+  vpn_split: { label: "按应用分流", labelEn: "Per-app split", icon: "package" },
+  vpn_hosts: { label: "广告拦截规则", labelEn: "Block rules", icon: "lock" },
+  vpn_diag: { label: "网络诊断", labelEn: "Network diagnostics", icon: "bug" },
 };
 
 export const TOOL_DESTRUCTIVE = new Set(

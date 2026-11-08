@@ -17,6 +17,7 @@ import {
   useAui,
   useAuiState,
   useExternalStoreRuntime,
+  type ImageMessagePartProps,
   type TextMessagePartProps,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
@@ -25,6 +26,7 @@ import { createBackLayerManager } from "./backLayers";
 import {
   consumeDeeplink,
   consumeA2uiForms,
+  execTool,
   getAppVersion,
   exportConversation,
   hasBridge,
@@ -35,6 +37,7 @@ import {
   type DeeplinkDetail,
   type Settings,
 } from "./bridge";
+import { importChatImage, MAX_CHAT_IMAGES, type ChatImage } from "./chatImages";
 import { CopyMenu, selectedText, useLongPress, type CopyMenuAction } from "./CopyMenu";
 import { Icon } from "./icons";
 import { SshTransferHost } from "./SshTransferCard";
@@ -47,7 +50,7 @@ import { MarkdownText } from "./Markdown";
 import { MessageNav, type MessageNavItem } from "./MessageNav";
 import { SettingsPanel, type SettingsPage } from "./Settings";
 import { ModelSetup } from "./ModelSetup";
-import { dismissModelSetup, isModelConfigured, needsModelSetup } from "./modelConfig";
+import { dismissModelSetup, isModelConfigured, needsModelSetup, visionCapable } from "./modelConfig";
 import { pickTemplateGroups } from "./templates";
 import { ToolCard } from "./ToolCard";
 import { fmtTokens, sumUsageBreakdown } from "./usage";
@@ -145,6 +148,15 @@ function useFullCopyText(): string {
 
 function UserText({ text }: TextMessagePartProps) {
   return <div className="user-text">{text}</div>;
+}
+
+/** R88: 用户消息里的图片附件缩略图（src 走 /local/ 只读路由，不塞 base64）。 */
+function UserImage({ image }: ImageMessagePartProps) {
+  return (
+    <div className="user-image">
+      <img src={image} alt="" loading="lazy" />
+    </div>
+  );
 }
 
 /** R82：消息编辑/重发需要拿到引擎实例；消息组件由 assistant-ui 渲染，无法透传 props。 */
@@ -282,7 +294,7 @@ function UserMessage() {
       ) : (
         <div className="user-col">
           <div className="user-bubble">
-            <MessagePrimitive.Parts components={{ Text: UserText }} />
+            <MessagePrimitive.Parts components={{ Text: UserText, Image: UserImage }} />
           </div>
           {edited && <div className="user-edited">{t("editedMark")}</div>}
         </div>
@@ -485,7 +497,32 @@ function TemplateGrid() {
   );
 }
 
-function Composer({ hasKey }: { hasKey: boolean }) {
+/** tool 结果可能是 JSON、CANCELLED 说明或 ERROR 文本。 */
+function parseToolJson<T>(raw: string): T | null {
+  const text = raw.trim();
+  if (!text.startsWith("{") && !text.startsWith("[")) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
+function Composer({
+  hasKey,
+  vision,
+  pendingImages,
+  onImagesAdded,
+  onRemoveImage,
+  onSendWithImages,
+}: {
+  hasKey: boolean;
+  vision: boolean;
+  pendingImages: ChatImage[];
+  onImagesAdded: (images: ChatImage[]) => void;
+  onRemoveImage: (path: string) => void;
+  onSendWithImages: (text: string) => void;
+}) {
   const { t } = useI18n();
   const aui = useAui();
   const running = useAuiState((state) => state.thread.isRunning);
@@ -494,6 +531,9 @@ function Composer({ hasKey }: { hasKey: boolean }) {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const startTimeRef = useRef(0);
+  // R88: 图片附件（原生压缩落盘，消息里只留路径）。
+  const [attachMenu, setAttachMenu] = useState(false);
+  const [attaching, setAttaching] = useState(false);
 
   const startRecording = async () => {
     try {
@@ -582,10 +622,161 @@ function Composer({ hasKey }: { hasKey: boolean }) {
     else if (voiceState === "recording") stopRecording();
   };
 
+  /* ------------------------- R88: 图片附件 ------------------------- */
+
+  const addSources = (sources: string[]) => {
+    const room = Math.max(0, MAX_CHAT_IMAGES - pendingImages.length);
+    if (sources.length > room) showInfo(t("imageLimit", { count: MAX_CHAT_IMAGES }));
+    const added: ChatImage[] = [];
+    for (const source of sources.slice(0, room)) {
+      const result = importChatImage(source);
+      if (result.ok) added.push(result.image);
+      else showError(`${t("imageImportFailed")}：${result.message}`);
+    }
+    if (added.length > 0) onImagesAdded(added);
+  };
+
+  const pickFromGallery = async () => {
+    setAttachMenu(false);
+    if (!hasBridge()) {
+      showError(t("imageOnlyInApp"));
+      return;
+    }
+    setAttaching(true);
+    try {
+      // 文件选择器要等用户操作，默认 65s 超时不够。
+      const res = await execTool("file_pick", { mime: "image/*", multiple: true }, undefined, 150_000);
+      if (!res.ok) {
+        showError(res.result);
+        return;
+      }
+      const parsed = parseToolJson<{ uris?: string[] }>(res.result);
+      if (!parsed?.uris?.length) {
+        if (!res.result.startsWith("CANCELLED")) showError(res.result);
+        return;
+      }
+      addSources(parsed.uris);
+    } catch (e) {
+      showError(String(e));
+    } finally {
+      setAttaching(false);
+    }
+  };
+
+  const capturePhoto = async () => {
+    setAttachMenu(false);
+    if (!hasBridge()) {
+      showError(t("imageOnlyInApp"));
+      return;
+    }
+    setAttaching(true);
+    try {
+      const res = await execTool("camera_capture", {}, undefined, 90_000);
+      if (!res.ok) {
+        showError(res.result);
+        return;
+      }
+      const parsed = parseToolJson<{ uri?: string; path?: string }>(res.result);
+      const source = parsed?.uri || parsed?.path;
+      if (!source) {
+        showError(`${t("imageImportFailed")}：${res.result.slice(0, 120)}`);
+        return;
+      }
+      addSources([source]);
+    } catch (e) {
+      showError(String(e));
+    } finally {
+      setAttaching(false);
+    }
+  };
+
+  /** 清空输入框（assistant-ui 受控 textarea 用原生 setter + input 事件同步）。 */
+  const clearComposer = () => {
+    const ta = inputRef.current;
+    if (!ta) return;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    setter?.call(ta, "");
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  // 只有图片、没有文字时 assistant-ui 的发送按钮是 disabled 的（composer 视为空），
+  // 所以带附件时换成一个自己接管的发送按钮。
+  const sendWithImages = () => {
+    const text = inputRef.current?.value ?? "";
+    if (!text.trim() && pendingImages.length === 0) return;
+    clearComposer();
+    onSendWithImages(text);
+  };
+
   return (
     <div className="composer-dock">
       <ComposerPrimitive.Root className="composer">
+        {pendingImages.length > 0 && (
+          <div className="composer-attachments-wrap">
+            <div className="composer-attachments">
+              {pendingImages.map((image) => (
+                <div className="composer-attachment" key={image.path}>
+                  <img src={image.url} alt="" />
+                  <button
+                    type="button"
+                    className="attachment-remove"
+                    onClick={() => onRemoveImage(image.path)}
+                    aria-label={t("removeImage")}
+                    title={t("removeImage")}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+            {/* R88 能力探测：模型名不像视觉模型时如实提示，但不阻断发送。 */}
+            {!vision && <div className="composer-attach-hint">{t("visionHint")}</div>}
+          </div>
+        )}
         <div className="composer-row">
+          {hasKey && (
+            <div className="attach-wrap">
+              <button
+                type="button"
+                className={`attach-btn ${attachMenu ? "open" : ""}`}
+                onClick={() => setAttachMenu((open) => !open)}
+                disabled={attaching || running}
+                title={t("attachImage")}
+                aria-label={t("attachImage")}
+                aria-expanded={attachMenu}
+              >
+                {attaching ? (
+                  <span className="stream-typing mic-typing" aria-hidden="true">
+                    <span className="stream-dot" />
+                    <span className="stream-dot" />
+                    <span className="stream-dot" />
+                  </span>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none">
+                    <rect x="3" y="5" width="18" height="14" rx="3" stroke="currentColor" strokeWidth="1.7" />
+                    <circle cx="8.5" cy="10" r="1.6" fill="currentColor" />
+                    <path d="M4.5 17.5 9.6 12.6a1.6 1.6 0 0 1 2.3 0l2.4 2.5 1.7-1.6a1.6 1.6 0 0 1 2.2 0l1.2 1.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </button>
+              {attachMenu && (
+                <>
+                  <div className="attach-backdrop" onClick={() => setAttachMenu(false)} />
+                  <div className="attach-menu" role="menu">
+                    <button type="button" role="menuitem" onClick={() => void pickFromGallery()}>
+                      {t("attachFromGallery")}
+                    </button>
+                    <button type="button" role="menuitem" onClick={() => void capturePhoto()}>
+                      {t("attachCamera")}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           {hasKey && (
             <button
               type="button"
@@ -646,6 +837,24 @@ function Composer({ hasKey }: { hasKey: boolean }) {
             >
               <span className="stop-square" />
             </button>
+          ) : pendingImages.length > 0 ? (
+            // R88: 带图附件时自己接管发送（assistant-ui 把「无文字」视为空，按钮会禁用）。
+            <button
+              type="button"
+              className="send-btn"
+              onClick={sendWithImages}
+              aria-label={t("send")}
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none">
+                <path
+                  d="M22 2 2 9l9 4 4 9z"
+                  fill="currentColor"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
           ) : (
             <ComposerPrimitive.Send className="send-btn" aria-label={t("send")}>
               {/* 纸飞机发送图标：单色平面飞机，尺寸与语音输入图标一致（18px） */}
@@ -669,6 +878,25 @@ function Composer({ hasKey }: { hasKey: boolean }) {
 export default function App() {
   const { t } = useI18n();
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
+  // R88: 待发送的图片附件——只存落盘路径（base64 不进状态、不进会话 KV）。
+  const [pendingImages, setPendingImages] = useState<ChatImage[]>([]);
+  const pendingImagesRef = useRef<ChatImage[]>([]);
+  const updatePendingImages = useCallback((images: ChatImage[]) => {
+    pendingImagesRef.current = images;
+    setPendingImages(images);
+  }, []);
+  const addPendingImages = useCallback(
+    (images: ChatImage[]) => {
+      updatePendingImages([...pendingImagesRef.current, ...images].slice(0, MAX_CHAT_IMAGES));
+    },
+    [updatePendingImages],
+  );
+  const removePendingImage = useCallback(
+    (path: string) => {
+      updatePendingImages(pendingImagesRef.current.filter((image) => image.path !== path));
+    },
+    [updatePendingImages],
+  );
   const [showSettings, setShowSettings] = useState(false);
   const [showModelSetup, setShowModelSetup] = useState(false);
   const [modelOnboarding, setModelOnboarding] = useState(false);
@@ -762,10 +990,12 @@ export default function App() {
   useEffect(() => {
     const handle = (detail: DeeplinkDetail | null) => {
       if (!detail || (!detail.prompt && !detail.image)) return;
-      // R111: 系统分享的图片已由原生落盘（detail.image 是绝对路径），图片进对话
-      // 依赖 R88 图片输入链路；链路落地前如实提示，不静默丢弃分享内容。
+      // R111 + R88: 系统分享的图片（原生已落盘成绝对路径）导入为待发送附件，
+      // 用户补一句话就能发；导入失败才如实报错，不静默丢弃分享内容。
       if (detail.image) {
-        showInfo(t("sharedImagePending"));
+        const result = importChatImage(detail.image);
+        if (result.ok) addPendingImages([result.image]);
+        else showError(`${t("imageImportFailed")}：${result.message}`);
         if (detail.prompt) {
           window.dispatchEvent(new CustomEvent("andagent:composer-fill", { detail: detail.prompt }));
         }
@@ -818,7 +1048,7 @@ export default function App() {
       window.removeEventListener("andagent:session-switch", switchByEvent);
       window.removeEventListener("andagent:tool-cancel", cancelToolCard);
     };
-  }, [engine, t]);
+  }, [addPendingImages, engine, t]);
 
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages: snapshot.messages,
@@ -829,7 +1059,11 @@ export default function App() {
         .filter((part): part is { type: "text"; text: string } => part.type === "text")
         .map((part) => part.text)
         .join("\n");
-      await engine.send(text);
+      // R88: 输入框回车（assistant-ui 自己提交）时也要带上待发送的图片。
+      const images = pendingImagesRef.current;
+      pendingImagesRef.current = [];
+      setPendingImages([]);
+      await engine.send(text, { images });
     },
     onCancel: async () => {
       engine.stop();
@@ -1057,7 +1291,18 @@ export default function App() {
           </ThreadPrimitive.Root>
 
           <SshTransferHost />
-          <Composer hasKey={isModelConfigured(settings)} />
+          <Composer
+            hasKey={isModelConfigured(settings)}
+            vision={visionCapable(settings.model)}
+            pendingImages={pendingImages}
+            onImagesAdded={addPendingImages}
+            onRemoveImage={removePendingImage}
+            onSendWithImages={(text) => {
+              const images = pendingImagesRef.current;
+              updatePendingImages([]);
+              void engine.send(text, { images });
+            }}
+          />
 
           {settingsPresence.rendered && (
             <SettingsPanel

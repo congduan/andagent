@@ -24,6 +24,8 @@ AndAgent 是运行在 Android 设备上的开源 AI 助手。对话可直接调�
 - React + assistant-ui + pi-ai 前端嵌入 APK；Kotlin 原生层执行工具、权限管理和 LLM 网络代理。
 - 支持 OpenAI 兼容接口，自带 QuickJS 脚本、SQLite 浏览器、ADB 真机运维和内嵌 Termux 用户空间。
 - LiveLoop 持续任务、分层记忆、定时任务、相机浮窗、MIFARE/NFC、OTG、语音录入与屏幕捕获。
+- 本地 VPN（VpnService，纯应用权限、无需 root）：tun 只接管 DNS，因此不影响正常上网；提供 hosts 级广告拦截、按应用分流、全机分应用流量统计与 DNS 抓包（pcap 可拖进 Wireshark），工具族 `vpn_start/stop/status/traffic/split/hosts/diag`。
+- 相机全能力：手动 ISO/快门/曝光补偿/对焦、超广角/长焦/微距物理镜头切换与光学变焦比、RAW(DNG)、DEPTH16 深度图与 PLY 点云、ImageAnalysis 连续帧分析（亮度/运动/条码/抽帧）、厂商相机扩展（夜景/HDR/人像虚化）。
 - 设置里可切换跟随系统、中文、English；v1 覆盖框架主要文案，工具专属文案继续完善。
 
 ## 构建

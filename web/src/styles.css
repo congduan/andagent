@@ -4046,3 +4046,111 @@ button:disabled {
 }
 /* R110-review P2: 手势条安全兜底（maxHeight 预留 24px 之外再加 env 兜底） */
 .resource-hub-popover{margin-bottom:env(safe-area-inset-bottom,0px)}
+
+/* --------------------- R88 多模态图片输入 --------------------- */
+
+.attach-wrap { position: relative; flex: none; }
+
+.attach-btn {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--wash-3);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.attach-btn:hover { background: var(--wash-4); }
+.attach-btn.open { background: var(--wash-4); color: var(--text); }
+.attach-btn:disabled { opacity: 0.5; }
+
+/* 点空白处收起菜单：透明遮罩铺满，菜单层在其之上。 */
+.attach-backdrop { position: fixed; inset: 0; z-index: 24; }
+
+.attach-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  z-index: 25;
+  min-width: 150px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+  animation: pop-in 0.16s ease;
+}
+
+.attach-menu button {
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.attach-menu button:hover { background: var(--wash-4); }
+
+.composer-attachments-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 4px;
+}
+
+.composer-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.composer-attachment {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.composer-attachment img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.composer-attach-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--faint);
+}
+
+/* 用户气泡里的图片缩略图。 */
+.user-image { margin: 2px 0; max-width: 220px; }
+.user-image img { display: block; max-width: 100%; border-radius: 12px; }

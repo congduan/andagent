@@ -160,6 +160,22 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+        <!-- R120: 本地 VPN（VpnService）。纯应用权限：用户点一次系统授权即可，
+             无需 root。BIND_VPN_SERVICE 是系统绑定权限，不是 uses-permission。 -->
+        <service
+            android:name=".vpn.AndagentVpnService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="dataSync">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+        <activity
+            android:name=".vpn.VpnConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <service android:name=".events.EventMonitorService" android:exported="false"
             android:foregroundServiceType="connectedDevice" />
         <!-- R71: 无障碍控件自动化。系统通过 BIND_ACCESSIBILITY_SERVICE 绑定；用户须在

@@ -13,7 +13,14 @@ import { cancelAgentWork, execTool, STOPPED_RESULT, type Settings } from "./brid
 import { appConfirm } from "./ConfirmDialog";
 import { PERMISSION_GUIDE, PERMISSION_GUIDE_EN } from "./permissionGuide";
 import { currentLanguage } from "./i18n";
-import { isModelConfigured } from "./modelConfig";
+import { isModelConfigured, visionCapable } from "./modelConfig";
+import {
+  chatImageUrl,
+  hydrateChatImages,
+  imagesOfMessage,
+  MAX_CHAT_IMAGES,
+  type ChatImage,
+} from "./chatImages";
 import { toModelMessages } from "./modelMessages";
 import { SessionStore, type SessionMeta } from "./sessions";
 import { EXTRA_TOOL_DEFS, IMAGE_EDIT_OPS } from "./extraTools";
@@ -804,6 +811,7 @@ const HARDWARE_GUIDE = [
   "系统事件：媒体会话与通知需先用 notif_permission 在系统设置授权，再开启 media_events_on / notif_events_on；音频设备用 audio_events_on。各通道的 KV 命名空间为 media_events、notif_events、audio_events，latest 与 history 键可供 live 轮询；使用 timestamp 去重。用对应 off 工具或前台通知停止监听。音频设备回调报告添加/移除，不保证获知实际音频路由切换。",
   "传感器与机身状态：要振动/姿态数据用 sensor_stream（默认 200Hz、多传感器并行落 CSV，返回每轴 stats 与 vibration 判定）；低功耗长序列用 sensor_batch（看 hardwareFifo/avgEventsPerBatch 判断是否真批量）；单点瞬时读数仍用 sensor_read。心率用 heart_rate——多数手机没有该硬件，缺失或 NO_DATA 时如实告知，不要编造数值。「有人动了再叫我」用 significant_motion（一次硬件触发，最长 300s）。发热/降频先看 thermal_status，充放电电流电压与功率用 battery_electrical。触感反馈用 vibrate_waveform（preset 或 timings+amplitudes）。指定录音源/采样率/声道用 audio_record_ex（wav 会返回 peakDbfs/rmsDbfs，可据此确认真的录到声音）；切换扬声器/听筒/蓝牙用 audio_route（只影响通话/通信路由，媒体走向由系统按已连接设备自动选择）。",
   "蓝牙扩展：让手机当 BLE 外设广播（信标/配对引导）用 ble_advertise，先看 advertiserAvailable（multipleAdvertisementsSupported=false 只代表不能并发多广播），不支持就如实说；广播名跟随本机蓝牙名，载荷超 31 字节会被拒。切媒体输出到指定耳机/音箱用 bt_audio_route（media 走 A2DP active device，属隐藏 API，NOT_APPLIED 时不要谎称已切换，引导用户去系统蓝牙页）；只要通话路由用 mode=communication。电量用 bt_battery，只读标准 GATT 0x180F，经典音频设备通常读不到，别编数字。插了什么 USB 设备用 usb_list（看 kinds 识别 MTP/ADB/MIDI/UVC）；电子乐器收发用 usb_midi。",
+  "相机：先 camera_info 查能力（变焦范围、最近对焦、物理镜头角色 ultrawide/tele/macro、深度与 RAW 尺寸、厂商扩展列表）。手动 ISO/快门/曝光补偿/对焦用 camera_capture 的 iso/exposure_ns/ev/focus/focus_distance_cm；缺 MANUAL_SENSOR 时工具会返回 warnings 并降级，不要声称已手动控制。超广角/长焦/微距用 lens，变焦用 zoom（有 CONTROL_ZOOM_RATIO 走光学变焦比，否则中心裁切数码变焦）。RAW 用 camera_raw（DNG，需 RAW 能力）；深度图用 camera_depth（需 DEPTH_OUTPUT，可导 PLY 点云）；连续观察/实时 CV 用 camera_stream（亮度均值、帧间运动、条码、抽帧）；夜景/HDR/人像虚化先 camera_extension extension=info 看支持项，再用同一 extension 拍摄。能力缺失时如实告知，不要编造。",
 ].join("\n");
 
 const HARDWARE_GUIDE_EN = [
@@ -814,6 +822,7 @@ const HARDWARE_GUIDE_EN = [
   "System events: media sessions and notifications require notification access via notif_permission before media_events_on / notif_events_on. Audio devices use audio_events_on. Poll latest or history in media_events, notif_events and audio_events KV namespaces from live, deduplicating by timestamp. Use the matching off tool or foreground notification to stop. Audio callbacks report device additions/removals, not guaranteed route changes.",
   "Sensors and body state: sensor_stream for vibration/attitude data (default 200Hz, multiple sensors in parallel, CSV plus per-axis stats and a vibration verdict); sensor_batch for low-power long captures (read hardwareFifo and avgEventsPerBurst to see whether batching really applies); sensor_read for a single instantaneous value. heart_rate reads TYPE_HEART_RATE — most phones lack it, so report missing hardware or NO_DATA honestly instead of inventing numbers. Use significant_motion for 'tell me when someone moves' (single hardware trigger, up to 300s). thermal_status for heat/throttling, battery_electrical for current, voltage and charge power. Haptics: vibrate_waveform with a preset or timings+amplitudes. For a specific audio source/rate/channels use audio_record_ex (wav returns peakDbfs/rmsDbfs so you can verify audio was captured); switch speaker/earpiece/Bluetooth with audio_route (communication routing only — media follows the system-selected device).",
   "Bluetooth extension: to use the phone as a BLE peripheral (beacon or pairing helper) call ble_advertise; check advertiserAvailable first (multipleAdvertisementsSupported=false only means no concurrent advertisers) and say so honestly when unsupported. The advertised name follows the phone's Bluetooth name, and payloads above the 31-byte legacy budget are rejected. Use bt_audio_route to switch media output to a specific headset/speaker (media uses the A2DP active device, a hidden API — when it returns NOT_APPLIED never claim success, point the user to system Bluetooth settings); mode=communication only changes the call route. bt_battery reads the standard GATT 0x180F service only, so classic audio devices often report nothing — never invent a level. usb_list reports what is plugged in (its kinds field names MTP/ADB/MIDI/UVC); usb_midi sends and listens to instrument traffic.",
+  "Cameras: call camera_info first (zoom range, minimum focus distance, physical lens roles ultrawide/tele/macro, depth and RAW sizes, OEM extension list). Manual ISO/shutter/EV/focus use camera_capture with iso/exposure_ns/ev/focus/focus_distance_cm; when MANUAL_SENSOR is missing the tool returns warnings and falls back — never claim manual control happened. Pick lenses with lens and zoom with zoom (optical zoom ratio when CONTROL_ZOOM_RATIO exists, otherwise a digital centre crop). RAW/DNG uses camera_raw (RAW capability required); depth maps use camera_depth (DEPTH_OUTPUT required, optional PLY point cloud); continuous observation / real-time CV uses camera_stream (luma mean, inter-frame motion, barcode, frame dumps); night/HDR/bokeh start with camera_extension extension=info before shooting. Report missing capabilities honestly instead of inventing results.",
 ].join("\n");
 
 const SHORTCUT_GUIDE = [
@@ -933,7 +942,8 @@ function buildModel(settings: Settings): Model<"openai-completions"> {
     api: "openai-completions",
     provider: "custom",
     baseUrl: settings.baseUrl.trim().replace(/\/+$/, ""),
-    input: ["text"],
+    // R88: 视觉模型才声明 image；非视觉模型仍可尝试发送，由服务端如实报错。
+    input: visionCapable(settings.model) ? ["text", "image"] : ["text"],
     // GLM 流式回 reasoning_content，pi 自动转 thinking part → UI 折叠块
     reasoning: true,
     contextWindow: 128_000,
@@ -989,6 +999,21 @@ export function userMessageIndexFromUiId(uiId: string): number {
   return match ? Number(match[1]) : -1;
 }
 
+/**
+ * R88: 用户消息 content。带图时是 pi-ai 的 content 数组，但图片 part 只带
+ * `path`（base64 由 [hydrateChatImages] 在发请求前补水），这样会话 KV 里
+ * 只存几十字节的相对路径，而不是几百 KB 的 base64。
+ */
+function userMessageContent(text: string, images: ChatImage[]): UserMessage["content"] {
+  if (images.length === 0) return text;
+  const parts: Array<Record<string, unknown>> = [];
+  if (text) parts.push({ type: "text", text });
+  for (const image of images) {
+    parts.push({ type: "image", path: image.path, mimeType: image.mimeType || "image/jpeg" });
+  }
+  return parts as unknown as UserMessage["content"];
+}
+
 /** 供测试直接校验快照状态映射。 */
 export function toUiMessages(messages: PiMessage[], draft: Draft | null): ThreadMessageLike[] {
   const results = new Map<string, { text: string; isError: boolean }>();
@@ -1004,16 +1029,29 @@ export function toUiMessages(messages: PiMessage[], draft: Draft | null): Thread
   const ui: ThreadMessageLike[] = [];
   messages.forEach((message, index) => {
     if (message.role === "user") {
-      const text =
-        typeof message.content === "string"
-          ? message.content
-          : message.content.map((p) => (p.type === "text" ? p.text : "")).join("");
+      // R88: 图片附件是消息 content 里的 image part（只存相对路径），
+      // 渲染走 /local/ 只读路由，气泡里按缩略图铺开。
+      const parts: UiPart[] = [];
+      if (typeof message.content === "string") {
+        parts.push({ type: "text", text: message.content });
+      } else {
+        for (const part of message.content) {
+          if (part.type === "text") {
+            if (part.text) parts.push({ type: "text", text: part.text });
+          } else if (part.type === "image") {
+            const path = (part as { path?: string }).path;
+            if (path) {
+              parts.push({ type: "image", image: chatImageUrl(path) } as UiPart);
+            }
+          }
+        }
+      }
       // R82: 「已编辑」标记是挂在消息对象上的 sidecar，随会话一并持久化。
       const edited = (message as { edited?: boolean }).edited === true;
       ui.push({
         id: userUiId(index, message.timestamp),
         role: "user",
-        content: [{ type: "text", text }],
+        content: parts.length ? parts : [{ type: "text", text: "" }],
         ...(edited ? { metadata: { custom: { edited: true } } } : {}),
         createdAt: new Date(message.timestamp),
       });
@@ -1296,10 +1334,14 @@ export class AgentEngine {
   async editAndResend(uiMessageId: string, text: string): Promise<boolean> {
     const content = text.trim();
     if (!content) return false;
-    return this.resendFrom(uiMessageId, content, true);
+    const index = userMessageIndexFromUiId(uiMessageId);
+    const target = index >= 0 ? this.messages[index] : undefined;
+    // R88: 改文案不丢图——原消息的图片附件继续带上。
+    const images = target && target.role === "user" ? imagesOfMessage(target) : [];
+    return this.resendFrom(uiMessageId, content, true, images);
   }
 
-  /** 重试本轮：截断这条消息之后的历史，用原文重发。 */
+  /** 重试本轮：截断这条消息之后的历史，用原文（含图片附件）重发。 */
   async retryFrom(uiMessageId: string): Promise<boolean> {
     const index = userMessageIndexFromUiId(uiMessageId);
     const target = index >= 0 ? this.messages[index] : undefined;
@@ -1308,22 +1350,28 @@ export class AgentEngine {
       typeof target.content === "string"
         ? target.content
         : target.content.map((part) => (part.type === "text" ? part.text : "")).join("");
-    if (!text.trim()) return false;
-    return this.resendFrom(uiMessageId, text, false);
+    const images = imagesOfMessage(target);
+    if (!text.trim() && images.length === 0) return false;
+    return this.resendFrom(uiMessageId, text, false, images);
   }
 
   /**
    * 截断到目标用户消息并重发。editing=true 时用新文本替换原消息，
    * 否则原样重发（重试本轮），两种入口共用同一套截断/持久化逻辑。
    */
-  private async resendFrom(uiMessageId: string, text: string, editing: boolean): Promise<boolean> {
+  private async resendFrom(
+    uiMessageId: string,
+    text: string,
+    editing: boolean,
+    images: ChatImage[] = [],
+  ): Promise<boolean> {
     if (!(await this.waitIdle())) return false;
     const index = userMessageIndexFromUiId(uiMessageId);
     const target = index >= 0 ? this.messages[index] : undefined;
     if (!target || target.role !== "user") return false;
     // 没配置模型时不能先截断（否则历史白丢）：交给 send 只写错误提示。
     if (!isModelConfigured(this.settings)) {
-      await this.send(text, { edited: editing });
+      await this.send(text, { edited: editing, images });
       return false;
     }
 
@@ -1336,7 +1384,7 @@ export class AgentEngine {
     this.emit();
 
     // send 内部会追加新的用户消息；editing 时给它打上「已编辑」标记。
-    await this.send(text, { edited: editing });
+    await this.send(text, { edited: editing, images });
     return true;
   }
 
@@ -1408,9 +1456,11 @@ export class AgentEngine {
     }
   }
 
-  async send(text: string, options?: { edited?: boolean }): Promise<void> {
+  async send(text: string, options?: { edited?: boolean; images?: ChatImage[] }): Promise<void> {
     const content = text.trim();
-    if (!content || this.running) return;
+    // R88: 只发图、不写字也允许（图片附件的 content 数组里没有 text part）。
+    const images = (options?.images ?? []).filter((image) => !!image?.path).slice(0, MAX_CHAT_IMAGES);
+    if ((!content && images.length === 0) || this.running) return;
     if (!isModelConfigured(this.settings)) {
       this.error = currentLanguage() === "zh" ? "还没有连接大模型，请点「去配置」。" : "Connect a model using Configure first.";
       this.emit();
@@ -1426,7 +1476,11 @@ export class AgentEngine {
     // 旧轮次在各写回点自作废，绝不把回复写进切换后的新会话。
     const turnSessionId = this.sessionId;
     const sessionChanged = (): boolean => this.sessionId !== turnSessionId;
-    const userMessage: UserMessage = { role: "user", content, timestamp: Date.now() };
+    const userMessage: UserMessage = {
+      role: "user",
+      content: userMessageContent(content, images),
+      timestamp: Date.now(),
+    };
     // R82: 「已编辑」是挂在消息对象上的 sidecar，随会话一并持久化。
     if (options?.edited) (userMessage as { edited?: boolean }).edited = true;
     this.messages = [...this.messages, userMessage];
@@ -1478,7 +1532,8 @@ export class AgentEngine {
               .filter(Boolean)
               .join("\n\n"),
             // Compact projection: base64 tool payloads never reach the prompt.
-            messages: toModelMessages(this.messages),
+            // R88: 图片附件的 base64 在这一步按路径补水（带缓存），消息本体只存路径。
+            messages: hydrateChatImages(toModelMessages(this.messages)),
             tools: [...TOOL_DEFS, ...extensionTools()],
           },
           {

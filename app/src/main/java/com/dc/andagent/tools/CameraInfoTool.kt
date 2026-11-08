@@ -15,7 +15,7 @@ import kotlinx.serialization.json.add
 /** R68: camera_info——枚举全部摄像头硬件参数（免权限，CameraCharacteristics 公开元数据）。 */
 class CameraInfoTool(private val context: Context, override val name: String) : Tool {
     override val description =
-        "枚举全部摄像头：数量、朝向、传感器分辨率、输出格式与分辨率、光圈、焦距、能力、OIS、闪光灯、物理摄像头组、帧率范围。"
+        "枚举全部摄像头：数量、朝向、传感器分辨率、输出格式与分辨率、光圈、焦距、能力、OIS、闪光灯、物理摄像头组、帧率范围；另含变焦范围、最近对焦距离、物理镜头角色（超广角/长焦/微距）、深度与 RAW 尺寸、厂商相机扩展（夜景/HDR）。"
 
     override val parameters: JsonObject = schemaOf()
 
@@ -60,6 +60,16 @@ class CameraInfoTool(private val context: Context, override val name: String) : 
                 val apertures: FloatArray? = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
                 val focal: FloatArray? = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
                 val oisModes: IntArray? = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)
+                val zoomRatioRange = if (android.os.Build.VERSION.SDK_INT >= 30)
+                    c.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE) else null
+                val minFocusDiopter = c.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
+                val hyperfocalDiopter = c.get(CameraCharacteristics.LENS_INFO_HYPERFOCAL_DISTANCE)
+                val depthSizes = runCatching { streamMap?.getOutputSizes(ImageFormat.DEPTH16)?.toList() }
+                    .getOrNull() ?: emptyList()
+                val rawSizes = runCatching { streamMap?.getOutputSizes(ImageFormat.RAW_SENSOR)?.toList() }
+                    .getOrNull() ?: emptyList()
+                val extensions = CameraExtensionProbe.supported(manager, id)
+                val lenses = describeProLenses(manager, id)
                 add(buildJsonObject {
                     put("id", id)
                     put("facing", facing)
@@ -73,6 +83,28 @@ class CameraInfoTool(private val context: Context, override val name: String) : 
                     putJsonArray("fpsRanges") { fpsRanges.forEach { add(it) } }
                     put("physicalCameraIds", buildJsonArray { physical.forEach { add(it) } })
                     putJsonArray("outputFormats") { formats.forEach { add(it) } }
+                    // R110: 手动/深度/扩展能力
+                    put("logicalMultiCamera", physical.isNotEmpty())
+                    put("maxDigitalZoom", c.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f)
+                    if (zoomRatioRange != null) {
+                        put("zoomRatioRange", "${zoomRatioRange.lower}-${zoomRatioRange.upper}")
+                    }
+                    put("minFocusDistanceCm", minFocusDiopter?.let { CameraProCodec.diopterToDistanceCm(it) } ?: 0f)
+                    put("hyperfocalDistanceCm", hyperfocalDiopter?.let { CameraProCodec.diopterToDistanceCm(it) } ?: 0f)
+                    putJsonArray("depthSizes") { depthSizes.forEach { add("${it.width}x${it.height}") } }
+                    putJsonArray("rawSizes") { rawSizes.forEach { add("${it.width}x${it.height}") } }
+                    putJsonArray("extensions") { extensions.forEach { add(CameraExtensionProbe.name(it)) } }
+                    putJsonArray("lensRoles") {
+                        lenses.forEach { lens ->
+                            add(buildJsonObject {
+                                put("id", lens.id)
+                                put("role", lens.role)
+                                put("focalMm", lens.focalMm)
+                                lens.aperture?.let { put("aperture", it) }
+                                lens.minFocusDistanceCm?.let { put("minFocusDistanceCm", it) }
+                            })
+                        }
+                    }
                 })
             }
         }

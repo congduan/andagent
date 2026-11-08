@@ -30,14 +30,17 @@ import android.util.Size
 import com.dc.andagent.bridge.PermissionBroker
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.max
 
 /* ======================= pure codec helpers (JVM-testable) ======================= */
 
@@ -293,12 +296,19 @@ internal fun publishVideo(context: Context, file: File): String? = runCatching {
 class CameraCaptureTool(private val context: Context, private val permissions: PermissionBroker) : Tool {
     override val name = "camera_capture"
     override val description =
-        "用相机拍一张照片（camera2 静态拍摄）：可选前后置、分辨率、闪光灯与 JPEG 质量；照片落相册 Pictures/AndAgent 并返回本地路径。"
+        "用相机拍一张照片（camera2 静态拍摄）：可选前后置、物理镜头（超广角/长焦/微距）、变焦、分辨率、闪光与 JPEG 质量；支持手动 ISO/快门/曝光补偿/对焦距离（需设备 MANUAL_SENSOR 能力），照片落相册 Pictures/AndAgent 并返回本地路径。"
     override val parameters = schemaOf(
         "camera" to strParam("back（默认）或 front"),
+        "lens" to strParam("可选物理镜头：wide（默认，逻辑主摄）/ultrawide（超广角）/tele（长焦）/macro（微距），也可直接传物理摄像头 id"),
+        "zoom" to numParam("可选变焦倍数（1.0 起）。有 CONTROL_ZOOM_RATIO 的设备走光学变焦比（HAL 自动切镜头），否则用中心裁切数码变焦"),
         "resolution" to strParam("可选，格式 WxH，如 1920x1080；缺省选该摄像头最大 JPEG 输出"),
         "flash" to boolParam("可选，是否强制开闪光灯（仅硬件支持时生效）"),
         "quality" to intParam("JPEG 质量 1-100，默认 95"),
+        "iso" to intParam("可选手动 ISO（需 MANUAL_SENSOR 能力）；给出后自动曝光关闭"),
+        "exposure_ns" to intParam("可选手动快门时间（纳秒，需 MANUAL_SENSOR 能力），如 1000000 = 1ms"),
+        "ev" to numParam("可选曝光补偿（EV，如 -1.5 / 0.5），仅在自动曝光时生效"),
+        "focus" to strParam("对焦模式：auto（默认连续对焦）/macro/infinity/manual"),
+        "focus_distance_cm" to numParam("focus=manual 时的对焦距离（厘米）；<10 可近摄"),
     )
 
     @SuppressLint("MissingPermission")
@@ -306,29 +316,141 @@ class CameraCaptureTool(private val context: Context, private val permissions: P
         if (!permissions.ensure(listOf(Manifest.permission.CAMERA))) return "ERROR: 相机权限未授予"
         val facing = args.strArg("camera") ?: "back"
         val quality = (args.intArg("quality") ?: 95).coerceIn(1, 100)
-        val resolution = args.strArg("resolution")
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
             ?: return "ERROR: CameraManager 不可用"
 
-        val resolved = try { resolveCameraId(manager, facing) } catch (_: Throwable) { null }
-            ?: return "ERROR: 未找到可用摄像头"
-        val handle = openCameraBlocking(manager, resolved.first) ?: return "ERROR: 打开摄像头失败（被占用或已禁用）"
+        val pro = openProCamera(manager, facing, args.strArg("lens"))
+            ?: return "ERROR: 打开摄像头失败（被占用或已禁用）"
+        val handle = pro.handle
         try {
             val characteristics = handle.characteristics
-            val requested = resolution?.let { parseWxH(it) }
+            val warnings = pro.notes.toMutableList()
+            val requested = parseSizeArg(args.strArg("resolution"))
             val largest = pickJpegSize(characteristics, largest = true)
             val all = try {
                 characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                     ?.getOutputSizes(ImageFormat.JPEG)?.toList() ?: emptyList<Size>()
             } catch (_: Throwable) { emptyList<Size>() }
             val matched = requested?.let { r -> all.firstOrNull { it.width == r.width && it.height == r.height } }
+            if (requested != null && matched == null) {
+                warnings.add("不支持分辨率 ${requested.width}x${requested.height}，已改用最大 JPEG 输出")
+            }
             val size: Size = matched ?: largest ?: Size(1280, 720)
             val sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
             val flashAvailable = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
             val wantFlash = args.boolArg("flash") == true && flashAvailable
+            if (args.boolArg("flash") == true && !flashAvailable) warnings.add("该摄像头没有闪光灯")
+
+            val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: IntArray(0)
+            val manualSensor = capabilities.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)
+            val afModes = characteristics.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: IntArray(0)
+            val isoRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+            val exposureRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+
+            // 手动曝光计划：只有 MANUAL_SENSOR 能力时才关闭 AE，否则如实降级并告知。
+            val isoArg = args.intArg("iso")
+            val exposureArg = args.longArg("exposure_ns")
+            var manualIso: Int? = null
+            var manualExposureNs: Long? = null
+            if (isoArg != null || exposureArg != null) {
+                if (!manualSensor) {
+                    warnings.add("该摄像头缺少 MANUAL_SENSOR 能力，已忽略手动 ISO/快门")
+                } else {
+                    manualIso = isoArg?.let { v ->
+                        isoRange?.let { r -> CameraProCodec.clampIso(v, r.lower, r.upper) } ?: v
+                    }
+                    manualExposureNs = exposureArg?.let { v ->
+                        exposureRange?.let { r -> CameraProCodec.clampExposureNs(v, r.lower, r.upper) } ?: v
+                    }
+                }
+            }
+
+            // 曝光补偿计划（与手动曝光互斥）
+            var evSteps: Int? = null
+            val evArg = args.floatArg("ev")
+            if (manualIso == null && manualExposureNs == null && evArg != null) {
+                val compRange = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+                val step = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat() ?: (1f / 3f)
+                if (compRange == null) {
+                    warnings.add("该摄像头不支持曝光补偿")
+                } else {
+                    evSteps = CameraProCodec.evSteps(evArg, step, compRange.lower, compRange.upper)
+                }
+            }
+
+            // 对焦计划
+            val canManualFocus = afModes.contains(CameraMetadata.CONTROL_AF_MODE_OFF)
+            val minFocusDiopter = characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+            var afMode = CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+            var focusDiopter: Float? = null
+            var focusDistanceCm: Float? = null
+            when ((args.strArg("focus") ?: "auto").lowercase()) {
+                "infinity" -> {
+                    if (canManualFocus) {
+                        afMode = CameraMetadata.CONTROL_AF_MODE_OFF
+                        focusDiopter = 0f
+                    } else {
+                        warnings.add("该摄像头不支持手动对焦，无法锁定无穷远")
+                    }
+                }
+                "manual" -> {
+                    val diopter = args.floatArg("focus_distance_cm")?.let { CameraProCodec.distanceCmToDiopter(it) }
+                    when {
+                        !canManualFocus -> warnings.add("该摄像头不支持手动对焦（CONTROL_AF_AVAILABLE_MODES 无 OFF）")
+                        diopter == null -> warnings.add("focus=manual 需要 focus_distance_cm（厘米）且 >0")
+                        else -> {
+                            val d = if (minFocusDiopter > 0f) diopter.coerceIn(0f, minFocusDiopter) else 0f
+                            afMode = CameraMetadata.CONTROL_AF_MODE_OFF
+                            focusDiopter = d
+                            focusDistanceCm = CameraProCodec.diopterToDistanceCm(d)
+                        }
+                    }
+                }
+                "macro" -> {
+                    if (afModes.contains(CameraMetadata.CONTROL_AF_MODE_MACRO)) {
+                        afMode = CameraMetadata.CONTROL_AF_MODE_MACRO
+                    } else {
+                        warnings.add("该摄像头不支持 AF_MODE_MACRO，已用连续对焦")
+                    }
+                }
+            }
+
+            // 变焦计划：优先光学变焦比（HAL 跨物理镜头切换），退化为中心裁切。
+            val zoomArg = args.floatArg("zoom")
+            var zoomRatio: Float? = null
+            var zoomCrop: Rect? = null
+            var zoomMode = "none"
+            if (zoomArg != null && zoomArg > 1f) {
+                if (Build.VERSION.SDK_INT >= 30) {
+                    val range = characteristics.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE)
+                    if (range != null) {
+                        zoomRatio = zoomArg.coerceIn(range.lower, range.upper)
+                        zoomMode = "zoom_ratio"
+                    }
+                }
+                if (zoomRatio == null) {
+                    val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
+                    val z = CameraProCodec.clampZoom(zoomArg, maxZoom)
+                    val active = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                    if (active != null) {
+                        val crop = CameraProCodec.zoomCropRegion(active.width(), active.height(), z)
+                        zoomCrop = Rect(
+                            active.left + crop.x,
+                            active.top + crop.y,
+                            active.left + crop.x + crop.width,
+                            active.top + crop.y + crop.height,
+                        )
+                        zoomRatio = z
+                        zoomMode = "digital_crop"
+                    } else {
+                        warnings.add("该摄像头不支持变焦")
+                    }
+                }
+            }
 
             val reader = android.media.ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 2)
             val captured = java.util.concurrent.LinkedBlockingQueue<CamEvent<ByteArray?>>()
+            val resultRef = java.util.concurrent.atomic.AtomicReference<TotalCaptureResult?>(null)
             var sessionRef: CameraCaptureSession? = null
             try {
                 val sessionOpen = java.util.concurrent.LinkedBlockingQueue<CamEvent<CameraCaptureSession?>>()
@@ -361,11 +483,26 @@ class CameraCaptureTool(private val context: Context, private val permissions: P
                 val request = handle.device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                     addTarget(reader.surface)
                     set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                    set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                    set(CaptureRequest.CONTROL_AF_MODE, afMode)
+                    focusDiopter?.let { set(CaptureRequest.LENS_FOCUS_DISTANCE, it) }
                     if (wantFlash) set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_SINGLE)
+                    if (manualIso != null || manualExposureNs != null) {
+                        set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
+                        manualIso?.let { set(CaptureRequest.SENSOR_SENSITIVITY, it) }
+                        manualExposureNs?.let { set(CaptureRequest.SENSOR_EXPOSURE_TIME, it) }
+                        set(CaptureRequest.SENSOR_FRAME_DURATION, max(manualExposureNs ?: 0L, 33_000_000L))
+                    } else {
+                        set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+                        evSteps?.let { set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, it) }
+                    }
+                    if (zoomMode == "zoom_ratio") zoomRatio?.let { set(CaptureRequest.CONTROL_ZOOM_RATIO, it) }
+                    zoomCrop?.let { set(CaptureRequest.SCALER_CROP_REGION, it) }
                 }
                 session.capture(request.build(), object : CameraCaptureSession.CaptureCallback() {
-                    override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, result: TotalCaptureResult) {}
+                    override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, result: TotalCaptureResult) {
+                        resultRef.set(result)
+                    }
+
                     override fun onCaptureFailed(s: CameraCaptureSession, r: CaptureRequest, failure: CaptureFailure) {
                         captured.post(null)
                     }
@@ -387,6 +524,11 @@ class CameraCaptureTool(private val context: Context, private val permissions: P
                 val outH = rotated.height
                 rotated.recycle()
 
+                val result = resultRef.get()
+                val actualIso = result?.get(CaptureResult.SENSOR_SENSITIVITY)
+                val actualExposureNs = result?.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+                val actualFocusDiopter = result?.get(CaptureResult.LENS_FOCUS_DISTANCE)
+                val actualZoom = if (Build.VERSION.SDK_INT >= 30) result?.get(CaptureResult.CONTROL_ZOOM_RATIO) else null
                 val uri = publishImage(context, out)
                 return buildJsonObject {
                     put("status", "WRITTEN")
@@ -397,6 +539,35 @@ class CameraCaptureTool(private val context: Context, private val permissions: P
                     put("height", outH)
                     put("size", out.length())
                     put("facing", facing)
+                    put("cameraId", pro.lensId)
+                    put("lensRole", pro.lenses.firstOrNull { it.id == pro.lensId }?.role ?: "wide")
+                    put("zoomMode", zoomMode)
+                    zoomRatio?.let { put("zoomApplied", it) }
+                    manualIso?.let { put("isoRequested", it) }
+                    manualExposureNs?.let { put("exposureRequestedNs", it) }
+                    evSteps?.let { put("evSteps", it) }
+                    put("focusMode", when {
+                        focusDiopter == null -> "auto"
+                        focusDiopter == 0f -> "infinity"
+                        else -> "manual"
+                    })
+                    focusDistanceCm?.let { put("focusDistanceCm", it) }
+                    actualIso?.let { put("isoActual", it) }
+                    actualExposureNs?.let { put("exposureActualNs", it) }
+                    actualFocusDiopter?.let { put("focusDiopterActual", it) }
+                    actualZoom?.let { put("zoomActual", it) }
+                    put("lenses", buildJsonArray {
+                        pro.lenses.forEach { lens ->
+                            add(buildJsonObject {
+                                put("id", lens.id)
+                                put("role", lens.role)
+                                put("focalMm", lens.focalMm)
+                                lens.aperture?.let { put("aperture", it) }
+                                lens.minFocusDistanceCm?.let { put("minFocusDistanceCm", it) }
+                            })
+                        }
+                    })
+                    if (warnings.isNotEmpty()) putJsonArray("warnings") { warnings.forEach { add(it) } }
                 }.toString()
             } finally {
                 runCatching { sessionRef?.close() }
@@ -408,21 +579,12 @@ class CameraCaptureTool(private val context: Context, private val permissions: P
             handle.close()
         }
     }
-
-    private fun parseWxH(raw: String): Size? {
-        val m = Regex("(\\d+)\\s*[xX*]\\s*(\\d+)").find(raw) ?: return null
-        val (w, h) = m.destructured
-        val wi = w.toIntOrNull() ?: return null
-        val hi = h.toIntOrNull() ?: return null
-        if (wi <= 0 || hi <= 0 || wi > 16384 || hi > 16384) return null
-        return Size(wi, hi)
-    }
 }
 
 private fun captureDir(context: Context): File =
     File(context.getExternalFilesDir(null) ?: context.filesDir, "captures").apply { mkdirs() }
 
-private fun rotateBitmap(b: Bitmap, degrees: Int): Bitmap {
+internal fun rotateBitmap(b: Bitmap, degrees: Int): Bitmap {
     val norm = ((degrees % 360) + 360) % 360
     if (norm == 0 || b.isRecycled) return b
     val m = Matrix().apply { postRotate(norm.toFloat()) }

@@ -44,6 +44,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "- 日历与提醒：calendar_list / calendar_events / calendar_add / calendar_delete / alarm_set / timer_set",
   "- 通讯：phone_call / sms_send / clipboard_read / clipboard_write / clipboard_write_rich（HTML/URI/图片）/ clipboard_read_rich（全类型+预览）/ clipboard_clear / notify_send / contact 查询暂不支持",
   "- 网络与连接：wifi_info / wifi_connect / bt_scan / bt_paired_list / bt_connect",
+  "- 本地 VPN（纯应用权限，无需 root）：vpn_start 开启（可用 split_mode=include|exclude + packages 做按应用分流，block_ads 开关广告拦截，upstream 指定上游 DNS）→ vpn_status 看状态 → vpn_stop 关闭。只接管 DNS，不影响正常上网。vpn_traffic 按时间窗统计全机各应用流量（需「使用情况访问」权限）；vpn_hosts 管理 hosts 级拦截规则（内置常见广告域名，可 add/remove/set/import_url）；vpn_diag 看 DNS 日志、被拦截排行、导出 pcap。拦截只对走系统 resolver 的查询有效：App 内置 DoH/DoT 与系统「私人 DNS」会绕过，vpn_status 报告 privateDns=true 时提示用户关闭。",
   "- 方向控制：screen_orientation_get 查看方向；screen_orientation_set 锁定横竖屏或 auto 跟随系统，适合拍视频、游戏等场景；仅作用于 AndAgent 主界面。",
   "- 录音：mic_record 支持 m4a/wav 双格式，转写服务要求 WAV 时传 format=wav；mic_list 列出录音。",
   "- 相机浮窗：camera_overlay_show 在其他 app 上层持续显示相机预览（用户需授权悬浮窗和相机）。适合『帮我看一下这个东西』且用户切到别的 app 的场景；调整用 camera_overlay_update，隐藏用 camera_overlay_hide。",
@@ -73,6 +74,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "- 图片编辑用 image_edit 的 ops_json 顺序描述裁剪、旋转、色彩、翻转、任意角度旋转、文字、区域模糊、暗角、自动增强等操作；拼图用 image_collage。可先 image_preview 看效果，再调参数；上次 savedPath 可作为下一次 source。",
   "- 图片/相册的缩略图都由工具卡片自动渲染；不要输出 ```image / ```photos 围栏，也不要粘贴 base64 或 previewFence，只用文字说明结果、数量、savedPath 或 uri。",
   "- 需要拍照时输出 ```camera 围栏（如 {} 或 {\"facingMode\":\"environment\"}），用户会看到实时取景并点击拍照，照片自动存入相册并把路径回传对话。无 UI 的程序化拍摄用 camera_capture（camera2 静态拍照，可选前后置/分辨率/闪光）；录视频用 camera_record（MPEG-4，秒数可选）；识别二维码/条码用 camera_scan（对准后自动返回码文本）。",
+  "- 相机手动与深度：camera_capture 支持 lens（ultrawide/tele/macro 物理镜头切换）、zoom（光学变焦比或数码裁切）、iso/exposure_ns（手动曝光，需 MANUAL_SENSOR）、ev、focus/focus_distance_cm；RAW(DNG) 用 camera_raw，深度图用 camera_depth（需 DEPTH_OUTPUT，可导 PLY 点云），连续帧/实时 CV 用 camera_stream（亮度/运动/条码/抽帧），夜景/HDR 等厂商扩展先 camera_extension extension=info 查支持项再拍。调参前先用 camera_info 看能力与镜头角色，不要凭空猜支持。",
   "- 生成小组件后，把 WidgetSpec JSON 放入 ```widget 围栏让用户在对话内预览效果，确认后再 widget_save_and_pin。",
   "- 位置结果用 ```geo 块，内容为 {\"lat\":数字,\"lng\":数字,\"label\":字符串} 的 JSON；键值状态用 ```kv 块，内容为 JSON 对象或每行 label: value。",
   "- 用户想自己动手执行命令时，输出 ```terminal 围栏（内容为 {} 或 {\"title\":标题}）打开交互终端：终端跑在与你相同的 Termux 会话里，cd/env 状态互通；用户在终端里的操作结果也会留在会话输出中，必要时可用 shell_exec 查看会话状态辅助判断。",
@@ -95,6 +97,7 @@ export const DEFAULT_SYSTEM_PROMPT_EN = [
   "- Calendar and reminders: calendar_list / calendar_events / calendar_add / calendar_delete / alarm_set / timer_set",
   "- Communication: phone_call / sms_send / clipboard_read / clipboard_write / clipboard_write_rich (HTML/URI/image) / clipboard_read_rich (all types and previews) / clipboard_clear / notify_send. Contact lookup is not supported yet.",
   "- Connectivity: wifi_info / wifi_connect / bt_scan / bt_paired_list / bt_connect",
+  "- Local VPN (app-only permission, no root): vpn_start (optional split_mode=include|exclude with packages for per-app routing, block_ads toggles ad blocking, upstream sets the resolver), vpn_status for state, vpn_stop to stop. It only takes over DNS, so normal traffic is unaffected. vpn_traffic reports per-app traffic for a time window (needs Usage Access); vpn_hosts manages hosts-level block rules (built-in ad domains plus add/remove/set/import_url); vpn_diag shows DNS logs, blocked-domain ranking and exports pcap. Blocking only affects queries that use the system resolver: in-app DoH/DoT and Private DNS bypass it — when vpn_status reports privateDns=true, tell the user to turn it off.",
   "- Orientation: screen_orientation_get reads orientation; screen_orientation_set locks portrait/landscape or uses auto. It only affects the AndAgent screen.",
   "- Audio recording: mic_record supports m4a/wav. Pass format=wav if transcription requires WAV. mic_list lists recordings.",
   "- Camera overlay: camera_overlay_show keeps a preview above other apps after the user grants overlay and camera permissions. Use camera_overlay_update to adjust and camera_overlay_hide to close.",
@@ -124,6 +127,7 @@ export const DEFAULT_SYSTEM_PROMPT_EN = [
   "- For image_edit, describe ordered crop, rotation, color, flip, free rotation, text, region blur, vignette and auto-enhance operations in ops_json. Use image_collage for collages. Preview with image_preview; a prior savedPath can be the next source.",
   "- Tool cards render photo thumbnails. Do not output ```image / ```photos fences, base64, or previewFence. State results, counts, savedPath, or uri in text.",
   "- For a photo, output a ```camera fence such as {} or {\"facingMode\":\"environment\"}. The user can capture a live preview; the saved path returns to chat. For headless programmatic capture use camera_capture (camera2 still shot with facing/resolution/flash options); camera_record shoots an MPEG-4 clip; camera_scan reads a QR/barcode and returns its text.",
+  "- Camera manual/depth: camera_capture accepts lens (ultrawide/tele/macro physical switch), zoom (optical ratio or digital crop), iso/exposure_ns (manual exposure, needs MANUAL_SENSOR), ev, and focus/focus_distance_cm. Use camera_raw for RAW/DNG, camera_depth for DEPTH16 maps (optional PLY cloud), camera_stream for continuous frame analytics (luma/motion/barcode/frame dumps), and camera_extension with extension=info first for OEM night/HDR. Check camera_info before promising any capability.",
   "- After generating a widget, show WidgetSpec JSON in a ```widget fence for preview before widget_save_and_pin.",
   "- Use a ```geo fence with {\"lat\":number,\"lng\":number,\"label\":string} for locations; use ```kv with JSON or label: value lines for key-value status.",
   "- If the user wants to run commands themselves, output a ```terminal fence with {} or {\"title\":title}. This opens a terminal in the same Termux session; shell_exec can inspect its state.",
@@ -143,7 +147,7 @@ export function defaultSystemPrompt(): string {
   return currentLanguage() === "zh" ? DEFAULT_SYSTEM_PROMPT : DEFAULT_SYSTEM_PROMPT_EN;
 }
 
-const NATIVE_DEFAULT_SYSTEM_PROMPT = "你是 AndAgent，一个运行在 Android 手机上的智能助手。\n回答使用简体中文，简洁、直接、可执行；需要数据时先调用工具，不要编造。\n可用工具覆盖：设备/存储/相册状态、日历（calendar_*）、闹钟与计时器、电池、Wi-Fi、剪贴板、本地通知、已安装应用。\n网络搜索：web_search（无需 key）/ web_read（读网页正文）；问时效性问题先用搜索。\n截屏/录屏：优先 screen_capture / screen_record（已授权 MediaProjection 时全自动）；未授权时说明需要用户在系统弹窗中点一次「立即开始」。\nSSH 运维：凭据用 credential=nickname 引用本机加密保存的凭据（密码永不在对话中传递，也不要向用户索要密码）；ssh_connect 首次连接需确认主机指纹，ssh_exec 执行命令，破坏性命令（rm -rf、systemctl restart、mkfs 等）会请求确认。\n写入类操作（日历新增/删除）执行前先向用户说明将要修改的内容。";
+const NATIVE_DEFAULT_SYSTEM_PROMPT = "你是 AndAgent，一个运行在 Android 手机上的智能助手。\n回答使用简体中文，简洁、直接、可执行；需要数据时先调用工具，不要编造。\n可用工具覆盖：设备/存储/相册状态、日历（calendar_*）、闹钟与计时器、电池、Wi-Fi、剪贴板、本地通知、已安装应用。\n网络搜索：web_search（无需 key）/ web_read（读网页正文）；问时效性问题先用搜索。\n截屏/录屏：优先 screen_capture / screen_record（已授权 MediaProjection 时全自动）；未授权时说明需要用户在系统弹窗中点一次「立即开始」。\nSSH 运维：凭据用 credential=nickname 引用本机加密保存的凭据（密码永不在对话中传递，也不要向用户索要密码）；ssh_connect 首次连接需确认主机指纹，ssh_exec 执行命令，破坏性命令（rm -rf、systemctl restart、mkfs 等）会请求确认。\n写入类操作（日历新增/删除）执行前先向用户说明将要修改的内容。\n本地 VPN：vpn_start / vpn_stop / vpn_status 控制 DNS 层广告拦截（纯应用权限，只接管 DNS，不影响正常上网）；vpn_traffic 统计全机分应用流量；vpn_split 按应用分流；vpn_hosts 管理拦截域名；vpn_diag 查看 DNS 日志与导出 pcap。";
 
 export function isDefaultSystemPrompt(value: string): boolean {
   return value === DEFAULT_SYSTEM_PROMPT || value === DEFAULT_SYSTEM_PROMPT_EN || value === NATIVE_DEFAULT_SYSTEM_PROMPT;
@@ -213,6 +217,9 @@ interface AndroidBridge {
   mcpManage?(action: string, name: string, value: string): string;
   transcribeAudio(id: string, filePath: string, language: string): void;
   saveAudioBase64(id: string, base64: string): string;
+  /* R88: 对话内图片附件（原生压缩落盘 / 读回 base64）。 */
+  chatImageImport?(source: string): string;
+  chatImageBase64?(path: string): string;
   requestPermissions(namesJson: string): void;
   permissionStatus(names: string): string;
   openAppSettings(): void;
@@ -1303,6 +1310,65 @@ export async function saveAudioBlob(blob: Blob): Promise<string> {
 
 /** Test hook for the Node-side transport harness. */
 export const __internal = { handleEvent, bridgeFetch };
+
+/* ------------------------------------------------------------------ */
+/* R88: 对话内图片附件（原生压缩落盘 + 读回 base64）                    */
+/* ------------------------------------------------------------------ */
+
+/** 原生落盘后的附件（路径相对 chat-images/，url 走 /local/ 只读路由）。 */
+export interface RawChatImage {
+  path: string;
+  url: string;
+  width: number;
+  height: number;
+  bytes: number;
+  mimeType: string;
+}
+
+export type ChatImageImportResult =
+  | { ok: true; image: RawChatImage }
+  | { ok: false; message: string };
+
+/**
+ * 让原生把一张图压成对话附件：解码 + EXIF 转正 + 长边 ≤1568 JPEG 落盘。
+ * `source` 只接受 content:// 或应用自己落盘的路径（原生侧有白名单）。
+ */
+export function chatImageImport(source: string): ChatImageImportResult {
+  const b = bridge();
+  if (!b?.chatImageImport) {
+    return { ok: false, message: translate("imageBridgeUnavailable") };
+  }
+  try {
+    const parsed = JSON.parse(b.chatImageImport(source)) as
+      | ({ ok?: boolean; message?: string } & Partial<RawChatImage>)
+      | null;
+    if (!parsed?.ok || !parsed.path || !parsed.url) {
+      return { ok: false, message: parsed?.message ?? translate("imageImportFailed") };
+    }
+    return {
+      ok: true,
+      image: {
+        path: parsed.path,
+        url: parsed.url,
+        width: Number(parsed.width) || 0,
+        height: Number(parsed.height) || 0,
+        bytes: Number(parsed.bytes) || 0,
+        mimeType: parsed.mimeType || "image/jpeg",
+      },
+    };
+  } catch (e) {
+    return { ok: false, message: String(e) };
+  }
+}
+
+/** 附件 base64（不带 data: 前缀）；原生不可用或路径越界时返回空串。 */
+export function chatImageBase64(path: string): string {
+  try {
+    return bridge()?.chatImageBase64?.(path) ?? "";
+  } catch {
+    return "";
+  }
+}
 
 export function getTermuxStatus(): string { try { return bridge()?.termuxStatus() ?? "none"; } catch { return "none"; } }
 export function grantTermuxPermission(): string {
