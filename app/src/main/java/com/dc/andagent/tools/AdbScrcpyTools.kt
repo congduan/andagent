@@ -16,6 +16,7 @@ import android.provider.MediaStore
 import android.util.Base64
 import com.dc.andagent.adb.AdbScrcpy
 import com.dc.andagent.adb.AdbScrcpySession
+import com.dc.andagent.adb.AdbClient
 import com.dc.andagent.shell.devtoolsScreenshotJson
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -44,7 +45,9 @@ import java.nio.ByteBuffer
 object AdbScrcpyToolSpec {
     const val SCREENCAST = "adb_screencast"
     const val RECORD = "adb_record"
-    val NAMES = listOf(SCREENCAST, RECORD)
+    const val MIRROR_START = "adb_mirror_start"
+    const val MIRROR_STOP = "adb_mirror_stop"
+    val NAMES = listOf(SCREENCAST, RECORD, MIRROR_START, MIRROR_STOP)
 
     private const val B64_TMP = "/data/local/tmp/andagent_scrcpy_server.b64"
     private const val PUSH_CHUNK = 2048
@@ -61,6 +64,8 @@ object AdbScrcpyToolSpec {
             "经 ADB 通道用 scrcpy server 录制目标手机屏幕到 Movies/AndAgent MP4" +
                 "（MediaMuxer 直接写 H.264 流，无需 MediaCodec 解码）。target 必填；" +
                 "duration_s 默认 30 秒（1..180），可选 bit_rate / max_size。"
+        MIRROR_START -> "在浮窗实时投屏已连接目标手机；target 必填，可选 max_size（默认 800）与 fps（默认 15）。"
+        MIRROR_STOP -> "停止 ADB 浮窗投屏。"
         else -> "ADB scrcpy 工具"
     }
 
@@ -78,6 +83,12 @@ object AdbScrcpyToolSpec {
             "max_size" to intParam("最大边长，默认 1280"),
             required = listOf("target"),
         )
+        MIRROR_START -> schemaOf(
+            "target" to strParam("目标 host 或 host:port（先用 adb_connect 登记）"),
+            "max_size" to intParam("最大边长，默认 800（钳制 256..1920）"),
+            "fps" to intParam("帧率，默认 15（钳制 1..60）"),
+            required = listOf("target"),
+        )
         else -> schemaOf()
     }
 
@@ -86,6 +97,8 @@ object AdbScrcpyToolSpec {
     fun clampMaxSize(v: Int?): Int = (v ?: DEFAULT_MAX_SIZE).coerceIn(256, 1920)
     fun clampBitRate(v: Int?): Int = (v ?: DEFAULT_BIT_RATE).coerceIn(500_000, 20_000_000)
     fun clampDuration(v: Int?): Int = (v ?: DEFAULT_DURATION_S).coerceIn(1, 180)
+    fun clampMirrorSize(v: Int?): Int = (v ?: 800).coerceIn(256, 1920)
+    fun clampFps(v: Int?): Int = (v ?: 15).coerceIn(1, 60)
 
     fun validateTarget(target: String?): String? =
         if (target.isNullOrBlank()) "ERROR: 缺少 target" else null
@@ -152,43 +165,63 @@ object AdbScrcpyToolSpec {
 
     /* ---- 工具编排（Android 框架部分，真机路径，JVM 不可测） ---- */
 
-    /** 非 suspend：AdbTool.execute 已在 Dispatchers.IO，长会话直接阻塞即可。 */
-    fun execute(context: Context, name: String, args: JsonObject): String {
-        val target = args.strArg("target") ?: return validateTarget(null)!!
+    class SessionHandle(val client: AdbClient, val session: AdbScrcpySession, private val host: String, private val port: Int) {
+        fun close() {
+            runCatching {
+                session.stop {
+                    if (!client.isAlive()) client.connect(host, port, AdbSessionHub.RECONNECT_TIMEOUT_MS)
+                }
+            }
+            runCatching { client.close() }
+        }
+    }
+
+    /** 截图、录制和浮窗共用同一条经过验证的 server 推送与 video socket 启动链路。 */
+    fun openSession(context: Context, target: String, maxSize: Int, bitRate: Int, fps: Int? = null): SessionHandle {
         val t = AdbSessionHub.target(target)
-            ?: return "ERROR: 目标不可达：$target（先用 adb_connect 登记，adb_devices 查看）"
+            ?: error("目标不可达：$target（先用 adb_connect 登记，adb_devices 查看）")
         val client = AdbSessionHub.newClient(target)
         try {
             val cr = client.connect(t.host, t.port)
-            if (!cr.startsWith("OK")) return "ERROR: 连接失败：$cr"
-
-            // base64 推送（简报指定路径）；失败/缺失由 session.start() 的 syncPush 兜底。
+            if (!cr.startsWith("OK")) error("连接失败：$cr")
             if (!serverPresent(client.openStream("ls -l ${AdbScrcpy.SERVER_JAR_PATH}"))) {
-                val b64 = runCatching {
-                    Base64.encodeToString(
-                        context.assets.open(AdbScrcpy.SERVER_ASSET).use { it.readBytes() },
-                        Base64.NO_WRAP,
-                    )
-                }.getOrElse { return "ERROR: 读取 scrcpy server 资产失败：${it.message}" }
+                val b64 = Base64.encodeToString(
+                    context.assets.open(AdbScrcpy.SERVER_ASSET).use { it.readBytes() }, Base64.NO_WRAP,
+                )
                 for (cmd in buildServerPushCommands(b64)) runCatching { client.openStream(cmd) }
             }
-
             val session = AdbScrcpySession(context, client)
             try {
-                val maxSize = clampMaxSize(args.intArg("max_size"))
-                val bitRate = clampBitRate(args.intArg("bit_rate"))
-                session.start(maxSize, bitRate)?.let { return "ERROR: $it" }
-                return when (name) {
-                    SCREENCAST -> screencast(context, session, target)
-                    RECORD -> record(context, session, clampDuration(args.intArg("duration_s")), target)
-                    else -> "ERROR: 未知 scrcpy 工具"
-                }
-            } finally {
-                session.stop()
+                session.start(maxSize, bitRate, fps)?.let { error(it) }
+                return SessionHandle(client, session, t.host, t.port)
+            } catch (e: Exception) {
+                runCatching { session.stop() }
+                throw e
             }
-        } finally {
+        } catch (e: Exception) {
             client.close()
+            throw e
         }
+    }
+
+    /** 非 suspend：AdbTool.execute 已在 Dispatchers.IO，长会话直接阻塞即可。 */
+    fun execute(context: Context, name: String, args: JsonObject): String {
+        if (name == MIRROR_STOP) return com.dc.andagent.scrcpy.AdbScrcpyService.stop(context)
+        val target = args.strArg("target") ?: return validateTarget(null)!!
+        if (name == MIRROR_START) return com.dc.andagent.scrcpy.AdbScrcpyService.start(
+            context, target, clampMirrorSize(args.intArg("max_size")), clampFps(args.intArg("fps")),
+        )
+        return runCatching {
+            openSession(context, target, clampMaxSize(args.intArg("max_size")), clampBitRate(args.intArg("bit_rate"))).let { handle ->
+                try {
+                    when (name) {
+                        SCREENCAST -> screencast(context, handle.session, target)
+                        RECORD -> record(context, handle.session, clampDuration(args.intArg("duration_s")), target)
+                        else -> "ERROR: 未知 scrcpy 工具"
+                    }
+                } finally { handle.close() }
+            }
+        }.getOrElse { "ERROR: ${it.message}" }
     }
 
     /** 解码首个 H.264 帧为 JPEG（MediaCodec + ImageReader），对齐 ScreenCaptureTool.scrcpyCapture。 */

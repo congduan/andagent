@@ -89,10 +89,11 @@ object AdbScrcpy {
      * 直接子进程——仍可作为进程组锚点（kill 掉 shell 会带走孤儿链不可靠，故仅作
      * pkill -f scid= 之外的兜底信号）。pidfile 按会话 scid 命名，避免并发互踩。
      */
-    fun buildServerCommand(scid: String, maxSize: Int, bitRate: Int): String =
+    fun buildServerCommand(scid: String, maxSize: Int, bitRate: Int, fps: Int? = null): String =
         "CLASSPATH=$SERVER_JAR_PATH app_process / com.genymobile.scrcpy.Server 2.7 " +
             "scid=$scid log_level=info audio=false control=false video_codec=h264 " +
             "max_size=${maxSize.coerceIn(256, 1920)} video_bit_rate=${bitRate.coerceIn(500_000, 20_000_000)} " +
+            (fps?.let { "max_fps=${it.coerceIn(1, 60)} " } ?: "") +
             "tunnel_forward=true send_dummy_byte=false " +
             ">$SERVER_LOG_PATH 2>&1 & echo \$! > ${pidFilePath(scid)}"
 
@@ -155,7 +156,7 @@ class AdbScrcpySession(private val context: Context, private val client: AdbClie
      * 目标机版本检测 → 推送 server → 后台启动 → 轮询 openDuplex → 读视频头。
      * 成功返回 null（对齐 ScrcpySession.open），失败返回中文错误。
      */
-    fun start(maxSize: Int, bitRate: Int): String? {
+    fun start(maxSize: Int, bitRate: Int, fps: Int? = null): String? {
         // 目标机系统版本门槛（scrcpy 2.7 server 需 Android 5.0 / API 21+）。
         val sdkOut = client.openStream("getprop ro.build.version.sdk")
         val sdk = AdbScrcpy.parseSdkInt(sdkOut)
@@ -168,7 +169,7 @@ class AdbScrcpySession(private val context: Context, private val client: AdbClie
 
         val id = AdbScrcpy.newScid()
         scid = id
-        val launch = client.openStream(AdbScrcpy.buildServerCommand(id, maxSize, bitRate))
+        val launch = client.openStream(AdbScrcpy.buildServerCommand(id, maxSize, bitRate, fps))
         if (launch.startsWith("ERROR")) return "启动 scrcpy server 失败：$launch"
 
         val service = AdbScrcpy.buildSocketService(id)
@@ -201,6 +202,9 @@ class AdbScrcpySession(private val context: Context, private val client: AdbClie
             ?: throw IOException("scrcpy 视频包解析失败（payload 长度不符）")
     }
 
+    /** 第 2 轮控制通道入口：必须在 video socket 之后连接；本轮不调用。 */
+    fun controlSocketService(): String? = scid?.let(AdbScrcpy::buildSocketService)
+
     /**
      * 关流 + 按本会话 scid 精确清理目标机，全包 runCatching，幂等。
      * Codex 必修①：不再无条件 `pkill -f andagent-scrcpy-server`（CLASSPATH 是 env 而非 argv，
@@ -210,11 +214,13 @@ class AdbScrcpySession(private val context: Context, private val client: AdbClie
      *     见 buildServerCommand 的 `echo $$ >`）kill；
      * 拿不到 scid（会话未启动）则跳过远程清理，只关流。
      */
-    fun stop() {
+    fun stop(beforeRemoteCleanup: (() -> Unit)? = null) {
         runCatching { stream?.close() }
         stream = null
         val id = scid
         if (id != null) {
+            // 服务关闭底层 socket 以打断阻塞读后，可在此重新连接，再发送定向 kill。
+            runCatching { beforeRemoteCleanup?.invoke() }
             runCatching { client.openStream("pkill -f scid=$id") }
             val pid = client.openStream("cat ${AdbScrcpy.pidFilePath(id)}")
                 .trim().lineSequence().firstOrNull()?.trim().orEmpty()

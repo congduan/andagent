@@ -16,22 +16,24 @@ class AdbScrcpyToolSpecTest {
 
     @Test
     fun namesAndDescriptions() {
-        assertEquals(listOf("adb_screencast", "adb_record"), AdbScrcpyToolSpec.NAMES)
+        assertEquals(listOf("adb_screencast", "adb_record", "adb_mirror_start", "adb_mirror_stop"), AdbScrcpyToolSpec.NAMES)
         for (n in AdbScrcpyToolSpec.NAMES) {
             assertTrue("$n 描述应非空", AdbScrcpyToolSpec.description(n).isNotBlank())
         }
         assertTrue(AdbScrcpyToolSpec.description(AdbScrcpyToolSpec.SCREENCAST).contains("H.264"))
         assertTrue(AdbScrcpyToolSpec.description(AdbScrcpyToolSpec.RECORD).contains("MP4"))
+        assertTrue(AdbScrcpyToolSpec.description(AdbScrcpyToolSpec.MIRROR_START).contains("浮窗"))
     }
 
     @Test
     fun parametersExposeTargetRequired() {
-        for (n in AdbScrcpyToolSpec.NAMES) {
+        for (n in AdbScrcpyToolSpec.NAMES - AdbScrcpyToolSpec.MIRROR_STOP) {
             val s = AdbScrcpyToolSpec.parameters(n).toString()
             assertTrue("$n 需要 target", s.contains("target"))
         }
         assertTrue(AdbScrcpyToolSpec.parameters(AdbScrcpyToolSpec.RECORD).toString().contains("duration_s"))
         assertTrue(AdbScrcpyToolSpec.parameters(AdbScrcpyToolSpec.SCREENCAST).toString().contains("max_size"))
+        assertTrue(AdbScrcpyToolSpec.parameters(AdbScrcpyToolSpec.MIRROR_START).toString().contains("fps"))
     }
 
     @Test
@@ -111,6 +113,8 @@ class AdbScrcpyToolSpecTest {
     fun adbToolRegistrationIncludesScrcpyNames() {
         assertTrue(ADB_TOOLS.contains("adb_screencast"))
         assertTrue(ADB_TOOLS.contains("adb_record"))
+        assertTrue(ADB_TOOLS.contains("adb_mirror_start"))
+        assertTrue(ADB_TOOLS.contains("adb_mirror_stop"))
         assertEquals(ADB_TOOLS.distinct().size, ADB_TOOLS.size) // 无重复注册
     }
 }

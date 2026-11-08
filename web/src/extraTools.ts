@@ -165,6 +165,8 @@ export const EXTRA_TOOL_DEFS = [
   // 描述 / 参数从 AdbScrcpyToolSpec.description(name) / parameters(name) 搬运。
   { name: "adb_screencast", description: "经 ADB 通道用 scrcpy server 截取目标手机一帧屏幕：拉起 server → 解码首个 H.264 帧 → 存相册，返回 savedPath / 缩略图。target 必填（先用 adb_connect 登记）；可选 max_size / bit_rate。", parameters: { type: "object", properties: { target: { type: "string", description: "目标 host 或 host:port（先用 adb_connect 登记）" }, max_size: { type: "integer", description: "最大边长，默认 1280（钳制 256..1920）" }, bit_rate: { type: "integer", description: "码率 bps，默认 4000000" } }, required: ["target"] } },
   { name: "adb_record", description: "经 ADB 通道用 scrcpy server 录制目标手机屏幕到 Movies/AndAgent MP4（MediaMuxer 直接写 H.264 流，无需 MediaCodec 解码）。target 必填；duration_s 默认 30 秒（1..180），可选 bit_rate / max_size。", parameters: { type: "object", properties: { target: { type: "string", description: "目标 host 或 host:port（先用 adb_connect 登记）" }, duration_s: { type: "integer", description: "录制时长秒数，默认 30（钳制 1..180）" }, bit_rate: { type: "integer", description: "码率 bps，默认 4000000" }, max_size: { type: "integer", description: "最大边长，默认 1280" } }, required: ["target"] } },
+  { name: "adb_mirror_start", description: "在浮窗实时投屏已连接目标手机；target 必填，可选 max_size（默认 800）与 fps（默认 15）。", parameters: { type: "object", properties: { target: { type: "string", description: "目标 host 或 host:port（先用 adb_connect 登记）" }, max_size: { type: "integer", description: "最大边长，默认 800（256..1920）" }, fps: { type: "integer", description: "帧率，默认 15（1..60）" } }, required: ["target"] } },
+  { name: "adb_mirror_stop", description: "停止 ADB 浮窗投屏。", parameters: { type: "object", properties: {} } },
   // adb_input：Kotlin 注册表（ADB_TOOLS / AdbTool.dispatch）无此工具，曾导致 unknown tool，已从本表移除（待实现）。
 
 ] satisfies PiTool[];

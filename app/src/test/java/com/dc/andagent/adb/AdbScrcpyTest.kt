@@ -155,6 +155,17 @@ class AdbScrcpyTest {
         assertTrue(high.contains("video_bit_rate=20000000"))
     }
 
+    @Test
+    fun mirrorServerCommandIncludesBoundedFrameRateAndVideoOnly() {
+        val cmd = AdbScrcpy.buildServerCommand("deadbeef", 800, 4_000_000, 15)
+        assertTrue(cmd.contains("max_size=800"))
+        assertTrue(cmd.contains("video_bit_rate=4000000"))
+        assertTrue(cmd.contains("max_fps=15"))
+        assertTrue(cmd.contains("audio=false control=false"))
+        assertTrue(cmd.contains("tunnel_forward=true"))
+        assertTrue(AdbScrcpy.buildServerCommand("deadbeef", 800, 4_000_000, 100).contains("max_fps=60"))
+    }
+
     // ---- scid 格式 / socket 名单点 ----
     @Test
     fun formatScid_is8LowercaseHex() {

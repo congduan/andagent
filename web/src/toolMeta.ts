@@ -100,6 +100,8 @@ export const TOOL_META: Record<string, ToolMeta> = {
   // R100 ③: ADB 通道 scrcpy 投屏 / 录制（工具名与 Kotlin AdbScrcpyToolSpec.NAMES 对齐；adb_input 无 Kotlin 注册已移除）
   adb_screencast: { label: "ADB 投屏截图", labelEn: "ADB screencast", icon: "image" },
   adb_record: { label: "ADB 投屏录制", labelEn: "ADB record", icon: "video", destructive: true },
+  adb_mirror_start: { label: "ADB 浮窗投屏", labelEn: "ADB mirror", icon: "video" },
+  adb_mirror_stop: { label: "停止浮窗投屏", labelEn: "Stop ADB mirror", icon: "video" },
   // R101: devtools_errors（只返回 error 级 console）
   devtools_errors: { label: "页面错误", labelEn: "Page errors", icon: "bug" },
   screen_capture: { label: "屏幕截图", labelEn: "Screenshot", icon: "image" },
