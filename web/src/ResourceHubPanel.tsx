@@ -75,7 +75,7 @@ export function ResourceHubPanel({ onClose, anchor }: { onClose: () => void; anc
       </div>
     </header>
     <div className="resource-hub-body">
-      {items.length === 0 && <p className="resource-hub-empty">{t("resourceEmpty")}</p>}
+      {items.length === 0 && <div className="resource-hub-empty"><span className="resource-hub-empty-icon" aria-hidden="true">🔌</span><strong>{t("resourceEmpty")}</strong><small>{t("resourceEmptyHint")}</small></div>}
       {kinds.map(kind => {
         const group = items.filter(item => item.kind === kind);
         if (!group.length) return null;
