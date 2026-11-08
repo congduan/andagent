@@ -190,7 +190,7 @@ class CronWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                     // WebView is live (foreground + unlocked). Otherwise the
                     // notification brings the user back and onResume/mount
                     // drains the queue to re-render the form.
-                    AgentBridge.pushA2uiForm(CronA2ui.toFence(task.payload),
+                    AgentBridge.pushA2uiForm(applicationContext, CronA2ui.toFence(task.payload),
                         flushNow = action == CronA2uiAction.RENDER_FORM)
                     if (action == CronA2uiAction.NOTIFY_FALLBACK) {
                         CronScheduler.notifyA2ui(applicationContext, task.name, task.id.hashCode())

@@ -19,6 +19,7 @@ import com.dc.andagent.tools.SshTransferCancel
 import com.dc.andagent.tools.SshTransferEvent
 import com.dc.andagent.cron.CronScheduler
 import com.dc.andagent.cron.CronStore
+import com.dc.andagent.cron.CronA2uiInbox
 import android.provider.Settings
 import com.dc.andagent.ui.SettingsStore
 import kotlinx.coroutines.runBlocking
@@ -221,12 +222,12 @@ class AgentBridge(
     /** JS-facing: drain queued a2ui fences as a JSON array of strings. */
     @JavascriptInterface
     fun consumeA2uiForms(): String {
-        val list = synchronized(a2uiQueue) {
-            val out = ArrayList(a2uiQueue)
-            a2uiQueue.clear()
-            out
-        }
-        return JsonArray(list.map { JsonPrimitive(it) }).toString()
+        // R105 review 必修项 1：持久化收件箱是唯一事实源——pushA2uiForm 只写
+        // inbox（不再同时入内存队列，否则 drain 会返回同一 fence 两次），
+        // 进程被杀后表单仍可读回。drain 即删除（消费语义）：JS 侧
+        // appendA2uiForm 会把消息写进会话 KV。
+        val persisted = appContext?.let { CronA2uiInbox.drainAll(it) } ?: emptyList()
+        return JsonArray(persisted.map { JsonPrimitive(it) }).toString()
     }
 
     @JavascriptInterface
@@ -1144,24 +1145,22 @@ class AgentBridge(
             "accept-encoding", "keep-alive", "upgrade", "proxy-connection",
         )
 
-        // R105: durable in-process queue of a2ui fences handed off from cron.
-        // Mirrors deeplinkQueue's durability (survives Activity recreation,
-        // drained on mount); WorkManager has no AgentBridge instance, so this
-        // lives in the companion. Consumed by JS via consumeA2uiForms().
-        private val a2uiQueue = java.util.ArrayDeque<String>()
+        // R105: durable handoff of a2ui fences from cron. The persisted inbox
+        // (filesDir/cron_a2ui, see CronA2uiInbox) is the single source of
+        // truth — it survives Activity recreation AND process death; the old
+        // in-process ArrayDeque is retired (draining both would deliver the
+        // same fence twice). WorkManager has no AgentBridge instance, so the
+        // enqueue lives here and JS consumes via consumeA2uiForms().
         @Volatile
         private var liveInstance: AgentBridge? = null
 
         /**
          * CronWorker -> WebView handoff. Enqueue durably; when [flushNow] and a
          * WebView is live, emit a flush immediately so a foreground form
-         * renders without a tap. All drains are idempotent (the queue clears).
+         * renders without a tap. Drains are idempotent (the inbox clears).
          */
-        fun pushA2uiForm(formJson: String, flushNow: Boolean) {
-            synchronized(a2uiQueue) {
-                a2uiQueue.addLast(formJson)
-                while (a2uiQueue.size > 20) a2uiQueue.removeFirst()
-            }
+        fun pushA2uiForm(context: Context, formJson: String, flushNow: Boolean) {
+            CronA2uiInbox.enqueue(context, formJson)
             if (flushNow) liveInstance?.flushA2ui()
         }
 
