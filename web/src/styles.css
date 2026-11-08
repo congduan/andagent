@@ -3938,3 +3938,6 @@ button:disabled {
 .resource-hub-item button:hover{background:rgba(255,255,255,.12)}
 .resource-hub-item button:active{transform:scale(.96)}
 .resource-hub-actions{display:flex;gap:6px}
+
+/* R110-review P2: 手势条安全兜底（maxHeight 预留 24px 之外再加 env 兜底） */
+.resource-hub-popover{margin-bottom:env(safe-area-inset-bottom,0px)}
