@@ -51,12 +51,30 @@ sealed class ImageOp {
 object ImageEditEngine {
     const val MAX_INPUT = 20L * 1024 * 1024
     const val MAX_EDGE = 2048
+    /** Upper bound on the summed input pixels held at once by a collage (~128 MB ARGB_8888). */
+    const val MAX_COLLAGE_INPUT_PIXELS = 32_000_000L
 
     data class SourceInfo(val width: Int, val height: Int, val format: String, val sizeBytes: Long, val exifOrientation: Int)
 
     private fun checkSize(width: Int, height: Int) {
         require(width in 1..4096 && height in 1..4096 && width.toLong() * height <= 8_388_608) { "输出尺寸过大（最大 4096 边、约 8 百万像素）" }
     }
+    /**
+     * Dimensions the edit pipeline actually operates on: decode() downsamples to
+     * MAX_EDGE and physically rotates pixels for EXIF orientations 5..8 (which
+     * swaps width/height). image_info used to report the raw stored size, so crop
+     * coordinates derived from it could fall outside the decoded bitmap.
+     */
+    internal fun effectiveDims(srcW: Int, srcH: Int, orientation: Int): Pair<Int, Int> {
+        var sample = 1
+        while (max(srcW, srcH) / sample > MAX_EDGE) sample *= 2
+        val w = (srcW + sample - 1) / sample
+        val h = (srcH + sample - 1) / sample
+        return if (orientation in 5..8) h to w else w to h
+    }
+    /** Summed input pixels of a collage; used to bound the memory held at once. */
+    internal fun totalPixels(images: List<Bitmap>): Long = images.sumOf { it.width.toLong() * it.height }
+    internal fun collageInputAllowed(totalPixels: Long): Boolean = totalPixels <= MAX_COLLAGE_INPUT_PIXELS
     private fun open(context: Context, source: String): ByteArray {
         val raw = when {
             source.startsWith("data:image/") || source.startsWith("base64,") -> {
@@ -81,7 +99,8 @@ object ImageEditEngine {
         runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) }.getOrElse { error("图片解码失败：${it.message}") }
         require(options.outWidth > 0 && options.outHeight > 0) { "文件不是有效图片或已损坏" }
         val orientation = runCatching { ExifInterface(ByteArrayInputStream(bytes)).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }.getOrDefault(1)
-        return SourceInfo(options.outWidth, options.outHeight, options.outMimeType ?: "unknown", bytes.size.toLong(), orientation)
+        val (w, h) = effectiveDims(options.outWidth, options.outHeight, orientation)
+        return SourceInfo(w, h, options.outMimeType ?: "unknown", bytes.size.toLong(), orientation)
     }
     fun decode(context: Context, source: String): Bitmap {
         val bytes = open(context, source)
@@ -338,6 +357,7 @@ object ImageEditEngine {
     }
     fun collage(images: List<Bitmap>, layout: String, slots: List<Rect>?, spacing: Int, background: Int, corners: Int): Bitmap {
         require(images.isNotEmpty() && images.size <= 16) { "拼图需要 1..16 张图片" }
+        require(collageInputAllowed(totalPixels(images))) { "拼图输入图片总像素过大（最多 32MP），请先缩小或分批拼图" }
         require(spacing in 0..100 && corners in 0..100) { "间距或圆角无效" }
         val cells = if (layout == "free") { require(slots != null && slots.size == images.size) { "free 布局需要每张图片的 x/y/w/h" }; slots }
             else {
