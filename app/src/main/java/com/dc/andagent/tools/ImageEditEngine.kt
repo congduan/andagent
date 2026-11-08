@@ -510,7 +510,7 @@ object ImageEditEngine {
             else -> h - margin
         }
         val px = (x?.toFloat() ?: ax).coerceIn(0f, (w - textW).coerceAtLeast(0f))
-        val py = (y?.toFloat() ?: ay).coerceIn(textH, h.toFloat())
+        val py = (y?.toFloat() ?: ay).coerceIn(textH.coerceAtMost(h.toFloat()), h.toFloat())
         return px to py
     }
 
@@ -626,8 +626,8 @@ object ImageEditEngine {
         for (i in pixels.indices) {
             val c = pixels[i]
             val r = c ushr 16 and 255; val g = c ushr 8 and 255; val bl = c and 255; val a = c ushr 24 and 255
-            // Standard 4x5 ColorMatrix: out = M[off]*R + M[off+1]*G + M[off+2]*B + M[off+3]*A + M[off+4] (offset in 0..255).
-            fun row(off: Int) = (m[off] * r + m[off + 1] * g + m[off + 2] * bl + m[off + 3] * a + m[off + 4] * 255).roundToInt().coerceIn(0, 255)
+            // Standard 4x5 ColorMatrix: out = M[off]*R + M[off+1]*G + M[off+2]*B + M[off+3]*A + M[off+4] (offset already in 0..255; multiplying again clamps everything to white/black).
+            fun row(off: Int) = (m[off] * r + m[off + 1] * g + m[off + 2] * bl + m[off + 3] * a + m[off + 4]).roundToInt().coerceIn(0, 255)
             val nr = row(0); val ng = row(5); val nb = row(10)
             pixels[i] = (a shl 24) or (nr shl 16) or (ng shl 8) or nb
         }
@@ -662,6 +662,17 @@ object ImageEditEngine {
         val s = min(1f, edge.toFloat()/max(b.width,b.height)); val small = if (s < 1f) Bitmap.createScaledBitmap(b, max(1,(b.width*s).roundToInt()), max(1,(b.height*s).roundToInt()), true) else b
         val bytes = ByteArrayOutputStream(); small.compress(Bitmap.CompressFormat.PNG, 90, bytes); if (small !== b) small.recycle()
         return Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP)
+    }
+    /**
+     * 是否存在真实透明像素。Bitmap.createBitmap 出来的 ARGB_8888 一律 hasAlpha()=true
+     * （哪怕全不透明），不能用它决定 JPEG/PNG，否则透明图编辑后存成 JPEG 会变黑底。
+     */
+    internal fun reallyHasAlpha(b: Bitmap): Boolean {
+        if (!b.hasAlpha()) return false
+        val pixels = IntArray(b.width * b.height)
+        b.getPixels(pixels, 0, b.width, 0, 0, b.width, b.height)
+        for (p in pixels) if (p ushr 24 and 255 != 255) return true
+        return false
     }
     fun save(context: Context, bitmap: Bitmap, png: Boolean): String {
         val ext = if (png) "png" else "jpg"; val name = "andagent_edit_${System.currentTimeMillis()}.$ext"
@@ -771,7 +782,7 @@ class ImageEditTool(private val context: Context, override val name: String) : T
             try {
                 val slots = args.s("slots_json")?.let { (Json.parseToJsonElement(it) as JsonArray).map { e -> val o=e.jsonObject; val x=o.i("x")?:0; val y=o.i("y")?:0; Rect(x,y,x+(o.i("w")?:0),y+(o.i("h")?:0)) } }
                 val b = ImageEditEngine.collage(images,args.s("layout") ?: "grid2x2",slots,args.i("spacing")?:8,parseColor(args.s("background") ?: "#ffffff"),args.i("corners")?:0)
-                try { return@runCatching result(context,b,null,true,args.s("output") == "png" || b.hasAlpha()) } finally { b.recycle() }
+                try { return@runCatching result(context,b,null,true,args.s("output") == "png" || ImageEditEngine.reallyHasAlpha(b)) } finally { b.recycle() }
             } finally { images.forEach { it.recycle() } }
         }
         val source = args.s("source") ?: error("缺少 source")
@@ -779,7 +790,7 @@ class ImageEditTool(private val context: Context, override val name: String) : T
         val original = ImageEditEngine.decode(context,source)
         val before = ImageEditEngine.thumbnail(original)
         val edited = ImageEditEngine.apply(original,ops) { ImageEditEngine.decode(context,it) }
-        try { result(context,edited,before,name == "image_edit", edited.hasAlpha() && ops.any { it is ImageOp.Rotate || it is ImageOp.Border || it is ImageOp.RotateFree }) }
+        try { result(context,edited,before,name == "image_edit", ImageEditEngine.reallyHasAlpha(edited)) }
         finally { edited.recycle() }
     }.getOrElse { "ERROR: 图片处理失败：${it.message ?: it.javaClass.simpleName}" }
     private fun result(context: Context, bitmap: Bitmap, before: String?, save: Boolean, png: Boolean): String {

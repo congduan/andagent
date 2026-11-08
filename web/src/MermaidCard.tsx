@@ -1,6 +1,7 @@
 import { useI18n } from "./i18n";
 import { useEffect, useRef, useState, useId } from "react";
 import { resolvedTheme } from "./theme";
+import { ImageLightbox } from "./ImageLightbox";
 
 type MermaidModule = typeof import("mermaid");
 
@@ -85,9 +86,8 @@ export function MermaidCard({ code }: { code: string }) {
       dangerouslySetInnerHTML={{ __html: svg }}
     />
     {!svg && !error && <div className="mermaid-loading">{t("renderingChart")}</div>}
-    {expanded && svg && <div className="image-lightbox" role="dialog" aria-modal="true" aria-label={t("chartPreview")} onClick={() => setExpanded(false)}>
-      <button type="button" onClick={() => setExpanded(false)} aria-label={t("closePreview")}>×</button>
+    {expanded && svg && <ImageLightbox label={t("chartPreview")} onClose={() => setExpanded(false)}>
       <div className="mermaid-lightbox-body" dangerouslySetInnerHTML={{ __html: svg }} />
-    </div>}
+    </ImageLightbox>}
   </div>;
 }

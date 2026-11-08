@@ -109,32 +109,42 @@ def vector_xml(paths, viewport: int, size_dp: int) -> str:
 
 
 def background_xml(root: ET.Element) -> str:
-    grad = root.find(f"{q('defs')}/{q('linearGradient')}")
-    if grad is None or grad.get("id") != "bg":
-        raise ValueError("expected <linearGradient id=\"bg\"> in the SVG")
-    if grad.get("gradientUnits", "objectBoundingBox") != "userSpaceOnUse":
-        raise ValueError("bg gradient must use gradientUnits=\"userSpaceOnUse\"")
+    rect = root.find(f"{q('rect')}[@id='background']")
+    if rect is None:
+        raise ValueError("expected <rect id=\"background\"> in the SVG")
+    fill = rect.get("fill", "")
+    if not fill.startswith("url("):
+        if not fill.startswith("#"):
+            raise ValueError(f"unsupported background fill: {fill}")
+        body = f'    <solid android:color="{fill.upper()}" />\n'
+    else:
+        grad = root.find(f"{q('defs')}/{q('linearGradient')}")
+        if grad is None or grad.get("id") != "bg":
+            raise ValueError("expected <linearGradient id=\"bg\"> in the SVG")
+        if grad.get("gradientUnits", "objectBoundingBox") != "userSpaceOnUse":
+            raise ValueError("bg gradient must use gradientUnits=\"userSpaceOnUse\"")
 
-    stops = [(float(s.get("offset", "0").rstrip("%")), s.get("stop-color"))
-             for s in grad.findall(q("stop"))]
-    if len(stops) not in (2, 3) or any(c is None for _, c in stops):
-        raise ValueError("bg gradient needs 2 or 3 opaque color stops")
+        stops = [(float(s.get("offset", "0").rstrip("%")), s.get("stop-color"))
+                 for s in grad.findall(q("stop"))]
+        if len(stops) not in (2, 3) or any(c is None for _, c in stops):
+            raise ValueError("bg gradient needs 2 or 3 opaque color stops")
 
-    x1, y1 = float(grad.get("x1", "0")), float(grad.get("y1", "0"))
-    x2, y2 = float(grad.get("x2", "1")), float(grad.get("y2", "1"))
-    angle = int(round(math.degrees(math.atan2(-(y2 - y1), x2 - x1)) / 45) * 45) % 360
+        x1, y1 = float(grad.get("x1", "0")), float(grad.get("y1", "0"))
+        x2, y2 = float(grad.get("x2", "1")), float(grad.get("y2", "1"))
+        angle = int(round(math.degrees(math.atan2(-(y2 - y1), x2 - x1)) / 45) * 45) % 360
 
-    colors = " ".join(
-        attr(name, color)
-        for name, (_, color) in zip(("startColor", "centerColor", "endColor")
-                                    if len(stops) == 3 else ("startColor", "endColor"),
-                                    stops)
-    )
+        colors = " ".join(
+            attr(name, color)
+            for name, (_, color) in zip(("startColor", "centerColor", "endColor")
+                                        if len(stops) == 3 else ("startColor", "endColor"),
+                                        stops)
+        )
+        body = f'    <gradient android:type="linear" android:angle="{angle}" {colors} />\n'
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         + generated_header()
         + f'<shape xmlns:android="{ANDROID_NS}" android:shape="rectangle">\n'
-        + f'    <gradient android:type="linear" android:angle="{angle}" {colors} />\n'
+        + body
         + "</shape>\n"
     )
 

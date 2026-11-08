@@ -51,6 +51,25 @@ const TOOL_DEFS = [
     },
   },
   {
+    name: "wait",
+    description:
+      "阻塞等待指定时长后再继续，用于给页面加载、动画、设备状态变化留出间隔。用 seconds（秒，可小数）或 duration_ms（毫秒）指定时长，二选一，最长 60 秒；返回实际等待的毫秒数。",
+    parameters: {
+      type: "object",
+      properties: {
+        seconds: {
+          type: "number",
+          description: "等待秒数，支持小数，例如 0.5 / 2，范围 0.001~60；与 duration_ms 二选一",
+        },
+        duration_ms: {
+          type: "integer",
+          description: "等待毫秒数，范围 1~60000；同时给出时以本参数为准",
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: "device_info",
     description: "获取设备信息：型号、Android 版本、存储空间、内存、电量。",
     parameters: { type: "object", properties: {}, required: [] },

@@ -9,10 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.SurfaceTexture
-import android.graphics.drawable.GradientDrawable
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -32,8 +30,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -90,6 +86,13 @@ class CameraOverlayService : Service() {
          * content FrameLayout（decorView 叠加）。inAppContent 非空时 onStartCommand
          * 走应用内挂载分支。
          */
+        /** 默认规格：480×360dp，水平居中、y=100dp（专业浮窗默认应出现在视觉中心线附近）。 */
+        internal fun defaultSpec(context: Context): CameraOverlaySpec {
+            val dm = context.resources.displayMetrics
+            val screenWdp = (dm.widthPixels / dm.density).toInt()
+            return CameraOverlaySpec("back", 480, 360, ((screenWdp - 480) / 2).coerceAtLeast(0), 100)
+        }
+
         @Volatile var inAppContent: FrameLayout? = null
             private set
         /** internal spec 由服务内部调用（同模块可见性），public 修饰仅为 Kotlin 对象成员默认。 */
@@ -145,10 +148,12 @@ class CameraOverlayService : Service() {
             fail("相机权限未授予")
             return START_NOT_STICKY
         }
+        val fallback = defaultSpec(this)
         val requested = runCatching { CameraOverlaySpec(
-            intent?.getStringExtra("camera") ?: "back", intent?.getIntExtra("width", 480) ?: 480,
-            intent?.getIntExtra("height", 360) ?: 360, intent?.getIntExtra("x", 0) ?: 0,
-            intent?.getIntExtra("y", 80) ?: 80,
+            intent?.getStringExtra("camera") ?: "back", intent?.getIntExtra("width", fallback.widthDp) ?: fallback.widthDp,
+            intent?.getIntExtra("height", fallback.heightDp) ?: fallback.heightDp,
+            intent?.getIntExtra("x", fallback.x) ?: fallback.x,
+            intent?.getIntExtra("y", fallback.y) ?: fallback.y,
         ) }.getOrElse { fail(it.message ?: "参数无效"); return START_NOT_STICKY }
         val cameraChanged = requested.camera != spec.camera
         spec = requested
@@ -179,19 +184,37 @@ class CameraOverlayService : Service() {
         return frame
     }
 
-    /** 预览缓冲与视图比例不一致时按 center-crop 变换，避免画面拉伸。 */
-    private fun applyPreviewTransform(view: TextureView, bufferW: Int, bufferH: Int) {
+    /** 预览变换：等比缩放（center-crop 避免拉伸）+ 传感器旋转补偿 + 前摄水平镜像。 */
+    private fun applyPreviewTransform(view: TextureView, bufferW: Int, bufferH: Int, rotationDeg: Int, mirror: Boolean) {
         main.post {
             if (view.width <= 0 || view.height <= 0 || bufferW <= 0 || bufferH <= 0) return@post
             val vw = view.width.toFloat(); val vh = view.height.toFloat()
-            // TextureView 默认把缓冲拉伸铺满视图；矩阵需在拉伸基础上补偿：
-            // 目标是缓冲以统一比例 scale 显示（center-crop），居中裁掉溢出部分。
-            val scale = maxOf(vw / bufferW, vh / bufferH)
+            val bw = bufferW.toFloat(); val bh = bufferH.toFloat()
+            val rotated = rotationDeg == 90 || rotationDeg == 270
+            val dispW = if (rotated) bh else bw
+            val dispH = if (rotated) bw else bh
+            // TextureView 默认把缓冲拉伸铺满视图；矩阵先把视图坐标映射回缓冲坐标，
+            // 再等比缩放（铺满裁切）→ 绕缓冲中心旋转 → 居中，最后在显示空间做前摄镜像。
+            val scale = maxOf(vw / dispW, vh / dispH)
             view.setTransform(android.graphics.Matrix().apply {
-                setScale(scale * bufferW / vw, scale * bufferH / vh)
-                postTranslate((vw - bufferW * scale) / 2f, (vh - bufferH * scale) / 2f)
+                postScale(bw / vw, bh / vh)
+                postScale(scale, scale, bw / 2f, bh / 2f)
+                if (rotationDeg != 0) postRotate(rotationDeg.toFloat(), bw / 2f, bh / 2f)
+                postTranslate(vw / 2f - bw / 2f, vh / 2f - bh / 2f)
+                if (mirror) postScale(-1f, 1f, vw / 2f, vh / 2f)
             })
         }
+    }
+
+    /** 默认显示屏旋转角（服务无 Activity，经 DisplayManager 取默认屏）。 */
+    private fun displayRotationDegrees(): Int = when (
+        getSystemService(android.hardware.display.DisplayManager::class.java)
+            ?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.rotation
+    ) {
+        android.view.Surface.ROTATION_90 -> 90
+        android.view.Surface.ROTATION_180 -> 180
+        android.view.Surface.ROTATION_270 -> 270
+        else -> 0
     }
 
     private fun startCameraForeground() {
@@ -216,27 +239,15 @@ class CameraOverlayService : Service() {
             com.dc.andagent.ui.OverlayChrome.background(this)
         }
         val preview = TextureView(this)
-        // PiP 风格：预览铺满圆角窗口，顶部半透明渐变浮层承载标题与关闭按钮。
-        val header = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xB3000000.toInt(), 0x00000000))
-            setPadding(dp(12), dp(2), dp(4), dp(10))
-        }
-        val title = TextView(this).apply {
-            text = "相机预览"; setTextColor(Color.WHITE); textSize = 13f; isSingleLine = true
-        }
-        val close = TextView(this).apply {
-            text = "✕"; setTextColor(Color.WHITE); textSize = 14f
-            background = GradientDrawable().apply { setColor(0x40FFFFFF.toInt()); cornerRadius = dp(14).toFloat() }
-            setPadding(dp(12), dp(4), dp(12), dp(4))
-            setOnClickListener { stopSelf() }
-        }
-        header.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(close, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        frame.addView(preview, FrameLayout.LayoutParams(-1, -1))
-        frame.addView(header, FrameLayout.LayoutParams(-1, dp(48), Gravity.TOP))
+        // 统一浮窗外壳（OverlayChrome.Header）：不透明标题栏 + 明显的 ✕ 关闭，与投屏/应用内浮窗一致；
+        // 预览区从标题栏下方开始，比例按实际预览区计算。
+        val headerRow = com.dc.andagent.ui.OverlayChrome.Header(this, "相机预览") { stopSelf() }
+        frame.addView(preview, FrameLayout.LayoutParams(-1, -1, Gravity.TOP).apply {
+            topMargin = dp(com.dc.andagent.ui.OverlayChrome.HEADER_DP)
+        })
+        frame.addView(headerRow, FrameLayout.LayoutParams(-1, dp(com.dc.andagent.ui.OverlayChrome.HEADER_DP), Gravity.TOP))
         var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
-        title.setOnTouchListener { _: View, event: MotionEvent ->
+        headerRow.title.setOnTouchListener { _: View, event: MotionEvent ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { downX = event.rawX; downY = event.rawY; startX = layout?.x ?: 0; startY = layout?.y ?: 0; true }
                 MotionEvent.ACTION_MOVE -> {
@@ -294,12 +305,19 @@ class CameraOverlayService : Service() {
                 val id = manager.cameraIdList.firstOrNull { manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == facing }
                     ?: error("设备没有${if (camera == "front") "前" else "后"}置摄像头")
                 val sizes = manager.getCameraCharacteristics(id).get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(SurfaceTexture::class.java)
-                // 先按宽高比匹配（防预览拉伸变形），同比值的候选里再取面积最接近的。
+                // 传感器旋转补偿：90/270 时缓冲以转置方向显示，按转置后的视图比例匹配
+                // （防预览拉伸变形），同比值的候选里再取面积最接近的。
+                val rotation = cameraPreviewRotationDegrees(
+                    displayRotationDegrees(),
+                    manager.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90,
+                    camera == "front",
+                )
                 val viewRatio = width.toDouble() / height
-                val size = sizes?.groupBy { kotlin.math.abs(it.width.toDouble() / it.height - viewRatio) }
+                val targetRatio = if (rotation == 90 || rotation == 270) 1.0 / viewRatio else viewRatio
+                val size = sizes?.groupBy { kotlin.math.abs(it.width.toDouble() / it.height - targetRatio) }
                     ?.minByOrNull { it.key }?.value?.minByOrNull { kotlin.math.abs(it.width.toLong() * it.height - width.toLong() * height) }
                 surfaceTexture.setDefaultBufferSize(size?.width ?: width, size?.height ?: height)
-                applyPreviewTransform(view, size?.width ?: width, size?.height ?: height)
+                applyPreviewTransform(view, size?.width ?: width, size?.height ?: height, rotation, camera == "front")
                 val surface = Surface(surfaceTexture)
                 previewSurface = surface
                 manager.openCamera(id, object : CameraDevice.StateCallback() {
@@ -369,7 +387,7 @@ class CameraOverlayTool(private val context: Context, private val permissions: P
         }
         val current = CameraOverlayService.instance?.currentSpec()
         if (name == "camera_overlay_update" && current == null) return "ERROR: 相机浮窗未显示；先调用 camera_overlay_show"
-        val spec = runCatching { (current ?: CameraOverlaySpec("back", 480, 360, 0, 80)).withArgs(args) }
+        val spec = runCatching { (current ?: CameraOverlayService.defaultSpec(context)).withArgs(args) }
             .getOrElse { return "ERROR: ${it.message}" }
         val overlayError = overlayPermissionError(Settings.canDrawOverlays(context))
         if (overlayError != null) {

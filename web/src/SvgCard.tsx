@@ -2,6 +2,7 @@ import { translate, useI18n } from "./i18n";
 import { useMemo, useState } from "react";
 import { execTool } from "./bridge";
 import { showInfo, showResult } from "./toast";
+import { ImageLightbox } from "./ImageLightbox";
 
 /**
  * ```svg fenced code blocks (R39): render a user/agent-provided SVG inline.
@@ -96,9 +97,8 @@ export function SvgCard({ code }: { code: string }) {
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setExpanded(true); }}
       dangerouslySetInnerHTML={{ __html: code }}
     />
-    {expanded && <div className="image-lightbox" role="dialog" aria-modal="true" aria-label={t("svgPreview")} onClick={() => setExpanded(false)}>
-      <button type="button" onClick={() => setExpanded(false)} aria-label={t("closePreview")}>×</button>
+    {expanded && <ImageLightbox label={t("svgPreview")} onClose={() => setExpanded(false)}>
       <div className="mermaid-lightbox-body" dangerouslySetInnerHTML={{ __html: code }} />
-    </div>}
+    </ImageLightbox>}
   </div>;
 }

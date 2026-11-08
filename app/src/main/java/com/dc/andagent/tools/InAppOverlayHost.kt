@@ -45,7 +45,15 @@ object InAppOverlayHost {
         val density = activity.resources.displayMetrics.density
         fun dp(v: Int) = (v * density).toInt()
         main.post {
-            dismiss()
+            // 同步移除旧浮窗并触发其 onDismiss。不能用 dismiss()：它把清理逻辑
+            // post 到队尾，执行时 current 已指向刚挂载的新浮窗——新浮窗会被
+            // 误移除（show 自毁 bug，表现为 TextureView surface 永远不就绪）。
+            val oldHook = dismissHook
+            current?.let { v -> (v.parent as? ViewGroup)?.removeView(v) }
+            current = null
+            title = null
+            dismissHook = null
+            oldHook?.invoke()
             dismissHook = onDismiss
             val frame = FrameLayout(activity).apply {
                 com.dc.andagent.ui.OverlayChrome.applyRounded(this)
@@ -65,6 +73,27 @@ object InAppOverlayHost {
                 (root as? ViewGroup)?.addView(frame, lp) ?: return@post
             }
             com.dc.andagent.ui.OverlayChrome.enter(frame)
+            // 标题栏拖拽（与系统浮窗一致）：translation 移动，夹取边界保留 56dp 可抓取。
+            var downX = 0f; var downY = 0f; var startX = 0f; var startY = 0f
+            header.setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        downX = event.rawX; downY = event.rawY
+                        startX = frame.translationX; startY = frame.translationY
+                        true
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        val dm = activity.resources.displayMetrics
+                        val grab = com.dc.andagent.ui.OverlayChrome.dp(activity, 56).toFloat()
+                        frame.translationX = (startX + event.rawX - downX)
+                            .coerceIn(-(frame.width - grab), dm.widthPixels - grab)
+                        frame.translationY = (startY + event.rawY - downY)
+                            .coerceIn(0f, dm.heightPixels - grab)
+                        true
+                    }
+                    else -> true
+                }
+            }
             contentHook(content)
             current = frame
             title = header

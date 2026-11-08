@@ -38,6 +38,7 @@ import {
   type Settings,
 } from "./bridge";
 import { importChatImage, MAX_CHAT_IMAGES, type ChatImage } from "./chatImages";
+import { ImageLightbox } from "./ImageLightbox";
 import { CopyMenu, selectedText, useLongPress, type CopyMenuAction } from "./CopyMenu";
 import { Icon } from "./icons";
 import { SshTransferHost } from "./SshTransferCard";
@@ -166,16 +167,9 @@ function UserImage({ image }: ImageMessagePartProps) {
         <img src={image} alt="" loading="lazy" />
       </button>
       {preview && (
-        <div
-          className="image-lightbox"
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("imagePreview")}
-          onClick={() => setPreview(false)}
-        >
-          <button type="button" onClick={() => setPreview(false)} aria-label={t("closePreview")}>×</button>
+        <ImageLightbox label={t("imagePreview")} onClose={() => setPreview(false)}>
           <img src={image} alt="" />
-        </div>
+        </ImageLightbox>
       )}
     </div>
   );

@@ -32,8 +32,32 @@ class ImageEditEngineTest {
         val source = sample()
         val original = Color.red(source.getPixel(50, 50))
         val brighter = ImageEditEngine.apply(source, listOf(ImageOp.Brightness(30)))
+        // value 30 → offset 76.5：60→137、100→177、140→217，绝不能钳位成全白 255
+        val p = brighter.getPixel(50, 50)
+        assertEquals(137, Color.red(p))
+        assertEquals(177, Color.green(p))
+        assertEquals(217, Color.blue(p))
         assertTrue(Color.red(brighter.getPixel(50, 50)) > original)
         brighter.recycle()
+    }
+
+    @Test fun invertActuallyInverts() {
+        val inverted = ImageEditEngine.apply(sample(), listOf(ImageOp.Invert))
+        val p = inverted.getPixel(50, 50)
+        assertEquals(255 - 60, Color.red(p))
+        assertEquals(255 - 100, Color.green(p))
+        assertEquals(255 - 140, Color.blue(p))
+        inverted.recycle()
+    }
+
+    @Test fun negativeContrastDoesNotFloodWhite() {
+        val darkened = ImageEditEngine.apply(sample(), listOf(ImageOp.Contrast(-50)))
+        // value -50 → s=0.5, t=64：60→94、100→114、140→134（修复前偏移 ×255 全白）
+        val p = darkened.getPixel(50, 50)
+        assertEquals(94, Color.red(p))
+        assertEquals(114, Color.green(p))
+        assertEquals(134, Color.blue(p))
+        darkened.recycle()
     }
 
     @Test fun grayscaleMakesChannelsEqual() {
@@ -207,6 +231,16 @@ class ImageEditEngineTest {
         }
         assertTrue("contrast stretch should widen span from 10 to >100 (got ${max - min})", max - min > 100)
         out.recycle()
+    }
+
+    @Test fun reallyHasAlphaDetectsOnlyRealTransparency() {
+        val opaque = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
+        opaque.eraseColor(Color.RED)
+        assertFalse("opaque canvas bitmap must not be flagged", ImageEditEngine.reallyHasAlpha(opaque))
+        val transparent = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888)
+        transparent.eraseColor(Color.TRANSPARENT)
+        transparent.setPixel(5, 5, Color.argb(128, 255, 0, 0))
+        assertTrue(ImageEditEngine.reallyHasAlpha(transparent))
     }
 
     @Test fun textDrawAnchorGridAndOverride() {

@@ -5,7 +5,7 @@
   Canvas 108x108 matches the Android adaptive-icon grid (66dp safe zone is
   centred at 54,54; all artwork stays inside 27..81 so every OEM mask keeps it).
 
-  Background: a punchier version of the blue -> violet diagonal in the web UI.
+  Background: solid graphite #111827 (no gradient, tech/terminal look).
   Mark: a rounded hexagon (continuity with the old icon) wrapping a four-point
   spark, i.e. an autonomous agent core. The mark is pure white and single
   layer, so it also works as a notification small-icon alpha mask.
@@ -17,17 +17,13 @@
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
   <defs>
-    <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="108" y2="108">
-      <stop offset="0" stop-color="#3B5BFF"/>
-      <stop offset="1" stop-color="#A855F7"/>
-    </linearGradient>
     <!-- 24x24 status-bar small icon: the spark on its own, never drawn here. -->
     <g id="notification">
       <path d="M12,1.5 C13,8.4 15.6,11 22.5,12 C15.6,13 13,15.6 12,22.5 C11,15.6 8.4,13 1.5,12 C8.4,11 11,8.4 12,1.5 Z" fill="#FFFFFF"/>
     </g>
   </defs>
 
-  <rect id="background" x="0" y="0" width="108" height="108" fill="url(#bg)"/>
+  <rect id="background" x="0" y="0" width="108" height="108" fill="#111827"/>
 
   <g id="mark">
     <path id="hexagon"

@@ -103,11 +103,14 @@ class AlbumPhotosTool(private val context: Context) : Tool {
     }
 
     /**
-     * Downsample + JPEG-compress a thumbnail (~10-40KB at 320px).
-     * EXIF 转正：相机竖拍照片的像素是横向存储的（orientation 5..8 交换宽高），
-     * 不转正则预览旋转 90° 且宽高比颠倒。复用 ImageEditEngine 的转正矩阵语义。
+     * 缩略图：先走 BitmapFactory 直接解码；解不出来（HEIC/RAW/云相册未下载等
+     * 平台能解码但 Skia 直接 decodeByteArray 失败的图）走 MediaStore.loadThumbnail
+     * 平台管线兜底（API 29+，缩略图由 media server 生成且已转正）。两者都失败返回 null。
      */
-    private fun decodeThumbnail(uri: Uri, maxPx: Int): String? = runCatching {
+    private fun decodeThumbnail(uri: Uri, maxPx: Int): String? =
+        decodeViaBitmapFactory(uri, maxPx) ?: mediaStoreThumbnail(uri, maxPx)
+
+    private fun decodeViaBitmapFactory(uri: Uri, maxPx: Int): String? = runCatching {
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -137,6 +140,19 @@ class AlbumPhotosTool(private val context: Context) : Tool {
         upright.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
         upright.recycle()
         android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+    }.getOrNull()
+
+    /** BitmapFactory 解不出来时的平台管线兜底；API < 29 或仍失败返回 null。 */
+    private fun mediaStoreThumbnail(uri: Uri, maxPx: Int): String? = runCatching {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return@runCatching null
+        val bmp = context.contentResolver.loadThumbnail(uri, android.util.Size(maxPx, maxPx), null)
+        try {
+            val out = ByteArrayOutputStream()
+            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+            android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+        } finally {
+            bmp.recycle()
+        }
     }.getOrNull()
 }
 

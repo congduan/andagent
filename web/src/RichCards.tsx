@@ -1,8 +1,11 @@
 import { translate } from "./i18n";
 import { useState } from "react";
-import { execTool } from "./bridge";
+import { execTool, hasBridge } from "./bridge";
+import { importChatImage } from "./chatImages";
+import { Icon } from "./icons";
 import { selectedText } from "./CopyMenu";
 import { showError, showSuccess } from "./toast";
+import { ImageLightbox } from "./ImageLightbox";
 
 type Photo = { id?: string; uri?: string; name?: string; thumbnailBase64?: string; thumb?: string };
 
@@ -103,29 +106,69 @@ export function TableCard({ code }: { code: string }) {
 
 export function ImageCard({ code }: { code: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [fallback, setFallback] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   let data: { base64?: string; uri?: string; caption?: string };
   try { data = JSON.parse(code); } catch { return <div className="rich-error">{translate("imageInvalid")}</div>; }
-  const src = data.base64 ? `data:image/png;base64,${data.base64}` : data.uri;
-  if (!src || !(src.startsWith("data:image/") || src.startsWith("content://") || src.startsWith("https://"))) return <div className="rich-error">{translate("imageSourceInvalid")}</div>;
+  const src = data.base64 ? `data:image/png;base64,${data.base64}` : fallback ?? data.uri;
+  if (failed || !src || !(src.startsWith("data:image/") || src.startsWith("/local/") || src.startsWith("https://"))) return <div className="rich-error">{translate("imageSourceInvalid")}</div>;
+  // content:// 在主 WebView（allowContentAccess=false）里永远加载不出来：
+  // 失败时用 chatImageImport 转成 /local/ 只读路由地址重试一次，仍失败显示错误卡。
+  const onError = () => {
+    if (fallback || failed || !data.uri?.startsWith("content://") || !hasBridge()) { setFailed(true); return; }
+    const result = importChatImage(data.uri);
+    if (result.ok && result.image.url) setFallback(result.image.url);
+    else setFailed(true);
+  };
   return <div className="image-card">
-    <button type="button" onClick={() => setExpanded(true)} aria-label={translate("enlargeImage")}><img src={src} alt={data.caption ?? translate("editedImage")} /></button>
+    <button type="button" onClick={() => setExpanded(true)} aria-label={translate("enlargeImage")}><img src={src} onError={onError} alt={data.caption ?? translate("editedImage")} /></button>
     {data.caption && <div className="image-caption">{data.caption}</div>}
-    {expanded && <div className="image-lightbox" role="dialog" aria-modal="true" aria-label={translate("imagePreview")} onClick={() => setExpanded(false)}>
-      <button type="button" onClick={() => setExpanded(false)} aria-label={translate("closePreview")}>×</button><img src={src} alt={data.caption ?? translate("editedImage")} />
-    </div>}
+    {expanded && <ImageLightbox label={translate("imagePreview")} onClose={() => setExpanded(false)}>
+      <img src={src} alt={data.caption ?? translate("editedImage")} />
+    </ImageLightbox>}
   </div>;
+}
+
+/**
+ * 相册照片网格的单张缩略图。原生 album_photos 对部分图（HEIC/RAW/云图未下载等）
+ * 解不出缩略图，结果里就没有 thumbnailBase64，而 photo.thumb 原生从不产出——
+ * 旧版直接 `<img src={undefined}>` 渲染出裂图。现在：无可用 src 时渲染占位块；
+ * 加载失败且 uri 是 content:// 时转 /local/ 重试一次，仍失败落回占位块。
+ */
+function PhotoTile({ photo, index }: { photo: Photo; index: number }) {
+  const [src, setSrc] = useState<string | undefined>(
+    photo.thumbnailBase64
+      ? `data:image/jpeg;base64,${photo.thumbnailBase64}`
+      : photo.thumb || undefined,
+  );
+  const [importTried, setImportTried] = useState(false);
+  const name = photo.name || `${translate("photo")} ${index + 1}`;
+  const onError = () => {
+    if (!importTried && photo.uri && photo.uri.startsWith("content://") && hasBridge()) {
+      setImportTried(true);
+      const result = importChatImage(photo.uri);
+      if (result.ok && result.image.url) { setSrc(result.image.url); return; }
+    }
+    setSrc(undefined);
+  };
+  if (!src) {
+    return (
+      <div className="photo-tile-empty" aria-label={name}>
+        <Icon name="image" size={18} />
+        <span>{name}</span>
+      </div>
+    );
+  }
+  return <button type="button" onClick={async () => {
+    const result = await execTool("album_open", { id: photo.id, uri: photo.uri });
+    if (result.ok) showSuccess(result.result); else showError(result.result);
+  }}><img src={src} onError={onError} alt={name} loading="lazy" /><span>{name}</span></button>;
 }
 
 export function PhotosCard({ code }: { code: string }) {
   let photos: Photo[] = [];
   try { const data = JSON.parse(code); photos = Array.isArray(data) ? data : data.photos ?? []; } catch { return <div className="rich-error">{translate("photosInvalid")}</div>; }
-  return <div className="photos-grid">{photos.map((photo, i) => {
-    const src = photo.thumbnailBase64 ? `data:image/jpeg;base64,${photo.thumbnailBase64}` : photo.thumb;
-    return <button type="button" key={photo.id ?? photo.uri ?? i} onClick={async () => {
-      const result = await execTool("album_open", { id: photo.id, uri: photo.uri });
-      if (result.ok) showSuccess(result.result); else showError(result.result);
-    }}><img src={src} alt={photo.name ?? `${translate("photo")} ${i + 1}`} loading="lazy" /><span>{photo.name ?? `${translate("photo")} ${i + 1}`}</span></button>;
-  })}</div>;
+  return <div className="photos-grid">{photos.map((photo, i) => <PhotoTile key={photo.id ?? photo.uri ?? i} photo={photo} index={i} />)}</div>;
 }
 
 /** Key-value view is the same unified table renderer in its two-column form. */

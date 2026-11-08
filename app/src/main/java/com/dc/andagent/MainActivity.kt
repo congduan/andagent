@@ -121,6 +121,7 @@ import com.dc.andagent.tools.FileSearchTool
 import com.dc.andagent.tools.DocumentCreateTool
 import com.dc.andagent.tools.FileWriteTool
 import com.dc.andagent.tools.GetTimeTool
+import com.dc.andagent.tools.WaitTool
 import com.dc.andagent.tools.NotifySendTool
 import com.dc.andagent.tools.ScreenRecordListTool
 import com.dc.andagent.tools.ScreenRecordStopTool
@@ -426,6 +427,7 @@ class MainActivity : ComponentActivity() {
         tools.putAll(LIVE_TOOLS.associateWith { LiveTool(liveLoopRunner, it, liveOverlayHost::prepare) })
         tools.putAll(mapOf(
             "get_time" to GetTimeTool(),
+            "wait" to WaitTool(),
             "nfc_status" to NfcTool(nfcSession, "nfc_status"),
             "nfc_read" to NfcTool(nfcSession, "nfc_read"),
             "nfc_write_text" to NfcTool(nfcSession, "nfc_write_text"),
@@ -511,7 +513,7 @@ class MainActivity : ComponentActivity() {
             "camera_info" to CameraInfoTool(appContext, "camera_info"),
             "camera_capture" to CameraCaptureTool(appContext, permissionBroker),
             "camera_record" to CameraRecordTool(appContext, permissionBroker),
-            "camera_scan" to CameraScanTool(appContext, permissionBroker),
+            "camera_scan" to CameraScanTool(appContext, permissionBroker, activityProvider = { this.takeIf { !it.isFinishing } }),
             "camera_raw" to CameraRawTool(appContext, permissionBroker),
             "camera_depth" to CameraDepthTool(appContext, permissionBroker),
             "camera_stream" to CameraStreamTool(appContext, permissionBroker),

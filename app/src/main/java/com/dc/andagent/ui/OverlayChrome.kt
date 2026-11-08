@@ -65,6 +65,9 @@ object OverlayChrome {
             setTextColor(TEXT)
             textSize = 14f
             isSingleLine = true
+            // 子项高度撑满标题栏时 LinearLayout 的 CENTER_VERTICAL 不生效，
+            // 文字/按钮要各自设置 gravity 才能垂直居中。
+            gravity = Gravity.CENTER_VERTICAL
         }
 
         init {
@@ -77,6 +80,7 @@ object OverlayChrome {
                 text = "✕"
                 setTextColor(TEXT_DIM)
                 textSize = 16f
+                gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(context, 12), 0, dp(context, 12), 0)
                 setOnClickListener { onClose() }
             }, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.MATCH_PARENT))

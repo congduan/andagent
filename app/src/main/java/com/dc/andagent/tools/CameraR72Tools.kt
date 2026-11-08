@@ -2,6 +2,7 @@ package com.dc.andagent.tools
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -9,6 +10,8 @@ import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Matrix
 import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.SurfaceTexture
 import android.graphics.YuvImage
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -25,8 +28,12 @@ import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.Size
+import android.view.Surface
+import android.view.TextureView
+import android.widget.FrameLayout
 import com.dc.andagent.bridge.PermissionBroker
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
@@ -741,10 +748,121 @@ private fun recordingDir(context: Context): File =
 
 /* ======================= camera_scan ======================= */
 
-class CameraScanTool(private val context: Context, private val permissions: PermissionBroker) : Tool {
+private const val TAG = "CameraScan"
+
+/** 预览纹理旋转角核心推导（sensor orientation vs display rotation，与 Camera2Basic 一致）。 */
+internal fun cameraPreviewRotationDegrees(displayDegrees: Int, sensorOrientation: Int, front: Boolean): Int =
+    if (front) (sensorOrientation + displayDegrees) % 360 else (sensorOrientation - displayDegrees + 360) % 360
+
+/** 计算预览纹理的旋转角（sensor orientation vs display rotation，与 Camera2Basic 推导一致）。 */
+internal fun scanPreviewRotationDegrees(activity: Activity, characteristics: CameraCharacteristics, facing: String): Int {
+    val displayDegrees = when (activity.windowManager.defaultDisplay?.rotation) {
+        Surface.ROTATION_90 -> 90
+        Surface.ROTATION_180 -> 180
+        Surface.ROTATION_270 -> 270
+        else -> 0
+    }
+    val sensor = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+    return cameraPreviewRotationDegrees(displayDegrees, sensor, facing.equals("front", true))
+}
+
+/** 扫码预览变换：缓冲以统一比例铺满视图（center-crop），旋转 90/270 时仍正确。 */
+internal fun applyScanPreviewTransform(view: TextureView, bufferW: Int, bufferH: Int, rotationDeg: Int) {
+    if (view.width <= 0 || view.height <= 0 || bufferW <= 0 || bufferH <= 0) return
+    val vw = view.width.toFloat(); val vh = view.height.toFloat()
+    val m = Matrix()
+    val viewRect = RectF(0f, 0f, vw, vh)
+    val bufferRect = RectF(0f, 0f, bufferW.toFloat(), bufferH.toFloat())
+    val cx = vw / 2f; val cy = vh / 2f
+    if (rotationDeg == 90 || rotationDeg == 270) {
+        bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY())
+    }
+    m.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
+    if (rotationDeg != 0) m.postRotate(rotationDeg.toFloat(), cx, cy)
+    view.setTransform(m)
+}
+
+/** 为预览 TextureView 选缓冲尺寸、设变换并创建并入会话的 Surface；失败返回 null（走无预览扫码）。 */
+internal fun prepScanPreviewSurface(
+    activity: Activity,
+    view: TextureView?,
+    characteristics: CameraCharacteristics,
+    facing: String,
+): Surface? {
+    if (view == null) return null
+    val texture = view.surfaceTexture ?: return null
+    return try {
+        val sizes = try {
+            characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                ?.getOutputSizes(SurfaceTexture::class.java)?.toList()
+        } catch (_: Throwable) { null } ?: emptyList()
+        val buf = sizes.minByOrNull { kotlin.math.abs(it.width.toLong() * it.height - 1280L * 720L) } ?: Size(1280, 720)
+        texture.setDefaultBufferSize(buf.width, buf.height)
+        val rotation = scanPreviewRotationDegrees(activity, characteristics, facing)
+        view.post { applyScanPreviewTransform(view, buf.width, buf.height, rotation) }
+        Surface(texture)
+    } catch (_: Throwable) { null }
+}
+
+/** 扫码期间的应用内预览浮窗：复用 InAppOverlayHost，TextureView 就绪后并入扫码会话。 */
+internal class ScanPreviewOverlay(private val activity: Activity) {
+    private val ready = java.util.concurrent.LinkedBlockingQueue<CamEvent<TextureView>>()
+    val userClosed = AtomicBoolean(false)
+
+    var view: TextureView? = null
+        private set
+
+    /** 展示方形预览窗并等待 surface 就绪（≤4s）；失败自动收起并返回 false。 */
+    fun show(sizeDp: Int): Boolean {
+        val dm = activity.resources.displayMetrics
+        val screenWdp = (dm.widthPixels / dm.density).toInt()
+        val screenHdp = (dm.heightPixels / dm.density).toInt()
+        val size = sizeDp.coerceIn(240, (screenWdp - 24).coerceAtLeast(240))
+        val shown = InAppOverlayHost.show(
+            activity, "扫码中…", size, size,
+            ((screenWdp - size) / 2).coerceAtLeast(0),
+            ((screenHdp - size) / 2).coerceAtLeast(0),
+            { content -> mount(content) },
+            { userClosed.set(true) },
+        )
+        if (!shown) return false
+        view = ready.poll(4000, TimeUnit.MILLISECONDS)?.value
+        if (view == null) {
+            android.util.Log.i(TAG, "overlay texture not ready within 4s")
+            dismiss(); return false
+        }
+        return true
+    }
+
+    private fun mount(content: FrameLayout) {
+        android.util.Log.i(TAG, "overlay mount (attached=${content.isAttachedToWindow})")
+        val preview = TextureView(activity)
+        preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+                android.util.Log.i(TAG, "overlay texture available ${w}x${h}")
+                ready.post(preview)
+            }
+            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) = Unit
+            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
+                android.util.Log.i(TAG, "overlay texture destroyed")
+                userClosed.set(true); return true
+            }
+            override fun onSurfaceTextureUpdated(st: SurfaceTexture) = Unit
+        }
+        content.addView(preview, FrameLayout.LayoutParams(-1, -1))
+    }
+
+    fun dismiss() { runCatching { InAppOverlayHost.dismiss() } }
+}
+
+class CameraScanTool(
+    private val context: Context,
+    private val permissions: PermissionBroker,
+    private val activityProvider: () -> Activity? = { null },
+) : Tool {
     override val name = "camera_scan"
     override val description =
-        "用相机连续取景识别条码/二维码（ZXing）：QR/EAN/Code128/PDF417 等，命中即返回文本与码制；可选限时与格式过滤。"
+        "用相机连续取景识别条码/二维码（ZXing）：QR/EAN/Code128/PDF417 等，命中即返回文本与码制；可选限时与格式过滤。识别期间应用内会显示实时扫码预览窗（用户可点 ✕ 取消）。"
     override val parameters = schemaOf(
         "seconds" to intParam("最长取景识别时长（秒），默认 20，范围 1-120"),
         "formats" to strParam("可选，逗号分隔码制：qr,ean13,ean8,upc,code128,code39,itf,pdf417,aztec,databar；缺省全格式"),
@@ -763,6 +881,21 @@ class CameraScanTool(private val context: Context, private val permissions: Perm
         val resolved = try { resolveCameraId(manager, facing) } catch (_: Throwable) { null }
             ?: return "ERROR: 未找到可用摄像头"
         val handle = openCameraBlocking(manager, resolved.first) ?: return "ERROR: 打开摄像头失败（被占用或已禁用）"
+        // 应用内扫码预览：有前台 Activity 且 surface 就绪才显示，否则无预览降级（离屏扫码）。
+        val activity = activityProvider()?.takeIf { !it.isFinishing && it.window != null }
+        android.util.Log.i(TAG, "preview: activity=${if (activity != null) "yes" else "no"}")
+        var overlay: ScanPreviewOverlay? = null
+        var previewSurface: Surface? = null
+        if (activity != null) {
+            val o = ScanPreviewOverlay(activity)
+            if (o.show(400)) {
+                previewSurface = prepScanPreviewSurface(activity, o.view, handle.characteristics, facing)
+                android.util.Log.i(TAG, "preview: show ok, surface=${if (previewSurface != null) "yes" else "no"}")
+                if (previewSurface != null) overlay = o else o.dismiss()
+            } else {
+                android.util.Log.i(TAG, "preview: overlay show failed/timeout")
+            }
+        }
         try {
             val characteristics = handle.characteristics
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
@@ -816,35 +949,72 @@ class CameraScanTool(private val context: Context, private val permissions: Perm
                     }
                 }, handle.handler)
 
-                val sessionOpen = java.util.concurrent.LinkedBlockingQueue<CamEvent<CameraCaptureSession?>>()
-                handle.device.createCaptureSession(
-                    listOf(reader.surface),
-                    object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigured(s: CameraCaptureSession) { sessionOpen.post(s) }
-                        override fun onConfigureFailed(s: CameraCaptureSession) { sessionOpen.post(null) }
-                    },
-                    handle.handler,
-                )
-                val session = sessionOpen.poll(4000, TimeUnit.MILLISECONDS)?.value ?: error("会话创建超时")
-                sessionRef = session
-                val request = handle.device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                    addTarget(reader.surface)
-                    set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
-                    set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                // 优先 预览+YUV 双输出；HAL 不支持双流、预览 surface 中途被遗弃
+                // （abandoned）或会话失效时，整体重试下一组 target（仅 YUV 离屏扫码）。
+                val targetSets = ArrayList<List<Surface>>()
+                previewSurface?.let { targetSets.add(listOf(it, reader.surface)) }
+                targetSets.add(listOf(reader.surface))
+                var session: CameraCaptureSession? = null
+                for (targets in targetSets) {
+                    val sessionOpen = java.util.concurrent.LinkedBlockingQueue<CamEvent<CameraCaptureSession?>>()
+                    try {
+                        handle.device.createCaptureSession(
+                            targets,
+                            object : CameraCaptureSession.StateCallback() {
+                                override fun onConfigured(s: CameraCaptureSession) { sessionOpen.post(s) }
+                                override fun onConfigureFailed(s: CameraCaptureSession) { sessionOpen.post(null) }
+                            },
+                            handle.handler,
+                        )
+                        session = sessionOpen.poll(6000, TimeUnit.MILLISECONDS)?.value
+                    } catch (e: Throwable) {
+                        android.util.Log.i(TAG, "createCaptureSession(${targets.size} targets) failed: ${e.message}")
+                        session = null
+                    }
+                    if (session != null) {
+                        try {
+                            val request = handle.device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                                addTarget(reader.surface)
+                                previewSurface?.let { addTarget(it) }
+                                set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+                                set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                            }
+                            session.setRepeatingRequest(request.build(), null, handle.handler)
+                            android.util.Log.i(TAG, "session ok with ${targets.size} target(s)")
+                            break
+                        } catch (e: Throwable) {
+                            // surface 被遗弃/会话失效：收尾后重试下一组 target。
+                            android.util.Log.i(TAG, "repeating request failed: ${e.message}")
+                            runCatching { session.close() }
+                            session = null
+                        }
+                    }
+                    if (previewSurface != null) {
+                        // 双流不可用：收起预览浮窗，继续无预览扫码。
+                        runCatching { previewSurface?.release() }
+                        previewSurface = null
+                        overlay?.dismiss()
+                        android.util.Log.i(TAG, "dual-stream rejected, fallback to yuv-only scan")
+                    } else break
                 }
-                session.setRepeatingRequest(request.build(), null, handle.handler)
+                sessionRef = session ?: error("会话创建超时")
 
-                val text = hit.poll(Math.max(1000L, deadline - System.currentTimeMillis()), TimeUnit.MILLISECONDS)?.value
+                // 命中即返回；预览窗被用户（✕ 或返回退出）关闭时提前取消。
+                var text: String? = null
+                while (text == null && System.currentTimeMillis() < deadline && overlay?.userClosed?.get() != true) {
+                    text = hit.poll(300, TimeUnit.MILLISECONDS)?.value
+                }
                 val elapsed = seconds - ((deadline - System.currentTimeMillis()) / 1000.0)
-                return if (text != null) {
-                    buildJsonObject {
+                return when {
+                    text != null -> buildJsonObject {
                         put("status", "OK")
                         put("format", lastFormat.get() ?: "")
                         put("text", text)
+                        put("previewShown", overlay != null)
                         put("seconds_elapsed", elapsed.coerceAtLeast(0.0))
                     }.toString()
-                } else {
-                    "ERROR: 未在 $seconds 秒内识别到码"
+                    overlay?.userClosed?.get() == true -> "ERROR: 扫码已取消（预览窗已关闭）"
+                    else -> "ERROR: 未在 $seconds 秒内识别到码"
                 }
             } finally {
                 runCatching { sessionRef?.close() }
@@ -855,6 +1025,10 @@ class CameraScanTool(private val context: Context, private val permissions: Perm
             return "ERROR: 扫码失败（${e.message ?: e.javaClass.simpleName}）"
         } finally {
             handle.close()
+            // 相机设备完全关闭后再释放预览 surface / 收起浮窗，避免 HAL 仍持有
+            // surface 时被释放报 "surface was abandoned"。
+            runCatching { previewSurface?.release() }
+            overlay?.dismiss()
         }
     }
 }

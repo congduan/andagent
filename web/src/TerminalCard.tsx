@@ -1,6 +1,7 @@
 import { translate, useI18n } from "./i18n";
 import { useEffect, useRef, useState } from "react";
 import { lastShellResult, termuxTerminalExec, termuxTerminalPoll } from "./bridge";
+import { ImageLightbox } from "./ImageLightbox";
 
 /**
  * ```terminal fence: an in-conversation interactive terminal (R27).
@@ -153,13 +154,12 @@ export function TerminalCard({ code }: { code: string }) {
         <button type="button" onClick={() => { setClosed((v) => !v); }}>{closed ? t("reopen") : t("close")}</button>
       </div>
       {showAgentOutput && (
-        <div className="image-lightbox" role="dialog" aria-modal="true" aria-label={t("shellOutput")} onClick={() => setShowAgentOutput(false)}>
-          <button type="button" onClick={() => setShowAgentOutput(false)} aria-label={t("closePreview")}>×</button>
-          <div className="mermaid-lightbox-body" onClick={(e) => e.stopPropagation()}>
+        <ImageLightbox label={t("shellOutput")} onClose={() => setShowAgentOutput(false)} zoomable={false}>
+          <div className="mermaid-lightbox-body">
             <div className="tool-label">{t("lastShellResult")}</div>
             <pre className="tool-pre" style={{ maxHeight: "70vh" }}>{lastShellResult() || t("noShellResult")}</pre>
           </div>
-        </div>
+        </ImageLightbox>
       )}
       {closed
         ? <div className="terminal-idle">{t("terminalClosed")}</div>

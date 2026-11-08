@@ -13,6 +13,7 @@ export interface ToolMeta {
 
 export const TOOL_META: Record<string, ToolMeta> = {
   get_time: { label: "获取时间", labelEn: "Get time", icon: "clock" },
+  wait: { label: "等待", labelEn: "Wait", icon: "clock" },
   tts_to_file: { label: "文本转音频", labelEn: "Text to audio", icon: "music" },
   db_create: { label: "创建数据库", labelEn: "Create database", icon: "database" },
   db_list: { label: "数据库列表", labelEn: "List databases", icon: "database" },
