@@ -5,6 +5,7 @@ import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.SocketTimeoutException
 import java.security.KeyPair
 
 /**
@@ -134,17 +135,40 @@ class AdbClient(
             val localId = nextLocalId++
             write(AdbMessage(A_OPEN, localId, 0, "shell:$command\u0000".toByteArray()))
 
+            // A_OPEN 后的 ACK 快速失败：正常 adbd 毫秒级回 OKAY/WRTE/CLSE。
+            // 8s 内三无（目标熄屏锁屏、被其它 adb 客户端占用、无线调试页已退出）
+            // 是最常见实战成因——给出可操作引导而不是干等 90s 会话超时。
+            var gotAck = false
+            var ackDeadline = System.currentTimeMillis() + 8_000
+            // 暂存握手放宽的读超时，ACK 到达后恢复，避免影响后续长输出读取。
+            val savedTimeout = SESSION_TIMEOUT_MS
+            runCatching { transport.setReadTimeout(1_000) }
             val out = ByteArrayOutputStream()
             var total = 0L
             while (true) {
+                if (!gotAck && System.currentTimeMillis() > ackDeadline) {
+                    error(
+                        "ADB shell 无响应（8 秒内未收到目标确认）。最常见原因：" +
+                            "①目标手机熄屏/锁屏（亮屏解锁后重试）；" +
+                            "②目标机正被其它 adb 客户端（PC adb 等）占用——adbd 同一时间只服务一个无线客户端；" +
+                            "③目标机「无线调试」页已退出导致端口失效——重新进入该页查看当前端口并 adb_connect 重连。"
+                    )
+                }
                 val msg = try {
                     read()
+                } catch (e: SocketTimeoutException) {
+                    if (!gotAck) continue // ACK 窗口内继续轮询 deadline
+                    throw e
                 } catch (e: EOFException) {
                     break // 对端关闭 = 流结束
                 }
                 when (msg.command) {
-                    A_OKAY -> Unit // OPEN 确认 / WRTE 的 ack
+                    A_OKAY -> {
+                        if (!gotAck) { gotAck = true; runCatching { transport.setReadTimeout(savedTimeout) } }
+                        Unit // OPEN 确认 / WRTE 的 ack
+                    }
                     A_WRTE -> {
+                        if (!gotAck) { gotAck = true; runCatching { transport.setReadTimeout(savedTimeout) } }
                         total += msg.data.size
                         val room = MAX_OUTPUT_BYTES - out.size()
                         if (room > 0) out.write(msg.data, 0, minOf(room, msg.data.size))
@@ -152,6 +176,7 @@ class AdbClient(
                         runCatching { write(AdbMessage(A_OKAY, localId, msg.arg0, ByteArray(0))) }
                     }
                     A_CLSE -> {
+                        gotAck = true
                         runCatching { write(AdbMessage(A_CLSE, localId, msg.arg0, ByteArray(0))) }
                         break
                     }
