@@ -257,17 +257,17 @@ object DevToolsClient {
      * query/hash 后缀仍是主 shell（同页面）。
      */
     fun isMainShellPage(page: DevToolsPage): Boolean =
-        parseAppAssetsUrl(page.url) { scheme, host, port, path ->
-            scheme == "https" && host == APPASSETS_HOST && port == 443 && path == "/assets/web/index.html"
+        parseUrlOrigin(page.url) { scheme, host, port, path ->
+            scheme == "https" && host == APPASSETS_HOST && port == 443 &&
+                path.equals("/assets/web/index.html", ignoreCase = true)
         } ?: true
 
-    /** appassets 域解析（scheme 小写 / host 小写去尾点 / 默认端口归一 443 / 路径解码）。 */
-    private inline fun <T> parseAppAssetsUrl(raw: String, judge: (scheme: String, host: String, port: Int, path: String) -> T): T? {
+    /** URL 解析（scheme/host 小写、默认端口归一 443、路径解码）。仅解析失败返回 null（调用方 fail-closed）。 */
+    private inline fun <T> parseUrlOrigin(raw: String, judge: (scheme: String, host: String, port: Int, path: String) -> T): T? {
         val uri = runCatching { URI(raw) }.getOrNull() ?: return null
         val scheme = uri.scheme?.lowercase() ?: return null
         val host = uri.host?.lowercase()?.trimEnd('.') ?: return null
-        if (host != APPASSETS_HOST) return null
-        val port = if (uri.port == -1) if (scheme == "https") 443 else -1 else uri.port
+        val port = if (uri.port == -1) (if (scheme == "https") 443 else -1) else uri.port
         val path = runCatching { URLDecoder.decode(uri.rawPath ?: "/", "UTF-8") }.getOrDefault(uri.rawPath ?: "/")
         return judge(scheme, host, port, path)
     }
@@ -285,12 +285,13 @@ object DevToolsClient {
      *   误注册 target）拒模型页面执行：eval/screenshot 同样可能触达桥或凭据。
      */
     fun isLocalStagedPage(page: DevToolsPage): Boolean =
-        parseAppAssetsUrl(page.url) { scheme, host, port, path ->
-            scheme == "https" && host == APPASSETS_HOST && port == 443 && path.startsWith("/local/")
+        parseUrlOrigin(page.url) { scheme, host, port, path ->
+            scheme == "https" && host == APPASSETS_HOST && port == 443 &&
+                path.startsWith("/local/", ignoreCase = true)
         } ?: false
 
     fun isAppAssetsPage(page: DevToolsPage): Boolean =
-        parseAppAssetsUrl(page.url) { scheme, host, _port, _path ->
+        parseUrlOrigin(page.url) { scheme, host, _port, _path ->
             scheme == "https" && host == APPASSETS_HOST
         } ?: true
 

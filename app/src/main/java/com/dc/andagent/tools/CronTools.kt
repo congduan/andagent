@@ -1,6 +1,7 @@
 package com.dc.andagent.tools
 
 import android.content.Context
+import com.dc.andagent.cron.CronA2ui
 import com.dc.andagent.cron.CronSchedule
 import com.dc.andagent.cron.CronScheduler
 import com.dc.andagent.cron.CronStore
@@ -14,7 +15,7 @@ import java.io.File
 
 class CronTool(private val context: Context, override val name: String) : Tool {
     override val description: String = when (name) {
-        "cron_create" -> "建立持久化定时任务。schedule 为 5 段 cron 或 daily 09:00、weekly mon 09:00、every 30m；script 的 payload 是已保存脚本名，shell 是命令，notify 是通知正文。"
+        "cron_create" -> "建立持久化定时任务。schedule 为 5 段 cron 或 daily 09:00、weekly mon 09:00、every 30m。kind=script 的 payload 是已保存脚本名，shell 是命令，notify 是通知正文，a2ui 是 ```a2ui 表单的 JSON spec（前台解锁时把表单渲染进对话，锁屏/后台则降级为通知，解锁后补渲染）。"
         "cron_list" -> "列出所有定时任务及上次/下次运行时间和结果摘要。"
         "cron_toggle" -> "暂停或恢复定时任务。"
         "cron_delete" -> "删除定时任务，须 confirm=true。"
@@ -22,7 +23,7 @@ class CronTool(private val context: Context, override val name: String) : Tool {
     }
     override val parameters = when (name) {
         "cron_create" -> schemaOf("name" to strParam("任务名称"), "schedule" to strParam("cron 或简写时间表"),
-            "kind" to strParam("script/shell/notify"), "payload" to strParam("脚本名/命令/通知正文"),
+            "kind" to strParam("script/shell/notify/a2ui"), "payload" to strParam("脚本名/命令/通知正文/a2ui JSON spec"),
             required = listOf("name", "schedule", "kind", "payload"))
         "cron_toggle" -> schemaOf("id" to strParam("任务 id"), "enabled" to boolParam("是否启用"), required = listOf("id", "enabled"))
         "cron_delete" -> schemaOf("id" to strParam("任务 id"), "confirm" to boolParam("确认删除"), required = listOf("id"))
@@ -41,8 +42,12 @@ class CronTool(private val context: Context, override val name: String) : Tool {
                 require(title.length <= 80 && payload.length <= 4000) {
                     tr("名称或 payload 过长", "name or payload is too long")
                 }
-                require(kind in setOf("script", "shell", "notify")) {
-                    tr("kind 只能为 script/shell/notify", "kind must be script/shell/notify")
+                require(kind in setOf("script", "shell", "notify", "a2ui")) {
+                    tr("kind 只能为 script/shell/notify/a2ui", "kind must be script/shell/notify/a2ui")
+                }
+                if (kind == "a2ui") {
+                    val invalid = CronA2ui.validateSpec(payload)
+                    require(invalid == null) { tr("a2ui 表单无效：$invalid", "invalid a2ui form: $invalid") }
                 }
                 val next = CronSchedule.parse(schedule).next(System.currentTimeMillis())
                 if (kind == "script") {

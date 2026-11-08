@@ -122,6 +122,10 @@ class AgentBridge(
     @Volatile
     private var released = false
 
+    // R105: publish the live bridge so a background CronWorker can flush an
+    // a2ui form into the WebView without holding an Activity reference here.
+    init { liveInstance = this }
+
     // R96 review 必修项：设置通道主帧能力凭证。@JavascriptInterface 会把
     // AndroidBridge 注入所有 iframe（canvas/HTML 卡片 sandbox opaque origin、
     // web_embed 跨源网页），键名白名单挡不住 iframe 直调。token 仅由 MainActivity
@@ -205,6 +209,24 @@ class AgentBridge(
             out
         }
         return JsonArray(list).toString()
+    }
+
+    /* ------------------- R105: cron a2ui form handoff ----------------- */
+
+    /** Signal the WebView to drain queued cron a2ui forms (idempotent). */
+    internal fun flushA2ui() {
+        emit(buildJsonObject { put("type", "a2ui.flush") })
+    }
+
+    /** JS-facing: drain queued a2ui fences as a JSON array of strings. */
+    @JavascriptInterface
+    fun consumeA2uiForms(): String {
+        val list = synchronized(a2uiQueue) {
+            val out = ArrayList(a2uiQueue)
+            a2uiQueue.clear()
+            out
+        }
+        return JsonArray(list.map { JsonPrimitive(it) }).toString()
     }
 
     @JavascriptInterface
@@ -1061,6 +1083,7 @@ class AgentBridge(
 
     fun shutdown() {
         released = true
+        if (liveInstance === this) liveInstance = null
         calls.values.forEach { it.cancel() }
         calls.clear()
         toolFutures.clear()
@@ -1120,6 +1143,27 @@ class AgentBridge(
             "host", "content-length", "connection", "transfer-encoding",
             "accept-encoding", "keep-alive", "upgrade", "proxy-connection",
         )
+
+        // R105: durable in-process queue of a2ui fences handed off from cron.
+        // Mirrors deeplinkQueue's durability (survives Activity recreation,
+        // drained on mount); WorkManager has no AgentBridge instance, so this
+        // lives in the companion. Consumed by JS via consumeA2uiForms().
+        private val a2uiQueue = java.util.ArrayDeque<String>()
+        @Volatile
+        private var liveInstance: AgentBridge? = null
+
+        /**
+         * CronWorker -> WebView handoff. Enqueue durably; when [flushNow] and a
+         * WebView is live, emit a flush immediately so a foreground form
+         * renders without a tap. All drains are idempotent (the queue clears).
+         */
+        fun pushA2uiForm(formJson: String, flushNow: Boolean) {
+            synchronized(a2uiQueue) {
+                a2uiQueue.addLast(formJson)
+                while (a2uiQueue.size > 20) a2uiQueue.removeFirst()
+            }
+            if (flushNow) liveInstance?.flushA2ui()
+        }
 
         // R96 review 必修项：128-bit 随机主帧凭证，hex 编码 32 字符。
         private val settingTokenRandom = SecureRandom()

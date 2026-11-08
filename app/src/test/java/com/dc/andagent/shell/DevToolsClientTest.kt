@@ -102,7 +102,10 @@ class DevToolsClientTest {
         assertTrue(DevToolsClient.canModelExecutePage(pages[2])) // service_worker target
         // 大小写变体与后缀变体同样按 appassets 域命中拦截。
         assertTrue(!DevToolsClient.canModelExecutePage(pages[0].copy(url = pages[0].url.uppercase())))
-        assertTrue(!DevToolsClient.canModelExecutePage(local.copy(url = local.url + "#x")))
+        // R96 review 三轮：卡片 iframe 已撤 allow-same-origin（opaque origin 读不到
+        // parent 凭证），/local/ 白名单按解析后语义放行——staged 页带 fragment 仍是
+        // 无桥页面，eval 不构成凭据风险（R101 闭环优先）。
+        assertTrue(DevToolsClient.canModelExecutePage(local.copy(url = local.url + "#x")))
     }
 
     @Test

@@ -73,8 +73,8 @@ android {
         applicationId = "com.dc.andagent"
         minSdk = 26
         targetSdk = 28
-        versionCode = 58
-        versionName = "0.29.0"
+        versionCode = 59
+        versionName = "0.30.0"
         // R101b: ABI 过滤——真机 99% 是 arm64；x86/x86_64 仅模拟器、armeabi-v7a
         // 是 32 位老设备（Termux bootstrap 本身也只内置 aarch64）。省 ~3.8MB。
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -87,12 +87,14 @@ android {
      * 不用于任何真实发布场景（正式发版请换成自己的 release keystore）。
      */
     signingConfigs {
+        // 用户钦定（2026-11-08）：使用本机 ~/.android/debug.keystore（指纹
+        // 2009f47f...，2026-10-17 生成）——与已分发的历史包升级链一致，
+        // 用户可覆盖安装不丢数据。仓库内置 andagent-dev.jks 弃用。
         create("dev") {
-            storeFile = file("keystore/andagent-dev.jks")
-            storePassword = "andagent-dev"
-            keyAlias = "andagent"
-            keyPassword = "andagent-dev"
-            storeType = "PKCS12"
+            storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
         }
     }
 

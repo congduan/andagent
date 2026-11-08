@@ -24,6 +24,7 @@ import { AgentEngine } from "./agent";
 import { createBackLayerManager } from "./backLayers";
 import {
   consumeDeeplink,
+  consumeA2uiForms,
   getAppVersion,
   exportConversation,
   hasBridge,
@@ -757,8 +758,12 @@ export default function App() {
       if (detail.auto) void engine.send(detail.prompt);
       else window.dispatchEvent(new CustomEvent("andagent:composer-fill", { detail: detail.prompt }));
     };
-    const drain = () => consumeDeeplink().forEach(handle);
-    window.addEventListener("andagent:deeplink-flush", drain);
+    const drainLinks = () => consumeDeeplink().forEach(handle);
+    // R105: cron a2ui forms are injected deterministically as an assistant
+    // message (no LLM round-trip). a2ui_submit still returns via composer-fill.
+    const drainForms = () => consumeA2uiForms().forEach((fence) => engine.appendA2uiForm(fence));
+    window.addEventListener("andagent:deeplink-flush", drainLinks);
+    window.addEventListener("andagent:a2ui-flush", drainForms);
     // R97 fixup: SSH 通知点击 → MainActivity 广播 andagent:session-switch → 切会话。
     const switchByEvent = (event: Event) => {
       const id = String((event as CustomEvent<string>).detail ?? "");
@@ -772,11 +777,12 @@ export default function App() {
       engine.cancelToolCall(String((event as CustomEvent<string>).detail ?? ""));
     };
     window.addEventListener("andagent:tool-cancel", cancelToolCard);
-    // Links received before the JS bundle mounted are queued by MainActivity.
-    const timer = window.setTimeout(drain, 250);
+    // Links/forms received before the JS bundle mounted are queued natively.
+    const timer = window.setTimeout(() => { drainLinks(); drainForms(); }, 250);
     return () => {
       window.clearTimeout(timer);
-      window.removeEventListener("andagent:deeplink-flush", drain);
+      window.removeEventListener("andagent:deeplink-flush", drainLinks);
+      window.removeEventListener("andagent:a2ui-flush", drainForms);
       window.removeEventListener("andagent:session-switch", switchByEvent);
       window.removeEventListener("andagent:tool-cancel", cancelToolCard);
     };

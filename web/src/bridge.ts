@@ -166,6 +166,8 @@ interface AndroidBridge {
   /** R53: 原生 KV 通道（kv_get/kv_set/... 六工具），同步返回工具结果 JSON。 */
   kvCall?(name: string, argsJson: string): string;
   consumeDeeplink(): string;
+  /** R105: drain queued cron a2ui fences as a JSON array of strings. */
+  consumeA2uiForms?(): string;
   openEmbeddedWebview(uri: string): string;
   dbGuiOpen(name: string): string;
   /** R91.5: SSH 凭据——只开原生界面 / 编辑 / 读元数据 / 删除，没有任何 secret 出口。 */
@@ -1052,6 +1054,12 @@ function handleEvent(payload: string): void {
     return;
   }
 
+  if (type === "a2ui.flush") {
+    // R105: cron a2ui form is queued natively; JS drains via consumeA2uiForms().
+    window.dispatchEvent(new Event("andagent:a2ui-flush"));
+    return;
+  }
+
   if (type === "tool.result") {
     const id = event.id as string;
     const pending = toolPending.get(id);
@@ -1380,6 +1388,17 @@ export function consumeDeeplink(): DeeplinkDetail[] {
     const parsed: unknown = JSON.parse(raw);
     const list = Array.isArray(parsed) ? parsed : [parsed];
     return (list as DeeplinkDetail[]).filter((d) => d && typeof d.prompt === "string" && d.prompt);
+  } catch {
+    return [];
+  }
+}
+
+/** R105: pull cron a2ui fences queued natively (covers forms arriving before mount). */
+export function consumeA2uiForms(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(bridge()?.consumeA2uiForms?.() ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((f): f is string => typeof f === "string" && f.length > 0);
   } catch {
     return [];
   }

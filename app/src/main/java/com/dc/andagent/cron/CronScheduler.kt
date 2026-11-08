@@ -1,7 +1,9 @@
 package com.dc.andagent.cron
 
 import android.Manifest
+import android.app.ActivityManager
 import android.app.AlarmManager
+import android.app.KeyguardManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -9,7 +11,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.os.Process
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -20,7 +24,10 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.dc.andagent.MainActivity
 import com.dc.andagent.R
+import com.dc.andagent.bridge.AgentBridge
+import com.dc.andagent.i18n.tr
 import com.dc.andagent.shell.TermuxEnv
 import com.dc.andagent.tools.ScriptFiles
 import com.dc.andagent.widget.data.WidgetToolRuntime
@@ -97,7 +104,7 @@ object CronScheduler {
         due.forEach { enqueue(context, it) }
     }
 
-    fun notify(context: Context, title: String, body: String, id: Int) {
+    fun notify(context: Context, title: String, body: String, id: Int, content: PendingIntent? = null) {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             throw SecurityException("通知权限未授予")
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -105,7 +112,24 @@ object CronScheduler {
         manager.notify(id, NotificationCompat.Builder(context, "cron")
             .setSmallIcon(R.drawable.ic_stat_andagent).setContentTitle(title)
             .setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setAutoCancel(true).build())
+            .setAutoCancel(true)
+            .apply { if (content != null) setContentIntent(content) }
+            .build())
+    }
+
+    /**
+     * R105: a2ui fallback. A summary plus a "点开填写" action whose content
+     * intent opens the app; on resume / mount the queued form is re-rendered
+     * into the conversation (see AgentBridge.pushA2uiForm).
+     */
+    fun notifyA2ui(context: Context, taskName: String, id: Int) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("andagent://a2ui"), context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val content = PendingIntent.getActivity(context, id, intent, flags)
+        notify(context, taskName,
+            tr("有新表单待填写，点开填写「$taskName」", "A form is waiting — tap to fill \"$taskName\""),
+            id, content)
     }
 }
 
@@ -124,6 +148,22 @@ class CronReceiver : BroadcastReceiver() {
 }
 
 class CronWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+
+    /**
+     * R105: foreground + lock state. getRunningAppProcesses only exposes our
+     * own process; IMPORTANCE_FOREGROUND is the no-permission foreground
+     * signal. isDeviceLocked covers secure lockscreen (minSdk 26).
+     */
+    private fun a2uiDeviceState(ctx: Context): Pair<Boolean, Boolean> {
+        val km = ctx.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val locked = km?.isDeviceLocked ?: false
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val foreground = am?.runningAppProcesses?.any {
+            it.pid == Process.myPid() && it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+        } ?: false
+        return foreground to locked
+    }
+
     override suspend fun doWork(): Result {
         val id = inputData.getString("id") ?: return Result.failure()
         val task = CronStore(applicationContext).list().find { it.id == id } ?: return Result.success()
@@ -142,6 +182,20 @@ class CronWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 "notify" -> {
                     CronScheduler.notify(applicationContext, task.name, task.payload, task.id.hashCode())
                     "通知已发送"
+                }
+                "a2ui" -> {
+                    val (foreground, locked) = a2uiDeviceState(applicationContext)
+                    val action = CronA2ui.resolve(foreground, locked)
+                    // Always enqueue durably; flush immediately only when a
+                    // WebView is live (foreground + unlocked). Otherwise the
+                    // notification brings the user back and onResume/mount
+                    // drains the queue to re-render the form.
+                    AgentBridge.pushA2uiForm(CronA2ui.toFence(task.payload),
+                        flushNow = action == CronA2uiAction.RENDER_FORM)
+                    if (action == CronA2uiAction.NOTIFY_FALLBACK) {
+                        CronScheduler.notifyA2ui(applicationContext, task.name, task.id.hashCode())
+                    }
+                    "a2ui 表单已投递（$action）"
                 }
                 else -> error("未知任务类型：${task.kind}")
             }

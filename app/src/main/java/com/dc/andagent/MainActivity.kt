@@ -779,7 +779,12 @@ class MainActivity : ComponentActivity() {
         handleDeeplink(intent)
     }
 
-    override fun onResume() { super.onResume(); if (::nfcSession.isInitialized) nfcSession.onResume() }
+    override fun onResume() {
+        super.onResume()
+        if (::nfcSession.isInitialized) nfcSession.onResume()
+        // R105: 解锁/回前台时补渲染待填的 cron a2ui 表单（幂等，消费后队列清空）。
+        if (::bridge.isInitialized) bridge.flushA2ui()
+    }
 
     /**
      * R39: 主题同步——WebView 在 applyTheme()/setTheme() 时经 bridge 回报
@@ -952,6 +957,12 @@ class MainActivity : ComponentActivity() {
                     null,
                 )
             }
+            return
+        }
+        // R105: cron a2ui 降级通知的「点开填写」动作。表单已在 durable 队列里，
+        // 此处只触发一次 flush，由 onResume/mount drain 幂等消费，避免重复注入。
+        if (data.host.equals("a2ui", true)) {
+            if (::bridge.isInitialized) bridge.flushA2ui()
             return
         }
         if (::bridge.isInitialized) bridge.queueDeeplink(data)

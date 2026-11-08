@@ -528,4 +528,95 @@ describe("A2uiCard", () => {
     expect(document.querySelector(".a2ui-error")).toBeTruthy();
     expect(screen.getByText("表单卡内容过大，无法显示")).toBeTruthy();
   });
+
+  // R105: prefill — cron/agent forms open with their initial values already set.
+  it("renders prefill as the initial value for all five components and submits them untouched", () => {
+    const { handler, stop } = captureFill();
+    const spec = {
+      title: "晨报",
+      fields: [
+        { type: "TEXT_INPUT", key: "weather", label: "天气", prefill: "晴 26℃" },
+        { type: "NUMBER_SLIDER", key: "focus", label: "专注分钟", min: 0, max: 60, step: 5, default: 10, prefill: 35 },
+        { type: "DATE_PICK", key: "date", label: "日期", prefill: "2026-11-08" },
+        { type: "CHOICE", key: "mood", label: "状态", options: ["在岗", "请假"], prefill: "在岗" },
+        { type: "SWITCH", key: "todo", label: "看待办", default: false, prefill: true },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect((screen.getByLabelText(/天气/) as HTMLInputElement).value).toBe("晴 26℃");
+    expect((screen.getByLabelText(/专注分钟/) as HTMLInputElement).value).toBe("35");
+    expect((screen.getByLabelText(/日期/) as HTMLInputElement).value).toBe("2026-11-08");
+    expect((screen.getByLabelText("在岗") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/看待办/) as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(screen.getByText("提交"));
+    const detail = JSON.parse(handler.mock.calls[0][0].detail as string);
+    expect(detail.a2ui_title).toBe("晨报");
+    expect(detail.a2ui_submit).toEqual({
+      weather: "晴 26℃",
+      focus: 35,
+      date: "2026-11-08",
+      mood: "在岗",
+      todo: true,
+    });
+    stop();
+  });
+
+  it("pre-checks several options for a multiple CHOICE with an array prefill", () => {
+    const { handler, stop } = captureFill();
+    const spec = {
+      fields: [
+        {
+          type: "CHOICE",
+          key: "schedule",
+          label: "今日日程",
+          multiple: true,
+          options: ["站会", "评审", "复盘"],
+          prefill: ["站会", "复盘"],
+        },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect((screen.getByLabelText("站会") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("评审") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText("复盘") as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByText("提交"));
+    const detail = JSON.parse(handler.mock.calls[0][0].detail as string);
+    expect(detail.a2ui_submit).toEqual({ schedule: ["站会", "复盘"] });
+    stop();
+  });
+
+  it("ignores prefill whose type does not match the component", () => {
+    const { handler, stop } = captureFill();
+    const spec = {
+      fields: [
+        { type: "TEXT_INPUT", key: "t", label: "文本", prefill: 42 },
+        { type: "NUMBER_SLIDER", key: "n", label: "数值", min: 0, max: 10, default: 3, prefill: "7" },
+        { type: "SWITCH", key: "s", label: "开关", default: false, prefill: "true" },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect((screen.getByLabelText(/文本/) as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText(/数值/) as HTMLInputElement).value).toBe("3");
+    expect((screen.getByLabelText(/开关/) as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(screen.getByText("提交"));
+    const detail = JSON.parse(handler.mock.calls[0][0].detail as string);
+    // Slider/Switch fall back to their default; the text field stays empty.
+    expect(detail.a2ui_submit).toEqual({ n: 3, s: false });
+    stop();
+  });
+
+  it("lets the user edit a prefilled value before submitting", () => {
+    const { handler, stop } = captureFill();
+    const spec = {
+      fields: [{ type: "TEXT_INPUT", key: "weather", label: "天气", prefill: "晴" }],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect((screen.getByLabelText(/天气/) as HTMLInputElement).value).toBe("晴");
+    fireEvent.change(screen.getByLabelText(/天气/), { target: { value: "小雨" } });
+    fireEvent.click(screen.getByText("提交"));
+    const detail = JSON.parse(handler.mock.calls[0][0].detail as string);
+    expect(detail.a2ui_submit).toEqual({ weather: "小雨" });
+    stop();
+  });
 });

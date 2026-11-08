@@ -123,6 +123,30 @@ function sliderValue(range: Extract<SliderRange, { ok: true }>, value: number): 
   return clampNumber(Number(snapped.toPrecision(12)), range.min, range.max);
 }
 
+// R105: cron-parameterized forms ship a `prefill` on value fields. Keep the
+// type contract strict (string/number/boolean matched to the component) so a
+// malformed spec can never seed a control with the wrong value type. Multiple
+// CHOICE carries an array of strings; every other type stays a scalar.
+function prefillOf(node: RawNode): unknown {
+  const p = node.prefill;
+  switch (text(node.type)) {
+    case "TEXT_INPUT":
+    case "DATE_PICK":
+      return typeof p === "string" ? p : undefined;
+    case "NUMBER_SLIDER":
+      return typeof p === "number" && Number.isFinite(p) ? p : undefined;
+    case "SWITCH":
+      return typeof p === "boolean" ? p : undefined;
+    case "CHOICE":
+      if (node.multiple === true) {
+        return Array.isArray(p) && p.every((v) => typeof v === "string") ? p : undefined;
+      }
+      return typeof p === "string" ? p : undefined;
+    default:
+      return undefined;
+  }
+}
+
 function isUnsafePattern(pattern: string): boolean {
   // Strip character classes and escape pairs, replacing each with a neutral
   // placeholder: `[+*]+` and `\+\+` are not nested quantifiers, and deleting
@@ -305,10 +329,23 @@ export function A2uiCard({ code }: { code: string }) {
     });
     return plan;
   }, [spec]);
-  // Prototype-less: a field keyed "toString"/"valueOf"/"constructor" (only
-  // "constructor"/"prototype"/"__proto__" are rejected as reserved) must read
-  // back as undefined, not as an inherited function.
-  const [values, setValues] = useState<Record<string, unknown>>(() => Object.create(null));
+  // R105: seed value fields from their `prefill` so cron/agent forms open
+  // pre-filled. Only visible value fields (the ROW/COLUMN walk) are seeded,
+  // mirroring exactly which fields submit collects. Prototype-less so a key
+  // like "toString" reads back undefined rather than an inherited function.
+  const initialValues = useMemo(() => {
+    const init: Record<string, unknown> = Object.create(null);
+    if (!spec.ok) return init;
+    walkValues(spec.fields, 1, (node) => {
+      if (!VALUE_TYPES.has(text(node.type))) return;
+      const key = text(node.key);
+      if (!key) return;
+      const value = prefillOf(node);
+      if (value !== undefined) init[key] = value;
+    });
+    return init;
+  }, [spec]);
+  const [values, setValues] = useState<Record<string, unknown>>(() => initialValues);
   const [errors, setErrors] = useState<Record<string, string>>(() => Object.create(null));
   const [submitted, setSubmitted] = useState<string | null>(null);
   // 折叠状态必须在所有条件 return 之前声明（React hooks 顺序恒定）。
