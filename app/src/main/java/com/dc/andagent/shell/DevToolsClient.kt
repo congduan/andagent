@@ -221,7 +221,13 @@ object DevToolsClient {
      * 无凭证页面；selectTarget 缺省目标也不会再选中主 shell。
      */
     fun listPages(): List<DevToolsPage> {
-        socketName?.let { cached -> runCatching { return filterMainShellPages(fetchPages(cached)) } }
+        socketName?.let { cached ->
+            val cachedPages = runCatching { filterMainShellPages(fetchPages(cached)) }.getOrNull()
+            if (cachedPages != null && cachedPages.isNotEmpty()) return cachedPages
+            // 缓存 socket 返回空（WebView 全销毁后 socket 复活/切换）或失效：清缓存
+            // 落到下方全候选扫描自愈，避免死缓存永远返回「无可调试页面」。
+            socketName = null
+        }
         val candidates = runCatching { socketCandidates() }.getOrElse { emptyList() }
         val errors = mutableListOf<String>()
         for (candidate in candidates) {
@@ -653,6 +659,11 @@ fun devtoolsStatusJson(context: Context): String {
                 },
             ),
         )
+        // 空列表给可操作引导：主 shell 页被安全过滤是设计行为，模型需要先
+        // web_embed 打开一个页面才有可调试 target。
+        if (pages.getOrDefault(emptyList()).isEmpty() && !pages.isFailure) {
+            put("hint", "列表为空是因为主 shell 页面被安全过滤（不可调试）。请先用 web_embed 打开你要调试的 HTML 页面，再调用 devtools_* 工具。")
+        }
     }.toString()
 }
 
