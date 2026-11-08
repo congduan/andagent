@@ -48,8 +48,73 @@ class DevToolsClientTest {
         assertEquals("https://appassets.androidplatform.net/assets/web/index.html", first.url)
         assertTrue(first.webSocketDebuggerUrl.endsWith("/devtools/page/A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4"))
         // 非 page 的 target 保留，由 agent 自行选择（DB GUI/嵌入页等场景）。
+
+        // R96 review 必修项1：主 shell 页面（持有 __kvSettingToken 的主帧）必须被
+        // isMainShellPage 判定命中——listPages 出口据此过滤，模型 devtools_eval
+        // 触不到主帧。fixture 首个 target 即主 shell URL。
+        assertTrue(DevToolsClient.isMainShellPage(first))
+    }
+
+    @Test
+    fun mainShellPageFilterDropsShellButKeepsEmbeddedAndLocalPages() {
+        val pages = parseDevToolsPages(jsonBody)
+        // shell 页被判定，web_embed 的 /local/ 路由页与外部 https 页不被判定。
+        val localEmbed = pages[0].copy(
+            id = "LOCAL1",
+            url = "https://appassets.androidplatform.net/local/page_123.html",
+            title = "本地生成页",
+        )
+        assertTrue(DevToolsClient.isMainShellPage(pages[0]))
+        assertTrue(!DevToolsClient.isMainShellPage(localEmbed))
+        assertTrue(!DevToolsClient.isMainShellPage(pages[1])) // https://example.com/
+        assertTrue(!DevToolsClient.isMainShellPage(pages[2])) // service_worker
+        // 大小写变体也命中（URL scheme/host 大小写不敏感语义）。
+        assertTrue(DevToolsClient.isMainShellPage(pages[0].copy(url = pages[0].url.uppercase())))
         assertEquals("service_worker", pages[2].type)
         assertEquals("https://example.com/sw.js", pages[2].url)
+    }
+
+    @Test
+    fun mainShellPageJudgeIgnoresFragmentAndQuerySuffix() {
+        val pages = parseDevToolsPages(jsonBody)
+        val shell = pages[0]
+        // R96 review 二轮建议项2：SPA 无路由，但 WebView 回报的 URL 可能带 query
+        // 或 fragment 后缀——判定必须仍命中，否则过滤漏主 shell。
+        assertTrue(DevToolsClient.isMainShellPage(shell.copy(url = shell.url + "#/settings")))
+        assertTrue(DevToolsClient.isMainShellPage(shell.copy(url = shell.url + "?reload=1")))
+        assertTrue(DevToolsClient.isMainShellPage(shell.copy(url = shell.url + "?reload=1#top")))
+        // 反向：/assets/ 下其他路径不是主 shell。
+        assertTrue(!DevToolsClient.isMainShellPage(shell.copy(url = "https://appassets.androidplatform.net/assets/dbgui/index.html")))
+    }
+
+    @Test
+    fun modelExecuteWhitelistBlocksAppAssetsButKeepsLocalAndExternal() {
+        val pages = parseDevToolsPages(jsonBody)
+        val local = pages[0].copy(id = "L", url = "https://appassets.androidplatform.net/local/page_42.html")
+        val dbgui = pages[0].copy(id = "D", url = "https://appassets.androidplatform.net/assets/dbgui/index.html")
+        // R96 review 二轮必修项1：appassets 域除 /local/ 外全部拒绝模型页面执行
+        //（主 shell 持 token、dbgui 挂特权桥）；/local/ 暂存页无桥放行（R101 闭环）；
+        // 外部页照常。
+        assertTrue(!DevToolsClient.canModelExecutePage(pages[0])) // 主 shell
+        assertTrue(!DevToolsClient.canModelExecutePage(dbgui))
+        assertTrue(DevToolsClient.canModelExecutePage(local))
+        assertTrue(DevToolsClient.canModelExecutePage(pages[1])) // 外部 https
+        assertTrue(DevToolsClient.canModelExecutePage(pages[2])) // service_worker target
+        // 大小写变体与后缀变体同样按 appassets 域命中拦截。
+        assertTrue(!DevToolsClient.canModelExecutePage(pages[0].copy(url = pages[0].url.uppercase())))
+        assertTrue(!DevToolsClient.canModelExecutePage(local.copy(url = local.url + "#x")))
+    }
+
+    @Test
+    fun localStagedPageDetectsLocalRouteOnly() {
+        val pages = parseDevToolsPages(jsonBody)
+        val local = pages[0].copy(id = "L", url = "https://appassets.androidplatform.net/local/page_42.html")
+        assertTrue(DevToolsClient.isLocalStagedPage(local))
+        assertTrue(DevToolsClient.isLocalStagedPage(local.copy(url = local.url.uppercase())))
+        assertTrue(!DevToolsClient.isLocalStagedPage(pages[0])) // 主 shell 不是 /local/
+        assertTrue(!DevToolsClient.isLocalStagedPage(pages[1]))
+        // 伪造前缀变体不命中（防止 example.com?x=https://appassets.../local/ 之类绕过）。
+        assertTrue(!DevToolsClient.isLocalStagedPage(pages[1].copy(url = "https://example.com/?u=https://appassets.androidplatform.net/local/a.html")))
     }
 
     @Test

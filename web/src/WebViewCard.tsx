@@ -55,7 +55,22 @@ export function WebViewCard({ uri, local }: { uri: string; local?: boolean }) {
   }
 
   if (!allowed) return <div className="webview-card"><div className="webview-uri"><Icon name="globe" size={13} /> {uri}</div><div className="webview-error">{t("httpsOnly")}</div></div>;
-
+  // R96 review 二轮必修项1：appassets 同源页禁止进卡片 iframe。该域与主 shell
+  // 同源，iframe 带 allow-same-origin 时内部脚本可读 parent.__kvSettingToken
+  // （设置通道主帧凭证）并继承 AndroidBridge 直调 kvSettingCall 读取 secure KV
+  //（含 API key）——凭据永不过模型铁律。本地 HTML 展示请用 local=true 的
+  // 原生内嵌 WebView（无 AndroidBridge，且 DevTools eval 已被安全策略拦）。
+  if (/^https:\/\/appassets\.androidplatform\.net\//i.test(uri)) {
+    return (
+      <div className="webview-card">
+        <div className="webview-bar">
+          <span className="webview-uri"><Icon name="globe" size={13} /> {uri}</span>
+          <button type="button" onClick={openExternal} title={t("openExternal")}>{t("externalWindow")}</button>
+        </div>
+        <div className="webview-error">{t("appassetsEmbedBlocked")}</div>
+      </div>
+    );
+  }
   return (
     <div className={`webview-card${fullscreen ? " fullscreen" : ""}`}>
       <div className="webview-bar">

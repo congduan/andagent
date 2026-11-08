@@ -46,4 +46,25 @@ describe("R96 kvSettingCall 主帧凭证", () => {
     await expect(kvSettingCall("kv_get")).resolves.toBeUndefined();
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it("④token 轮换：旧 token 调用被原生拒（ERROR→undefined），换新 token 后同一调用成功", async () => {
+    vi.useFakeTimers();
+    const fn = vi.fn((_name: string, raw: string) => {
+      const tok = (JSON.parse(raw) as { __token?: string }).__token;
+      // 模拟原生侧：只有当前有效 token 通过，其余恒定时间比对失败。
+      return tok === "tok-v2"
+        ? JSON.stringify({ found: true, value: "ok" })
+        : "ERROR: 设置通道凭证无效";
+    });
+    window.AndroidBridge = { kvSettingCall: fn } as unknown as Bridge;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    (window as unknown as { __kvSettingToken?: string }).__kvSettingToken = "tok-v1";
+    // 旧 token：原生拒绝 → undefined，不抛异常。
+    await expect(kvSettingCall("kv_get", { namespace: "secure", key: "engines" })).resolves.toBeUndefined();
+    // 页面重新加载（onPageFinished）轮换 token 后恢复可用。
+    (window as unknown as { __kvSettingToken?: string }).__kvSettingToken = "tok-v2";
+    await expect(kvSettingCall<{ found: boolean; value: string }>("kv_get", { namespace: "secure", key: "engines" }))
+      .resolves.toEqual({ found: true, value: "ok" });
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
 });

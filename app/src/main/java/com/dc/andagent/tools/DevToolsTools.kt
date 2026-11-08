@@ -75,6 +75,13 @@ class DevToolsTool(private val context: Context, override val name: String) : To
     private suspend fun eval(args: JsonObject): String {
         val js = args.strArg("js") ?: error("缺少 js")
         val page = DevToolsClient.resolvePage(args.strArg("page"))
+        // R96 review 二轮必修项1：appassets 域页面按白名单拦模型注入——主 shell
+        //（持有 __kvSettingToken）与 dbgui（挂 DbGuiBridge）一律拒；/local/ 暂存页
+        // 跑在无桥的独立 WebView，放行以保住 R101 网页开发闭环。同源 iframe 通道
+        // 已在 WebViewCard 封死（appassets 域拒绝进卡片）。
+        if (!DevToolsClient.canModelExecutePage(page)) {
+            error("安全策略：禁止在 app 内部页面（${page.url.take(120)}）执行模型提供的 JS——该上下文可访问应用凭据或特权桥。本地网页（/local/）不受限。")
+        }
         val resp = DevToolsClient.evaluate(page, js)
         val result = resp["result"] as? JsonObject
         val exception = result?.get("exceptionDetails") as? JsonObject
@@ -169,6 +176,11 @@ class DevToolsTool(private val context: Context, override val name: String) : To
 
     private suspend fun screenshot(args: JsonObject): String {
         val page = DevToolsClient.resolvePage(args.strArg("page"))
+        // R96 review 二轮必修项1：与 eval 同口径——不向模型回传 app 内部同源页画面
+        // （截屏可包含设置页渲染的密钥/凭据内容）。
+        if (!DevToolsClient.canModelExecutePage(page)) {
+            error("安全策略：禁止截取 app 内部同源页面（${page.url.take(120)}）——画面可能包含应用凭据。")
+        }
         val base64 = DevToolsClient.captureScreenshot(page)
         val shot = Json.parseToJsonElement(devtoolsScreenshotJson(context, base64)).jsonObject
         return buildJsonObject {

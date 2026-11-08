@@ -66,6 +66,9 @@ data class ConsoleEntry(
 private fun JsonObject.str(key: String): String? =
     this[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
 
+/** 主 WebView 的 shell 页面 URL（与 MainActivity.SHELL_ORIGIN 加载地址一致）。 */
+private val MAIN_SHELL_URL = "https://appassets.androidplatform.net/assets/web/index.html"
+
 /** 解析 /json 响应。保留全部 target 类型（page/service_worker 等）由 agent 自行选择。 */
 fun parseDevToolsPages(body: String): List<DevToolsPage> {
     val arr = runCatching { Json.parseToJsonElement(body) }.getOrNull() as? JsonArray
@@ -204,14 +207,22 @@ object DevToolsClient {
             }
             .toList()
 
-    /** GET /json。成功后缓存 socket 名；全部失败时错误串带 /proc/net/unix 线索。 */
+    /**
+     * GET /json。成功后缓存 socket 名；全部失败时错误串带 /proc/net/unix 线索。
+     * R96 review 必修项1：过滤主 shell 页面（appassets.androidplatform.net/assets/web/index.html）。
+     * 该页面主帧 window 持有设置通道凭证 __kvSettingToken（onPageFinished 注入），
+     * 若暴露给 devtools_eval，模型可在主帧执行任意 JS 读 token 并直调
+     * AndroidBridge.kvSettingCall 读 secure/engines（含 CSE API key）——违反
+     * 「凭据永不过模型」铁律。过滤后模型工具通道只触达 web_embed / dbgui 等
+     * 无凭证页面；resolvePage 缺省「第一个 page target」也不会再选中主 shell。
+     */
     fun listPages(): List<DevToolsPage> {
-        socketName?.let { cached -> runCatching { return fetchPages(cached) } }
+        socketName?.let { cached -> runCatching { return filterMainShellPages(fetchPages(cached)) } }
         val candidates = runCatching { socketCandidates() }.getOrElse { emptyList() }
         val errors = mutableListOf<String>()
         for (candidate in candidates) {
             try {
-                return fetchPages(candidate).also { socketName = candidate }
+                return filterMainShellPages(fetchPages(candidate)).also { socketName = candidate }
             } catch (e: Exception) {
                 android.util.Log.e("DevToolsClient", "连接 $candidate 失败", e)
                 val top = e.stackTrace.firstOrNull()
@@ -228,6 +239,41 @@ object DevToolsClient {
                 if (errors.isNotEmpty()) " 详情: ${errors.joinToString("; ").take(400)}" else "",
         )
     }
+
+    /**
+     * R96 review 必修项1：主 shell 页面判定。URL 精确匹配 /assets/web/index.html
+     * （MainActivity SHELL_ORIGIN 唯一加载入口；SPA 无 hash/query 路由，URL 恒定）；
+     * web_embed 本地页走 /local/ 路由、远程页走外部 https，均不受影响。过滤放在
+     * listPages 出口，resolvePage/devtools_status/eval/console/errors/screenshot
+     * 全部消费同一份列表。
+     */
+    fun isMainShellPage(page: DevToolsPage): Boolean =
+        page.url.equals(MAIN_SHELL_URL, ignoreCase = true)
+
+    /**
+     * R96 review 二轮必修项1（纵深防御）：
+     * - /local/ 暂存页的真实载体是「无 AndroidBridge 的原生内嵌 WebView」（桥只挂
+     *   主 webView；嵌入浏览器不注入 token），eval 上下文够不到主帧与凭据——因此
+     *   /local/ 放行，保住 R101「生成→嵌入→devtools_eval 验证 DOM」闭环。
+     *   危险通道是对话卡片 iframe（WebViewCard 允许任意 https src 且带
+     *   allow-same-origin）：模型把 appassets URL 当普通网页嵌入，同源 iframe 可读
+     *   parent.__kvSettingToken 并继承 AndroidBridge 直调 kvSettingCall——该路径
+     *   已在 web 层 WebViewCard 封死（appassets 域拒绝进卡片 iframe）。
+     * - appassets 域其余页面（主 shell / /assets/dbgui/ 挂 DbGuiBridge / 资产物
+     *   误注册 target）拒模型页面执行：eval/screenshot 同样可能触达桥或凭据。
+     */
+    fun isLocalStagedPage(page: DevToolsPage): Boolean =
+        page.url.startsWith("https://appassets.androidplatform.net/local/", ignoreCase = true)
+
+    fun isAppAssetsPage(page: DevToolsPage): Boolean =
+        page.url.startsWith("https://appassets.androidplatform.net/", ignoreCase = true)
+
+    /** devtools_eval / screenshot 等页面级执行白名单：非 appassets 页 + /local/ 暂存页。 */
+    fun canModelExecutePage(page: DevToolsPage): Boolean =
+        !isAppAssetsPage(page) || isLocalStagedPage(page)
+
+    private fun filterMainShellPages(pages: List<DevToolsPage>): List<DevToolsPage> =
+        pages.filterNot { isMainShellPage(it) }
 
     private fun fetchPages(name: String): List<DevToolsPage> {
         val request = Request.Builder()

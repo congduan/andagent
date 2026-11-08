@@ -147,10 +147,18 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   const [external, setExternal] = useState<ExternalStateStatus>(() => externalStateStatus());
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  // R96: 自定义搜索引擎（KV namespace=search_engines，单键存 JSON 数组）。null = KV 读取失败，禁止保存防覆盖。
-  const [engines, setEngines] = useState<SearchEngine[] | null>([]);
+  // R96: 自定义搜索引擎（KV namespace=search_engines，单键存 JSON 数组）。
+  // R96 review 必修项2：三态——undefined = 加载中（禁编辑禁保存，防把已有配置
+  // 覆盖成空数组）；null = KV 读取失败/含无效条目（禁保存防覆盖）；数组 = 就绪。
+  const [engines, setEngines] = useState<SearchEngine[] | null | undefined>(undefined);
   const [searchDraft, setSearchDraft] = useState({ name: "", urlTemplate: "" });
   const [searchPreset, setSearchPreset] = useState("");
+  // R96 review 必修项2：加载/保存互斥旗标（ref 防 await 间隙双击重复提交）。
+  const savingRef = useRef(false);
+  // R96 review 建议项3：刷新动作句柄（effect 内注册，离开页面置 null）。
+  const searchRefreshRef = useRef<(() => Promise<void>) | null>(null);
+  // R96 review 二轮建议项1：读取请求序号——只有最新请求的结果才写回。
+  const searchSeqRef = useRef(0);
   const bridgeOk = hasKvBridge();
 
   // R63: 子页按需惰性加载（进入页面才拉数据，替代旧版全量 useState 平铺）。
@@ -172,13 +180,30 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     if (page === "data" && hasBridge()) { setShizuku(getShizukuStatus()); setTermuxStatus(getTermuxStatus()); setProjection(getProjectionStatus()); setDevtools(hasBridge() ? getDevToolsStatus() : null); }
     if (page === "storage") setExternal(externalStateStatus());
     if (page === "search") {
-      void (async () => {
+      // R96 review 二轮建议项1：进入页面先重置加载态（清掉上一次会话残留的
+      // 数组/null），读取与刷新统一走队列（串行 + 最新请求覆盖旧请求），
+      // 快速进出页面/连点刷新时旧 promise 不会乱序写回。
+      setEngines(undefined);
+      searchSeqRef.current += 1;
+      const seq = searchSeqRef.current;
+      const runLoad = async () => {
         const list = await loadSearchEngines();
-        if (!cancelled) setEngines(list);
-      })();
+        if (!cancelled && seq === searchSeqRef.current) setEngines(list);
+      };
+      void runLoad();
+      // R96 review 建议项3：刷新按钮 async 化——刷新与首次加载共享同一个
+      // cancelled 标志（cleanup 统一置 true），页面切走后旧 promise 不再写入。
+      searchRefreshRef.current = async () => {
+        searchSeqRef.current += 1;
+        const mySeq = searchSeqRef.current;
+        // 刷新开始即回加载态：列表隐藏、编辑/保存挂起，避免刷新期间保存旧列表。
+        setEngines(undefined);
+        const list = await loadSearchEngines();
+        if (!cancelled && mySeq === searchSeqRef.current) setEngines(list);
+      };
     }
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
-    return () => { cancelled = true; };
+    return () => { cancelled = true; searchRefreshRef.current = null; };
   }, [page]);
 
   // 原生录入 / 编辑界面返回后自动刷新元数据列表（两侧不共享状态）。
@@ -196,7 +221,9 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
 
   // R96: 引擎列表就地编辑、默认标记、新增与整体保存。
   const updateEngine = (index: number, patch: Partial<SearchEngine>) =>
-    setEngines(prev => (prev ?? []).map((e, i) => i === index ? { ...e, ...patch } : e));
+    // R96 review 二轮必修项2：非就绪态（undefined/null）不产生编辑——防 null 态
+    // 下 update 把 null 规整为数组、保存按钮随之点亮覆盖未知配置。
+    setEngines(prev => (Array.isArray(prev) ? prev.map((e, i) => i === index ? { ...e, ...patch } : e) : prev));
   const setEngineDefault = (index: number) =>
     setEngines(prev => (prev ?? []).map((e, i) => ({ ...e, isDefault: i === index })));
   const removeEngine = (index: number) => setEngines(prev => (prev ?? []).filter((_, i) => i !== index));
@@ -206,6 +233,10 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     if (p) setSearchDraft({ name: p.name, urlTemplate: p.urlTemplate });
   };
   const addSearchEngine = () => {
+    // R96 review 二轮必修项2：null（读取失败，配置状态未知）下禁止新增——否则
+    // prev ?? [] 规整出新数组，保存会把未知配置覆盖成 [新引擎]。与 undefined
+    // 同口径，只有「键不存在→[]」或「读到有效数组」才开放编辑。
+    if (!bridgeOk || !Array.isArray(engines)) return;
     const name = searchDraft.name.trim();
     const urlTemplate = searchDraft.urlTemplate.trim();
     if (!name) { showError(t("searchNeedName")); return; }
@@ -216,22 +247,36 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     setSearchPreset("");
   };
   const persistSearchEngines = async () => {
-    // R96 review 必修项3：engines === null 表示 KV 读取失败（配置状态未知），
-    // 此时保存会把未知状态覆盖成空数组——直接拒绝并提示刷新。
-    if (!bridgeOk || engines === null) return;
-    for (const e of engines) {
-      if (!e.name.trim()) { showError(t("searchNeedName")); return; }
-      const err = validateSearchTemplate(e.urlTemplate.trim());
-      if (err) { showError(`${e.name}: ${t(err)}`); return; }
+    // R96 review 必修项2：undefined（加载中）与 null（读取失败/含无效条目）都拒绝
+    // 保存——此时写入会把未知状态覆盖掉。保存期间也挂起重复提交（savingRef）。
+    if (!bridgeOk || engines == null) return;
+    if (savingRef.current) return;
+    savingRef.current = true;
+    try {
+      for (const e of engines) {
+        if (!e.name.trim()) { showError(t("searchNeedName")); return; }
+        const err = validateSearchTemplate(e.urlTemplate.trim());
+        if (err) { showError(`${e.name}: ${t(err)}`); return; }
+      }
+      // R96 review 建议项2：名称重复（忽略大小写）拒绝保存——native 端按忽略
+      // 大小写取首个命中，重名会让 engine 参数指向不确定的引擎。
+      const seen = new Set<string>();
+      for (const e of engines) {
+        const key = e.name.trim().toLowerCase();
+        if (seen.has(key)) { showError(t("searchDupName", { name: e.name.trim() })); return; }
+        seen.add(key);
+      }
+      let seenDefault = false;
+      const normalized: SearchEngine[] = engines.map(e => {
+        const isDefault = e.enabled && e.isDefault && !seenDefault;
+        if (isDefault) seenDefault = true;
+        return { ...e, name: e.name.trim(), urlTemplate: e.urlTemplate.trim(), isDefault };
+      });
+      if (await saveSearchEngines(normalized)) { setEngines(normalized); showSuccess(t("saved")); }
+      else showError(t("modelSaveFailed"));
+    } finally {
+      savingRef.current = false;
     }
-    let seenDefault = false;
-    const normalized: SearchEngine[] = (engines ?? []).map(e => {
-      const isDefault = e.enabled && e.isDefault && !seenDefault;
-      if (isDefault) seenDefault = true;
-      return { ...e, name: e.name.trim(), urlTemplate: e.urlTemplate.trim(), isDefault };
-    });
-    if (await saveSearchEngines(normalized)) { setEngines(normalized); showSuccess(t("saved")); }
-    else showError(t("modelSaveFailed"));
   };
 
   // 桥调用是同步阻塞的：先把「搜索中 / 安装中」画出来再发起请求，否则按钮毫无反馈。
@@ -827,12 +872,16 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   );
 
   // ===== 搜索引擎（R96：自定义 web_search 引擎，存 KV secure/engines——模板可能含密钥，走加密命名空间）=====
+  // R96 review 必修项2：undefined = KV 读取中（禁编辑/新增/保存，防把已有配置覆盖成空数组）。
+  const searchLoading = engines === undefined;
   const searchPage = sub(t("searchEngines"), <>
     {!bridgeOk && <div className="settings-alert"><span>{t("searchAppOnly")}</span></div>}
     {bridgeOk && engines === null && <div className="settings-alert"><span>{t("searchLoadFailed")}</span></div>}
     <p className="settings-page-note">{t("searchPrivacyNote")}</p>
     <p className="settings-page-note">{t("searchFallbackNote")}</p>
-    {section(`${t("searchEngineList")} (${(engines ?? []).length})`, <>
+    {searchLoading
+      ? <p className="settings-empty">{t("searchLoading")}</p>
+      : section(`${t("searchEngineList")} (${(engines ?? []).length})`, <>
       {(engines ?? []).length === 0
         ? <p className="settings-empty">{t("searchEmpty")}</p>
         : <div className="settings-list">
@@ -862,7 +911,9 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
             ))}
           </div>}
     </>)}
-    {section(t("searchAddTitle"), <>
+    {/* R96 review 二轮必修项2：null（读取失败）与 undefined（加载中）同口径——
+        新增表单不渲染，防把未知配置规整成 [新引擎] 后保存覆盖。 */}
+    {Array.isArray(engines) && section(t("searchAddTitle"), <>
       <label className="field"><span>{t("searchPresetLabel")}</span>
         <select value={searchPreset} onChange={ev => applySearchPreset(ev.target.value)}>
           <option value="">{t("searchPresetChoose")}</option>
@@ -881,10 +932,10 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
       {searchPreset === "googlecse" && <p className="settings-card-note">{t("searchGoogleCseNote")}</p>}
       <div className="settings-card-actions">
         <button type="button" className="btn-primary" onClick={addSearchEngine}>{t("searchAdd")}</button>
-        <button type="button" className="btn-ghost" onClick={async () => { setEngines(await loadSearchEngines()); }}>{t("refresh")}</button>
+        <button type="button" className="btn-ghost" onClick={() => void searchRefreshRef.current?.()}>{t("refresh")}</button>
       </div>
     </>)}
-  </>, <button type="button" className="btn-primary" disabled={!bridgeOk || engines === null} onClick={persistSearchEngines}>{t("save")}</button>);
+  </>, <button type="button" className="btn-primary" disabled={!bridgeOk || engines == null} onClick={persistSearchEngines}>{t("save")}</button>);
 
   const subPages: Record<SettingsPage, React.ReactNode> = {
     home: null, model: modelPage, prompt: promptPage, appearance: appearancePage, memory: memoryPage,
