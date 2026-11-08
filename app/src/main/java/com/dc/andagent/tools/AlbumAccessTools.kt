@@ -2,7 +2,9 @@ package com.dc.andagent.tools
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.ExifInterface
 import android.net.Uri
 import android.provider.MediaStore
 import kotlinx.serialization.json.JsonObject
@@ -11,6 +13,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.JsonPrimitive
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
 
@@ -99,18 +102,40 @@ class AlbumPhotosTool(private val context: Context) : Tool {
         }.toString()
     }
 
-    /** Downsample + JPEG-compress a thumbnail (~10-40KB at 320px). */
+    /**
+     * Downsample + JPEG-compress a thumbnail (~10-40KB at 320px).
+     * EXIF 转正：相机竖拍照片的像素是横向存储的（orientation 5..8 交换宽高），
+     * 不转正则预览旋转 90° 且宽高比颠倒。复用 ImageEditEngine 的转正矩阵语义。
+     */
     private fun decodeThumbnail(uri: Uri, maxPx: Int): String? = runCatching {
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sample = 1
         while (max(bounds.outWidth, bounds.outHeight) / sample > maxPx * 2) sample *= 2
-        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-        val bmp = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
             ?: return null
+        val orientation = runCatching {
+            ExifInterface(ByteArrayInputStream(bytes))
+                .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        }.getOrDefault(1)
+        val upright = if (orientation in 2..8) {
+            val matrix = android.graphics.Matrix()
+            when (orientation) {
+                2 -> matrix.setScale(-1f, 1f)
+                3 -> matrix.setRotate(180f)
+                4 -> matrix.setScale(1f, -1f)
+                5 -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }
+                6 -> matrix.setRotate(90f)
+                7 -> { matrix.setRotate(270f); matrix.postScale(-1f, 1f) }
+                8 -> matrix.setRotate(270f)
+            }
+            Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true).also { if (it !== bmp) bmp.recycle() }
+        } else bmp
         val out = ByteArrayOutputStream()
-        bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
-        bmp.recycle()
+        upright.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, out)
+        upright.recycle()
         android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
     }.getOrNull()
 }

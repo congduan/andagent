@@ -2,7 +2,9 @@ package com.dc.andagent
 
 import android.Manifest
 import android.app.Dialog
+import android.graphics.Bitmap
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.FrameLayout
 import android.nfc.NfcAdapter
@@ -165,6 +167,13 @@ import com.dc.andagent.widget.WidgetSaveAndPinTool
 import com.dc.andagent.tools.PhoneCallTool
 import com.dc.andagent.tools.SmsSendTool
 import com.dc.andagent.tools.StepsTodayTool
+import com.dc.andagent.tools.ExerciseSessionTool
+import com.dc.andagent.tools.HeartRateTool
+import com.dc.andagent.tools.HealthWeeklyReportTool
+import com.dc.andagent.tools.NutritionTool
+import com.dc.andagent.tools.OxygenSaturationTool
+import com.dc.andagent.tools.SleepTool
+import com.dc.andagent.tools.WeightTool
 import com.dc.andagent.tools.StorageScanTool
 import com.dc.andagent.tools.TimerSetTool
 import com.dc.andagent.widget.data.WidgetToolRuntime
@@ -194,6 +203,10 @@ import com.dc.andagent.tools.DiscoveryTool
 import com.dc.andagent.tools.DISCOVERY_TOOLS
 import com.dc.andagent.tools.DEVTOOLS_TOOLS
 import com.dc.andagent.tools.WifiInfoTool
+import com.dc.andagent.tools.WifiEasyConnectTool
+import com.dc.andagent.tools.WifiDirectTool
+import com.dc.andagent.tools.WifiRttTool
+import com.dc.andagent.tools.WIFI_EXT_TOOLS
 import com.dc.andagent.tools.R35Tool
 import com.dc.andagent.tools.R35_TOOLS
 import com.dc.andagent.tools.HardwareStatusTool
@@ -204,6 +217,8 @@ import com.dc.andagent.tools.VpnTool
 import com.dc.andagent.tools.VPN_TOOLS
 import com.dc.andagent.tools.CellularTool
 import com.dc.andagent.tools.CELLULAR_TOOLS
+import com.dc.andagent.tools.EsimTool
+import com.dc.andagent.tools.ESIM_TOOLS
 import com.dc.andagent.tools.AndroidReflectTool
 import com.dc.andagent.tools.RestrictedReflectExecutor
 import com.dc.andagent.tools.ApiToolFactory
@@ -232,6 +247,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var bridge: AgentBridge
     private lateinit var skillRegistry: com.dc.andagent.tools.SkillRegistry
     private lateinit var mcpRegistry: com.dc.andagent.tools.McpRegistry
+    private lateinit var selfExtManager: com.dc.andagent.tools.SelfExtManager
     private lateinit var permissionBroker: PermissionBroker
 
     private lateinit var quickJsEngine: QuickJsEngine
@@ -273,7 +289,7 @@ class MainActivity : ComponentActivity() {
                     }
                     healthPermissionResult.set(null)
                     healthPermissionLauncher.launch(
-                        setOf(HealthPermission.getReadPermission(StepsRecord::class)),
+                        com.dc.andagent.tools.HEALTH_READ_PERMISSIONS,
                     )
                     // Poll the AtomicReference set by the launcher callback.
                     val deadline = System.currentTimeMillis() + 90_000
@@ -281,11 +297,9 @@ class MainActivity : ComponentActivity() {
                         if (!cont.isActive) return
                         val granted = healthPermissionResult.get()
                         if (granted != null) {
-                            cont.resume(
-                                granted.contains(
-                                    HealthPermission.getReadPermission(StepsRecord::class),
-                                ),
-                            )
+                            // User may pick only a subset; the per-tool check
+                            // in HealthTools decides whether the read proceeds.
+                            cont.resume(granted.isNotEmpty())
                         } else if (System.currentTimeMillis() > deadline) {
                             cont.resume(false)
                         } else {
@@ -523,6 +537,14 @@ class MainActivity : ComponentActivity() {
             "image_info" to ImageEditTool(appContext, "image_info"),
             "image_collage" to ImageEditTool(appContext, "image_collage"),
             "steps_history" to StepsHistoryTool(appContext, healthPermissionRequester),
+            // Health Connect 全量：心率/睡眠/血氧/体重/运动/营养 + 周报聚合
+            "health_heart_rate" to HeartRateTool(appContext, healthPermissionRequester),
+            "health_sleep" to SleepTool(appContext, healthPermissionRequester),
+            "health_spo2" to OxygenSaturationTool(appContext, healthPermissionRequester),
+            "health_weight" to WeightTool(appContext, healthPermissionRequester),
+            "health_exercise" to ExerciseSessionTool(appContext, healthPermissionRequester),
+            "health_nutrition" to NutritionTool(appContext, healthPermissionRequester),
+            "health_weekly_report" to HealthWeeklyReportTool(appContext, healthPermissionRequester),
             "js_eval" to JsEvalTool(quickJsEngine),
             "script_save" to ScriptFsTool(appContext, quickJsEngine, "script_save"),
             "script_list" to ScriptFsTool(appContext, quickJsEngine, "script_list"),
@@ -586,6 +608,14 @@ class MainActivity : ComponentActivity() {
         tools.putAll(HTTP_TOOLS.associateWith { HttpTool(it, appContext) })
         // R121: 语义化局域网发现（SSDP/UPnP + mDNS/DNS-SD）：电视/音箱/打印机/HA 识别 + UPnP 描述文档。
         tools.putAll(DISCOVERY_TOOLS.associateWith { DiscoveryTool(it, appContext) })
+        // R122: Wi-Fi 三件套（DPP 免密入网 / Wi-Fi Direct 无路由器 P2P / RTT 测距）。
+        tools.putAll(WIFI_EXT_TOOLS.associateWith { name ->
+            when (name) {
+                "wifi_easy_connect" -> WifiEasyConnectTool(appContext, permissionBroker, name)
+                "wifi_direct" -> WifiDirectTool(appContext, permissionBroker, name)
+                else -> WifiRttTool(appContext, permissionBroker, name)
+            }
+        })
         // R91: SSH 远程运维（JSch 会话池，TOFU known_hosts，破坏性命令分级）。
         tools.putAll(SSH_TOOLS.associateWith { SshTool(appContext, it) })
         tools.putAll(SSH_TRANSFER_TOOLS.associateWith { SshTransferTool(appContext, it) { event ->
@@ -605,6 +635,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(VPN_TOOLS.associateWith { VpnTool(appContext, permissionBroker, it) })
         // R113: 蜂窝深度（CellInfo/RSRP 诊断、requestNetworkScan 邻区扫描、5G NR 频段/带宽、流量配额）。
         tools.putAll(CELLULAR_TOOLS.associateWith { CellularTool(appContext, permissionBroker, it) })
+        // R122: eSIM 管理（EuiccManager：状态/下载/启用/停用/删除；LPA 缺失或权限被拒时如实降级）。
+        tools.putAll(ESIM_TOOLS.associateWith { EsimTool(appContext, permissionBroker, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.
         tools["android_reflect"] = AndroidReflectTool(RestrictedReflectExecutor(appContext))
         tools.putAll(com.dc.andagent.memory.MEMORY_TOOLS.associateWith { com.dc.andagent.memory.MemoryTool(memoryStore, it) })
@@ -621,6 +653,14 @@ class MainActivity : ComponentActivity() {
         // MCP 客户端 + 反向 server：管理工具立即注册，远端工具在后台拉取，避免阻塞首帧。
         mcpRegistry = com.dc.andagent.tools.McpRegistry(appContext, tools)
         Thread({ runCatching { mcpRegistry.reload() } }, "mcp-bootstrap").apply { isDaemon = true }.start()
+
+        // 自我扩展：agent 生成的 my_* 工具（持久化于 filesDir/selfext/，schema 走 extensionTools()）。
+        selfExtManager = com.dc.andagent.tools.SelfExtManager(appContext, tools, quickJsEngine)
+        listOf(
+            "my_tool_create", "my_tool_list", "my_tool_read", "my_tool_update",
+            "my_tool_delete", "my_tool_test", "my_tool_enable",
+        ).forEach { tools[it] = com.dc.andagent.tools.SelfExtTool(selfExtManager, it) }
+        selfExtManager.reload()
 
         WidgetToolRuntime.attach(tools, quickJsEngine)
 
@@ -842,6 +882,24 @@ class MainActivity : ComponentActivity() {
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
                     isEnabled = true
+                }
+            }
+        })
+        // 后注册的 callback 先收到返回事件：浏览器浮窗可见时优先消费（层级高于主页面）。
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val layer = embeddedLayer
+                if (layer == null || layer.visibility != View.VISIBLE) {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                    return
+                }
+                val browser = embeddedBrowser
+                when {
+                    embeddedSmallWindow -> toggleEmbeddedSize()
+                    browser?.canGoBack() == true -> browser.goBack()
+                    else -> hideEmbeddedLayer()
                 }
             }
         })
@@ -1106,6 +1164,13 @@ class MainActivity : ComponentActivity() {
     private var embeddedLayer: ViewGroup? = null
     private var embeddedBrowser: WebView? = null
     private var embeddedHeader: ViewGroup? = null
+    /** 小窗/全屏两态标记与切换按钮（主线程读写）。 */
+    private var embeddedSmallWindow = false
+    private var embeddedCollapseBtn: TextView? = null
+    private var embeddedProgress: ProgressBar? = null
+    private var embeddedError: TextView? = null
+    /** 上次加载的 URL：同 URL 重开时复用页面状态，不强制 reload。 */
+    private var lastEmbeddedUrl: String? = null
     /** R110-review 必修项③：三字段主线程写、JavaBridge 线程读，统一用此锁同步。 */
     private val embeddedLock = Any()
 
@@ -1147,6 +1212,20 @@ class MainActivity : ComponentActivity() {
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = localMedia.intercept(request) ?: assetLoader.shouldInterceptRequest(request.url)
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = request.url.scheme != "https" && request.url.scheme != "appassets"
+                        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                            embeddedError?.visibility = android.view.View.GONE
+                        }
+                        override fun onReceivedError(view: WebView?, request: WebResourceRequest, error: android.webkit.WebResourceError) {
+                            if (request.isForMainFrame) showEmbeddedError(error.description?.toString() ?: "加载失败")
+                        }
+                    }
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                            embeddedProgress?.let { p ->
+                                p.visibility = if (newProgress >= 100) android.view.View.GONE else android.view.View.VISIBLE
+                                p.progress = newProgress
+                            }
+                        }
                     }
                 }.also { embeddedBrowser = it }
 
@@ -1159,44 +1238,97 @@ class MainActivity : ComponentActivity() {
                     (findViewById(android.R.id.content) as? ViewGroup)?.addView(layer)
                 }
                 layer.visibility = android.view.View.VISIBLE
-                browser.loadUrl(loadUrl)
+                browser.onResume()
+                // 同 URL 复用已加载页面（保留导航状态），不同 URL 才重新加载。
+                if (lastEmbeddedUrl != loadUrl) {
+                    browser.loadUrl(loadUrl)
+                    lastEmbeddedUrl = loadUrl
+                }
             }
         }
         return "OPENED"
     }
 
-    /** 悬浮层容器：标题栏（← 收起为小窗 / ✕ 隐藏）+ WebView。两态：全屏 / 小窗。 */
+    /** 悬浮层容器：标题栏（⬇⬆ 两态切换 / ✕ 隐藏）+ 进度条 + WebView + 错误条。 */
     private fun buildEmbeddedLayer(browser: WebView): ViewGroup {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
-            setBackgroundColor(0xEE3D5AFE.toInt())
-            setPadding(8, 8, 16, 8)
+            setBackgroundColor(com.dc.andagent.ui.OverlayChrome.HEADER_BG)
+            setPadding(dp(4), dp(2), dp(8), dp(2))
         }
         fun headerButton(text: String, desc: String, onClick: () -> Unit) = TextView(this).apply {
             this.text = text
             contentDescription = desc
             textSize = 16f
             gravity = android.view.Gravity.CENTER
-            setPadding(24, 12, 24, 12)
+            setTextColor(com.dc.andagent.ui.OverlayChrome.TEXT_DIM)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
             setOnClickListener { onClick() }
         }
-        header.addView(headerButton("⬇", "收起为小窗") { setEmbeddedSmallWindow() })
-        header.addView(TextView(this).apply { textSize = 15f; setSingleLine(true); text = "embedded" }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(headerButton("✕", "隐藏悬浮层") { synchronized(embeddedLock) { embeddedLayer?.visibility = android.view.View.GONE } })
+        val collapse = headerButton("⬇", "收起为小窗") { toggleEmbeddedSize() }
+        embeddedCollapseBtn = collapse
+        header.addView(collapse)
+        header.addView(TextView(this).apply { textSize = 15f; setSingleLine(true); setTextColor(com.dc.andagent.ui.OverlayChrome.TEXT); text = "embedded" }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            visibility = android.view.View.GONE
+        }
+        header.addView(progress, LinearLayout.LayoutParams(dp(56), ViewGroup.LayoutParams.WRAP_CONTENT))
+        embeddedProgress = progress
+        header.addView(headerButton("✕", "隐藏悬浮层") { hideEmbeddedLayer() })
         synchronized(embeddedLock) { embeddedHeader = header }
+
+        // 错误条：主框架加载失败时置顶显示，点击重试。
+        val error = TextView(this).apply {
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0xEE8B2E2E.toInt())
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            visibility = android.view.View.GONE
+            setOnClickListener { visibility = android.view.View.GONE; embeddedBrowser?.reload() }
+        }
+        embeddedError = error
+        val browserHost = FrameLayout(this)
+        browserHost.addView(browser, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        browserHost.addView(error, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.TOP))
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(themeBackgroundColor())
             addView(header)
-            addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(browserHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
     }
 
-    /** 小窗态：右下角 45% 宽悬浮块（仍在本窗口内，免悬浮窗权限）。 */
+    /** ⬇/⬆ 在小窗与全屏之间切换（修复原"收起后无法恢复全屏"的死代码问题）。 */
+    private fun toggleEmbeddedSize() {
+        if (embeddedSmallWindow) setEmbeddedFullscreen() else setEmbeddedSmallWindow()
+        embeddedCollapseBtn?.text = if (embeddedSmallWindow) "⬆" else "⬇"
+        embeddedCollapseBtn?.contentDescription = if (embeddedSmallWindow) "恢复全屏" else "收起为小窗"
+    }
+
+    /** 隐藏悬浮层：视图 GONE 并暂停 WebView（停掉页面媒体/定时器，省电）；WebView 存活保留 DevTools target。 */
+    private fun hideEmbeddedLayer() {
+        synchronized(embeddedLock) {
+            embeddedLayer?.visibility = android.view.View.GONE
+            embeddedBrowser?.onPause()
+        }
+    }
+
+    private fun showEmbeddedError(message: String) {
+        embeddedError?.let { e ->
+            e.text = "加载失败：$message（点击重试）"
+            e.visibility = android.view.View.VISIBLE
+        }
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    /** 小窗态：右下角 62% 宽悬浮块（仍在本窗口内，免悬浮窗权限）。 */
     private fun setEmbeddedSmallWindow() {
         synchronized(embeddedLock) {
+            embeddedSmallWindow = true
             embeddedLayer?.layoutParams = (embeddedLayer?.layoutParams ?: FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)).also {
                 val dm = resources.displayMetrics
@@ -1205,7 +1337,13 @@ class MainActivity : ComponentActivity() {
                 it.width = w
                 it.height = (w * 16 / 9)
                 it.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
-                it.setMargins(12, 12, 12, 140)
+                it.setMargins(dp(12), dp(12), dp(12), dp(140))
+            }
+            // 小窗态启用统一浮窗外壳：圆角 + 描边 + 阴影。
+            embeddedLayer?.let { l ->
+                com.dc.andagent.ui.OverlayChrome.applyRounded(l)
+                com.dc.andagent.ui.OverlayChrome.background(l)
+                l.elevation = dp(8).toFloat()
             }
             embeddedLayer?.setPadding(0, 0, 0, 0)
             embeddedLayer?.requestLayout()
@@ -1215,8 +1353,16 @@ class MainActivity : ComponentActivity() {
     /** 全屏态（默认）。 */
     private fun setEmbeddedFullscreen() {
         synchronized(embeddedLock) {
+            embeddedSmallWindow = false
             embeddedLayer?.layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { setMargins(0, 0, 0, 0) }
+            // 全屏态退出外壳样式：恢复直角与主题底色（全屏铺满窗口）。
+            embeddedLayer?.let { l ->
+                com.dc.andagent.ui.OverlayChrome.clearRounded(l)
+                l.elevation = 0f
+                l.background = null
+                l.setBackgroundColor(themeBackgroundColor())
+            }
             // 全屏态吃满窗口（edge-to-edge），header 会顶进状态栏、底沿贴手势条——
             // 用 insets padding 让出安全区（关闭按钮不被遮挡）。小窗态已用 margin 避开，无需处理。
             embeddedLayer?.setOnApplyWindowInsetsListener { view, insets ->
@@ -1281,6 +1427,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         if (FilePickResultBridge.launcher === filePickLaunchCallback) FilePickResultBridge.launcher = null
+        // 应用内伪浮窗挂在 decorView 上：Activity 销毁时同步清理（onDismiss 会停止相机服务）。
+        com.dc.andagent.tools.InAppOverlayHost.dismiss()
         dbGuiDialog?.dismiss()
         synchronized(embeddedLock) {
             embeddedBrowser?.destroy()
@@ -1321,13 +1469,13 @@ class MainActivity : ComponentActivity() {
                 put("message", "Health Connect 需要更新，请先在应用商店更新")
             }.toString()
         }
-        val permissions = setOf(HealthPermission.getReadPermission(StepsRecord::class))
+        val permissions = com.dc.andagent.tools.HEALTH_READ_PERMISSIONS
         runOnUiThread {
             runCatching { healthPermissionLauncher.launch(permissions) }
         }
         return buildJsonObject {
             put("requested", true)
-            put("message", "已打开 Health Connect 授权页，请允许读取步数")
+            put("message", "已打开 Health Connect 授权页，请允许读取步数、心率、睡眠、血氧、体重、运动与营养数据")
         }.toString()
     }
 

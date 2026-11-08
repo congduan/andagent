@@ -64,6 +64,30 @@ describe("useLongPress", () => {
     expect(onLongPress).not.toHaveBeenCalled();
   });
 
+  test("残留的无关选区被清除，长按菜单正常弹出", () => {
+    // 模拟消息区划选后残留的旧选区：与被按元素无关，可被 removeAllRanges 清掉。
+    let cleared = false;
+    const removeAllRanges = vi.fn(() => {
+      cleared = true;
+    });
+    vi.spyOn(window, "getSelection").mockReturnValue({
+      get isCollapsed() {
+        return cleared;
+      },
+      toString: () => (cleared ? "" : "stale"),
+      containsNode: () => false,
+      removeAllRanges,
+    } as unknown as Selection);
+    const onLongPress = vi.fn();
+    render(<Harness onLongPress={onLongPress} />);
+    fireEvent.pointerDown(screen.getByTestId("msg"), { clientX: 12, clientY: 24 });
+    act(() => {
+      vi.advanceTimersByTime(10);
+    });
+    expect(removeAllRanges).toHaveBeenCalled();
+    expect(onLongPress).toHaveBeenCalledWith(12, 24);
+  });
+
   test("长按过程中系统开始划选则撤销菜单", () => {
     const onLongPress = vi.fn();
     const getSelection = vi

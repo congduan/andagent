@@ -38,6 +38,27 @@ export function selectedText(): string {
   return selection.toString().trim();
 }
 
+/**
+ * 清掉与按下位置无关的残留选区，返回是否清除了选区。
+ *
+ * Android WebView 里消息区划选后的选区经常不会因点击别处而收起；这种残留
+ * 选区会让所有长按入口（pointerdown / contextmenu 的 selectedText 检查）
+ * 永远让路，会话条目的编辑菜单就再也弹不出来。按下点不在选区内时视为
+ * 残留选区，清除后照常启动长按；按在选区内则保留（用户在调整选区）。
+ */
+export function clearStaleSelection(target: EventTarget | null): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) return false;
+  if (!(target instanceof Node)) return false;
+  try {
+    if (selection.containsNode(target, true)) return false;
+  } catch {
+    return false;
+  }
+  selection.removeAllRanges();
+  return true;
+}
+
 // 全局长按撤销：消息列表可能很长，用一条 selectionchange 通知所有挂起的 useLongPress。
 const pendingCancels = new Set<() => void>();
 let watchingSelection = false;
@@ -85,8 +106,9 @@ export function useLongPress(onLongPress: (x: number, y: number) => void, ms = 6
   return {
     onPointerDown: (event: React.PointerEvent) => {
       if (event.pointerType === "mouse" && event.button !== 0) return;
-      // 已有选区：用户在调整选区或准备复制所选，不抢手势。
-      if (selectedText()) return;
+      // 已有选区：按在选区内说明用户在调整/准备复制所选，不抢手势；
+      // 按在选区外的残留选区直接清掉，否则长按菜单永远弹不出来。
+      if (selectedText() && !clearStaleSelection(event.target)) return;
       origin.current = { x: event.clientX, y: event.clientY };
       clear();
       const { clientX, clientY } = event;
@@ -109,8 +131,9 @@ export function useLongPress(onLongPress: (x: number, y: number) => void, ms = 6
       }
     },
     onContextMenu: (event: React.MouseEvent) => {
-      // 有选区时保留系统菜单（右键「复制」选区），不弹自定义菜单。
-      if (selectedText()) return;
+      // 选区内右键保留系统菜单（右键「复制」选区），不弹自定义菜单；
+      // 残留选区先清除再接管，避免挡住长按/右键菜单。
+      if (selectedText() && !clearStaleSelection(event.target)) return;
       event.preventDefault();
       onLongPress(event.clientX, event.clientY);
     },

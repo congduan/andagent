@@ -3,12 +3,19 @@
  *  （storage_scan / screen_capture / battery_detail / thermal_status /
  *   usage_stats / torch / album_stats / image_collage / image_edit /
  *   zip_create / qr_generate / alarm_set / db_create / widget_generate /
- *   cron_create / shortcut_create / countdown / docx_create / xlsx_create /
- *   pptx_create / web_read / clipboard_write / web_search / script_save /
- *   mermaid / chart / devtools_errors / http_request / memory_add /
- *   calendar_reminder_check / wifi_connect / lan_scan / data_usage /
- *   bt_scan / hotspot / airpods_status / heart_rate / brightness_set /
- *   audio_set_volume / wallpaper_set / vibrate / notif_events_read）。
+ *   cron_create / cron_list / shortcut_create / countdown / docx_create /
+ *   xlsx_create / pptx_create / web_read / clipboard_write / web_search /
+ *   script_save / mermaid / chart / devtools_errors / http_request /
+ *   memory_add / calendar_reminder_check / calendar_add / wifi_connect /
+ *   lan_scan / data_usage / bt_scan / hotspot / airpods_status /
+ *   heart_rate / brightness_set / audio_set_volume / wallpaper_set /
+ *   vibrate / notif_events_read / screen_record / sensor_list /
+ *   open_settings / camera_capture / camera_scan / media_library /
+ *   file_download / file_hash / tts_to_file / live_start /
+ *   speech_recognize / mic_record / location_get / sms_read /
+ *   cell_info / nr_bandwidth / vpn_status / usb_list / contacts_search /
+ *   phone_call / sms_send / call_log_read / email_draft /
+ *   steps_today / health_sleep / health_weekly_report）。
  *  首页每次进入只随机展示其中一部分，见 pickTemplateGroups。 */
 
 import type { IconName } from "./icons";
@@ -63,6 +70,21 @@ export const TEMPLATE_GROUPS: TemplateGroup[] = [
         title: { zh: "打开手电筒", en: "Turn on the flashlight" },
         prompt: { zh: "帮我打开手电筒。", en: "Turn on the flashlight for me." },
       },
+      {
+        icon: "video",
+        title: { zh: "录一段屏幕操作视频", en: "Record my screen" },
+        prompt: { zh: "帮我录 30 秒的屏幕视频，录完告诉我保存路径。", en: "Record a 30-second screen video and tell me where it was saved." },
+      },
+      {
+        icon: "activity",
+        title: { zh: "手机里有哪些传感器", en: "List my phone's sensors" },
+        prompt: { zh: "列出这台手机支持的所有传感器，简单说明每个能用来做什么。", en: "List every sensor this phone supports and briefly explain what each one can do." },
+      },
+      {
+        icon: "settings",
+        title: { zh: "帮我打开 Wi-Fi 设置页", en: "Open Wi-Fi settings" },
+        prompt: { zh: "帮我直接打开系统的 Wi-Fi 设置页。", en: "Open the system Wi-Fi settings page for me." },
+      },
     ],
   },
   {
@@ -97,6 +119,21 @@ export const TEMPLATE_GROUPS: TemplateGroup[] = [
         icon: "link",
         title: { zh: "生成一张二维码", en: "Generate a QR code" },
         prompt: { zh: "帮我生成一张内容为 https://github.com/andagent 的二维码图片并保存。", en: "Generate a QR code image for https://github.com/andagent and save it." },
+      },
+      {
+        icon: "scan-text",
+        title: { zh: "扫一下这个二维码", en: "Scan a QR code" },
+        prompt: { zh: "打开相机扫一下这个二维码或条码，告诉我里面是什么内容。", en: "Use the camera to scan this QR code or barcode and tell me what is inside." },
+      },
+      {
+        icon: "camera",
+        title: { zh: "用超广角拍一张", en: "Shoot with the ultrawide lens" },
+        prompt: { zh: "用后置超广角镜头拍一张照片，拍完告诉我效果怎么样。", en: "Take a photo with the rear ultrawide lens and tell me how it turned out." },
+      },
+      {
+        icon: "folder",
+        title: { zh: "看看本地有哪些视频和音频", en: "List local videos and audio" },
+        prompt: { zh: "统计一下手机本地存储里的视频和音频文件，各列出最大的 5 个。", en: "Count the video and audio files on my phone and list the five largest of each." },
       },
     ],
   },
@@ -133,6 +170,21 @@ export const TEMPLATE_GROUPS: TemplateGroup[] = [
         title: { zh: "设一个 25 分钟专注计时", en: "Start a 25-minute focus timer" },
         prompt: { zh: "帮我把计时器设成 25 分钟，结束的时候提示我休息一下。", en: "Set a 25-minute timer and remind me to take a break when it ends." },
       },
+      {
+        icon: "repeat",
+        title: { zh: "看看我有哪些定时任务", en: "Review my scheduled tasks" },
+        prompt: { zh: "列一下现在所有的定时任务，告诉我哪些在运行、哪些停了，帮我清理没用的。", en: "List all my scheduled tasks, tell me which are active, and suggest ones worth removing." },
+      },
+      {
+        icon: "calendar",
+        title: { zh: "在日历里加一条例会", en: "Add a meeting to my calendar" },
+        prompt: { zh: "帮我在下周一下午 3 点的日历里加一条「项目例会」，提前 15 分钟提醒我。", en: "Add a \"project sync\" to my calendar next Monday at 3 p.m. and remind me 15 minutes before." },
+      },
+      {
+        icon: "music",
+        title: { zh: "把一段话转成语音", en: "Turn text into speech" },
+        prompt: { zh: "把「今天下午三点记得开会」合成一段语音文件，我想直接播放。", en: "Turn \"Remember the meeting at 3 p.m. today\" into an audio file I can play." },
+      },
     ],
   },
   {
@@ -167,6 +219,16 @@ export const TEMPLATE_GROUPS: TemplateGroup[] = [
         icon: "compass",
         title: { zh: "读一下这个网页并总结", en: "Read and summarize a web page" },
         prompt: { zh: "读一下 https://developer.android.com/about/versions 这个页面，把关键变化总结成几条。", en: "Read https://developer.android.com/about/versions and summarize the key changes." },
+      },
+      {
+        icon: "mic",
+        title: { zh: "录一段语音转成文字", en: "Record and transcribe a voice note" },
+        prompt: { zh: "帮我录 30 秒语音并识别成文字，再整理成几条备忘。", en: "Record 30 seconds of speech, transcribe it, and turn it into a few short notes." },
+      },
+      {
+        icon: "download",
+        title: { zh: "下载这个链接的文件", en: "Download a file from a link" },
+        prompt: { zh: "帮我把 https://github.com/andagent/andagent/releases/latest 这个页面的 APK 下载到手机，告诉我保存路径。", en: "Download the APK from https://github.com/andagent/andagent/releases/latest to my phone and tell me the path." },
       },
     ],
   },
@@ -203,6 +265,16 @@ export const TEMPLATE_GROUPS: TemplateGroup[] = [
         title: { zh: "调一个接口看看返回结构", en: "Inspect an API response" },
         prompt: { zh: "帮我请求 https://api.github.com/repos/torvalds/linux ，看看返回的 JSON 结构，把关键字段说明一下。", en: "Request https://api.github.com/repos/torvalds/linux, inspect the JSON structure, and explain the key fields." },
       },
+      {
+        icon: "check",
+        title: { zh: "算一下下载文件的校验和", en: "Verify a downloaded file's checksum" },
+        prompt: { zh: "算一下我下载目录里最新那个文件的 SHA256，给我完整校验和。", en: "Compute the SHA256 of the newest file in my Downloads folder and give me the full checksum." },
+      },
+      {
+        icon: "refresh",
+        title: { zh: "加一个实时刷新电量的循环", en: "Run a live battery feed" },
+        prompt: { zh: "建一个实时循环，每秒读一次电量并推送到对话里，跑 10 秒后自动停。", en: "Create a live loop that reads the battery level every second, pushes it to the chat, and stops after 10 seconds." },
+      },
     ],
   },
   {
@@ -232,6 +304,16 @@ export const TEMPLATE_GROUPS: TemplateGroup[] = [
         icon: "globe",
         title: { zh: "查一下某个词是什么意思", en: "Look up a term" },
         prompt: { zh: "帮我查一下「向量数据库」是什么意思，用一段话讲清楚，再给一个类比。", en: "Look up what a “vector database” is, explain it in a paragraph, and give an analogy." },
+      },
+      {
+        icon: "map-pin",
+        title: { zh: "我现在在哪里，附近有什么", en: "Where am I and what's nearby" },
+        prompt: { zh: "查一下我现在的位置，告诉我大概在什么地方、附近有什么值得去的。", en: "Check my current location and tell me roughly where I am and what is worth visiting nearby." },
+      },
+      {
+        icon: "message",
+        title: { zh: "翻一下最近的短信", en: "Review recent SMS" },
+        prompt: { zh: "读一下最近两天的短信，按发件人归类，把需要我处理的挑出来。", en: "Read SMS from the last two days, group them by sender, and flag the ones that need my attention." },
       },
     ],
   },
@@ -268,6 +350,21 @@ export const TEMPLATE_GROUPS: TemplateGroup[] = [
         title: { zh: "查一下耳机电量", en: "Check my earbuds battery" },
         prompt: { zh: "查一下我蓝牙耳机的电量，左右耳和充电盒都看一下。", en: "Check my earbuds’ battery for the left, right, and charging case." },
       },
+      {
+        icon: "antenna",
+        title: { zh: "诊断一下手机信号", en: "Diagnose my cellular signal" },
+        prompt: { zh: "诊断一下当前的蜂窝信号：网络类型、频段、信号强度，评级好不好，5G 是 SA 还是 NSA。", en: "Diagnose my cellular signal: network type, band, signal strength, quality rating, and whether 5G is SA or NSA." },
+      },
+      {
+        icon: "lock",
+        title: { zh: "看看 VPN 现在的状态", en: "Check my VPN status" },
+        prompt: { zh: "看一下 VPN 现在的状态：跑了多久、分流规则、DNS 拦截情况。", en: "Check my VPN status: how long it has been running, split rules, and DNS filtering stats." },
+      },
+      {
+        icon: "plug",
+        title: { zh: "看看 USB 口上插了什么", en: "Identify what is plugged into USB" },
+        prompt: { zh: "枚举一下 USB 口上的设备，告诉我插的是什么类型的设备、权限给没给。", en: "Enumerate the devices on my USB port and tell me what type each one is and whether I granted access." },
+      },
     ],
   },
   {
@@ -302,6 +399,51 @@ export const TEMPLATE_GROUPS: TemplateGroup[] = [
         icon: "message",
         title: { zh: "看看最近都收到了哪些通知", en: "Review recent notifications" },
         prompt: { zh: "看看最近的系统通知，按 App 归类，挑出重要的几条告诉我。", en: "Review recent notifications, group them by app, and point out the important ones." },
+      },
+      {
+        icon: "activity",
+        title: { zh: "今天走了多少步", en: "How many steps today" },
+        prompt: { zh: "查一下我今天走了多少步，和这周的日均对比一下。", en: "Check today's step count and compare it with this week's daily average." },
+      },
+      {
+        icon: "moon",
+        title: { zh: "昨晚睡得怎么样", en: "How did I sleep last night" },
+        prompt: { zh: "看看我昨晚的睡眠数据，睡了多久、深睡比例如何，给一句评价。", en: "Check last night's sleep data — duration and deep-sleep share — and give me a one-line assessment." },
+      },
+      {
+        icon: "heart",
+        title: { zh: "生成一份健康周报", en: "Create a weekly health report" },
+        prompt: { zh: "把这周的心率、步数和睡眠数据汇总成一份健康周报，指出值得注意的变化。", en: "Summarize this week's heart rate, steps, and sleep into a health report and flag notable changes." },
+      },
+    ],
+  },
+  {
+    label: { zh: "通信与联系", en: "Calls and contacts" },
+    templates: [
+      {
+        icon: "search",
+        title: { zh: "查一下联系人的号码", en: "Look up a contact" },
+        prompt: { zh: "帮我在通讯录里查一下「张伟」的手机号和邮箱。", en: "Look up Zhang Wei's phone number and email in my contacts." },
+      },
+      {
+        icon: "phone",
+        title: { zh: "给张伟打个电话", en: "Call Zhang Wei" },
+        prompt: { zh: "帮我在通讯录里找到张伟的号码并拨打。", en: "Find Zhang Wei in my contacts and place a call." },
+      },
+      {
+        icon: "message",
+        title: { zh: "发条短信说快到了", en: "Text that I'm almost there" },
+        prompt: { zh: "给张伟发条短信：「我十分钟后到，稍等我一下。」", en: "Text Zhang Wei: \"I'll be there in ten minutes, wait for me.\"" },
+      },
+      {
+        icon: "clock",
+        title: { zh: "看看今天的未接来电", en: "Review today's missed calls" },
+        prompt: { zh: "查一下今天的通话记录，把未接来电列出来，标注哪个号码值得回。", en: "Check today's call log, list the missed calls, and note which ones are worth calling back." },
+      },
+      {
+        icon: "file-text",
+        title: { zh: "起草一封报价邮件", en: "Draft a quote email" },
+        prompt: { zh: "帮我起草一封给客户的报价邮件，产品是定制键盘，报价 1200 元，写完用系统邮件打开草稿。", en: "Draft a quote email to a client for a custom keyboard at 1,200 yuan, then open it in the mail app." },
       },
     ],
   },

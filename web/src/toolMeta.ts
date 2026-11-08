@@ -37,6 +37,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
   ir_code_search: { label: "查询内置码表", labelEn: "Search IR code table", icon: "search" },
   ir_code_send: { label: "码表发射", labelEn: "Send table code", icon: "antenna", destructive: true },
   ir_code_save: { label: "保存遥控码", labelEn: "Save IR code", icon: "plus" },
+  ir_code_import: { label: "导入码表", labelEn: "Import IR codes", icon: "upload" },
   ir_code_delete: { label: "删除遥控码", labelEn: "Delete IR code", icon: "trash", destructive: true },
   nfc_read: { label: "读取 NFC", labelEn: "Read NFC", icon: "wifi" },
   nfc_write_text: { label: "写入 NFC 文本", labelEn: "Write NFC text", icon: "wifi", destructive: true },
@@ -182,8 +183,22 @@ export const TOOL_META: Record<string, ToolMeta> = {
   cell_scan: { label: "邻区扫描", labelEn: "Neighbor scan", icon: "antenna" },
   nr_bandwidth: { label: "5G NR 频段带宽", labelEn: "5G NR bands", icon: "antenna" },
   data_policy: { label: "流量配额", labelEn: "Data quota", icon: "activity" },
+  // R122: eSIM 管理（status 只读；download/enable/disable/delete 与 Kotlin destructive 对齐）
+  esim_status: { label: "eSIM 状态", labelEn: "eSIM status", icon: "smartphone" },
+  esim_download: { label: "下载 eSIM", labelEn: "Download eSIM", icon: "download", destructive: true },
+  esim_enable: { label: "启用 eSIM", labelEn: "Enable eSIM", icon: "smartphone", destructive: true },
+  esim_disable: { label: "停用 eSIM", labelEn: "Disable eSIM", icon: "stop", destructive: true },
+  esim_delete: { label: "删除 eSIM", labelEn: "Delete eSIM", icon: "trash", destructive: true },
   steps_today: { label: "今日步数", labelEn: "Today’s steps", icon: "activity" },
   steps_history: { label: "步数历史", labelEn: "Step history", icon: "activity" },
+  // Health Connect 全量：心率/睡眠/血氧/体重/运动/营养 + 周报聚合
+  health_heart_rate: { label: "心率数据", labelEn: "Heart rate", icon: "activity" },
+  health_sleep: { label: "睡眠记录", labelEn: "Sleep", icon: "activity" },
+  health_spo2: { label: "血氧 SpO2", labelEn: "SpO2", icon: "activity" },
+  health_weight: { label: "体重记录", labelEn: "Weight", icon: "activity" },
+  health_exercise: { label: "运动记录", labelEn: "Exercise sessions", icon: "activity" },
+  health_nutrition: { label: "营养饮食", labelEn: "Nutrition", icon: "activity" },
+  health_weekly_report: { label: "健康周报", labelEn: "Weekly report", icon: "activity" },
   // R120: 本地 VPN（VpnService，纯应用权限）—— DNS 广告拦截 / 分流 / 流量 / 诊断
   vpn_start: { label: "开启本地 VPN", labelEn: "Start local VPN", icon: "globe" },
   vpn_stop: { label: "关闭本地 VPN", labelEn: "Stop local VPN", icon: "stop" },
@@ -192,6 +207,10 @@ export const TOOL_META: Record<string, ToolMeta> = {
   vpn_split: { label: "按应用分流", labelEn: "Per-app split", icon: "package" },
   vpn_hosts: { label: "广告拦截规则", labelEn: "Block rules", icon: "lock" },
   vpn_diag: { label: "网络诊断", labelEn: "Network diagnostics", icon: "bug" },
+  // R122: Wi-Fi 三件套（wifi_direct 会改网络连接状态，与 Kotlin destructive 对齐）
+  wifi_easy_connect: { label: "DPP 免密入网", labelEn: "Wi-Fi Easy Connect", icon: "wifi" },
+  wifi_direct: { label: "Wi-Fi Direct", labelEn: "Wi-Fi Direct", icon: "wifi", destructive: true },
+  wifi_rtt: { label: "Wi-Fi 测距", labelEn: "Wi-Fi RTT ranging", icon: "antenna" },
 };
 
 export const TOOL_DESTRUCTIVE = new Set(

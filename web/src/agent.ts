@@ -391,6 +391,83 @@ const TOOL_DEFS = [
     },
   },
   {
+    name: "health_heart_rate",
+    description: "读取最近 N 天心率（Health Connect）：每日最低/平均/最高与静息心率，默认 7 天，最多 30 天。",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "integer", description: "天数，默认 7，范围 1–30" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "health_sleep",
+    description: "读取最近 N 天睡眠（Health Connect）：每次起止、时长与深睡/浅睡/REM/清醒分期，默认 7 天，最多 30 天。",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "integer", description: "天数，默认 7，范围 1–30" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "health_spo2",
+    description: "读取最近 N 天血氧 SpO2（Health Connect）：每日最低/平均/最高百分比，默认 7 天，最多 30 天。",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "integer", description: "天数，默认 7，范围 1–30" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "health_weight",
+    description: "读取最近 N 天体重（Health Connect）：逐条读数、最新值与区间变化，默认 30 天，最多 90 天。",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "integer", description: "天数，默认 30，范围 1–90" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "health_exercise",
+    description: "读取最近 N 天运动记录（Health Connect）：类型、起止、时长、距离与消耗，默认 7 天，最多 30 天。",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "integer", description: "天数，默认 7，范围 1–30" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "health_nutrition",
+    description: "读取最近 N 天饮食（Health Connect）：每餐热量与蛋白质/脂肪/碳水及每日汇总，默认 7 天，最多 30 天。",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "integer", description: "天数，默认 7，范围 1–30" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "health_weekly_report",
+    description: "聚合最近 N 天全量健康数据（步数/睡眠/心率/血氧/体重/运动/营养，含环比趋势），用于生成周报、健康趋势与运动建议；默认 7 天，最多 28 天。",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "integer", description: "天数，默认 7，范围 1–28" },
+      },
+      required: [],
+    },
+  },
+  {
     name: "open_settings",
     description:
       "打开 Android 系统设置的具体页面（WiFi/蓝牙/显示/声音/电池/存储/应用/位置/安全/日期时间/开发者选项等），只跳转不修改。用户说「打开XX设置」时使用。",
@@ -602,6 +679,7 @@ const TOOL_DEFS = [
   { name: "image_preview", description: "不保存，仅预览图片和 ops_json 编辑效果；预览图由工具卡片自动展示，回复只需用文字说明效果。", parameters: { type: "object", properties: { source: { type: "string" }, ops_json: { type: "string", description: "JSON 操作数组" } }, required: ["source"] } },
   { name: "image_edit", description: "按顺序编辑图片并保存。预览图由工具卡片自动展示，回复只需说明操作与 savedPath（可作为下次 source），不要输出 ```image 围栏或粘贴图片数据。ops_json 例如 [{\\\"op\\\":\\\"crop\\\",\\\"aspect\\\":\\\"16:9\\\"},{\\\"op\\\":\\\"brightness\\\",\\\"value\\\":20}]。支持 \" + IMAGE_EDIT_OPS.join(\"/\") + \"。R109 新增 flip{axis:h|v|both} / rotate_free{degrees,color} / text_draw{text 仅 ASCII≤64字,sizePx,color,alpha,anchor 九宫格或 x/y,rotation} / gaussian_blur{radius,x,y,w,h 区域} / vignette{strength,color} / auto_enhance。", parameters: { type: "object", properties: { source: { type: "string" }, ops_json: { type: "string" } }, required: ["source", "ops_json"] } },
   { name: "image_collage", description: "拼图并保存；预览图由工具卡片自动展示，回复只需说明布局与 savedPath。ids_or_uris 是图片源 JSON 数组；free 模式用 slots_json 指定每张图的 x/y/w/h。", parameters: { type: "object", properties: { ids_or_uris: { type: "string" }, layout: { type: "string", enum: ["grid2x2", "hstack", "vstack", "free"] }, output: { type: "string", enum: ["jpeg", "png"] }, slots_json: { type: "string" }, spacing: { type: "integer" }, background: { type: "string" }, corners: { type: "integer" } }, required: ["ids_or_uris", "layout"] } },
+  { name: "ocr_text", description: "识别图片中的文字（OCR，ML Kit 中文离线模型内置 APK，全程本地推理）。source 传图片路径 / content:// URI / 相册图片 id / base64，可直接接 screen_capture / camera_capture 返回的 path。返回 status(OK|NO_TEXT)、text、lines（每行 text/box/lang，box 为 [left,top,width,height]）、blocks 可选按段落分组。NO_TEXT 时如实说明图中无文字，不要编造内容。", parameters: { type: "object", properties: { source: { type: "string" }, lines: { type: "boolean", description: "返回逐行文本与坐标，默认 true" }, blocks: { type: "boolean", description: "按段落分组返回，默认 false" } }, required: ["source"] } },
   { name: "db_create", description: "创建持久化 SQLite 数据库。", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
   { name: "db_list", description: "列出 SQLite 数据库。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "db_gui", description: "在对话中打开指定数据库的只读图形浏览器。先用 db_list 查库名。", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
@@ -667,9 +745,10 @@ const TOOL_DEFS = [
   { name: "ir_available", description: "检测手机是否有红外发射器，返回支持的载波范围。", parameters: { type: "object", properties: {} } },
   { name: "ir_send_raw", description: "按 carrier_hz 载波发送交替 on/off 微秒数组 pattern。真实发射红外信号。", parameters: { type: "object", properties: { carrier_hz: { type: "integer" }, pattern: { type: "array", items: { type: "integer" } } }, required: ["carrier_hz", "pattern"] } },
   { name: "ir_send_pronto", description: "发送 Pronto Hex 0000 原始调制码。真实发射红外信号；压缩 RC5/RC6 码需先转为 0000 原始码。", parameters: { type: "object", properties: { hex: { type: "string" } }, required: ["hex"] } },
-  { name: "ir_code_search", description: "在内置红外码表（随 APK 打包，离线）中按品牌/设备/按键检索遥控码。指定 command 时返回该按键的 Pronto Hex，可交给 ir_send_pronto 或 ir_code_send。", parameters: { type: "object", properties: { brand: { type: "string", description: "品牌，如 LG/三星/Sony/飞利浦" }, device: { type: "string", description: "设备类型，如 tv/ac，默认不限" }, query: { type: "string", description: "自由关键词：品牌/设备/按键（支持中英文）" }, command: { type: "string", description: "按键规范名，如 power/vol_up/mute/ch_up/ok/input" }, limit: { type: "integer", description: "返回条数，默认 8，上限 20" } } } },
-  { name: "ir_code_send", description: "按品牌+设备+按键从内置红外码表取码并真实发射（NEC/NECx/Sony/RC5）。先 ir_available 确认有发射器；未收录的设备先用 ir_code_save 存 Pronto Hex。", parameters: { type: "object", properties: { brand: { type: "string" }, device: { type: "string", description: "设备类型，默认 tv" }, command: { type: "string", description: "按键，如 power/音量+/确定" }, frames: { type: "integer", description: "连发帧数 1-5，省略用协议默认（Sony 3，其余 2）" } }, required: ["brand", "command"] } },
-  { name: "ir_code_save", description: "把遥控码保存为用户码表条目（写入 ir_codes KV，同名品牌+设备+按键覆盖内置码）。pronto、carrier_hz+pattern、protocol+code 三选一。", parameters: { type: "object", properties: { brand: { type: "string" }, device: { type: "string", description: "设备类型，默认 tv" }, command: { type: "string", description: "按键名，如 power/vol_up 或自定义英文名" }, model: { type: "string" }, pronto: { type: "string", description: "Pronto Hex 0000 码" }, carrier_hz: { type: "integer", description: "载波频率 Hz，与 pattern 搭配，默认 38000" }, pattern: { type: "array", items: { type: "integer" }, description: "交替 on/off 微秒数组" }, protocol: { type: "string", description: "nec1/nec2/necx1/necx2/sony12/sony15/sony20/rc5" }, code: { type: "integer", description: "协议功能值 0-255，与 protocol 搭配" }, device_no: { type: "integer", description: "协议设备号，省略沿用同品牌既有条目" }, subdevice_no: { type: "integer", description: "协议子设备号 / NECx 高字节" } }, required: ["brand", "command"] } },
+  { name: "ir_code_search", description: "在红外码表中按品牌/设备/按键检索遥控码（内置 LG/三星/Sony/东芝/日立/三洋/海信/TCL/海尔 电视、美的空调、万播投影，来自 Flipper-IRDB，另含导入的用户码）。指定 command 时返回该按键的 Pronto Hex，可交给 ir_send_pronto 或 ir_code_send。", parameters: { type: "object", properties: { brand: { type: "string", description: "品牌，如 LG/三星/Sony/日立/三洋/海信" }, device: { type: "string", description: "设备类型，如 tv/ac，默认不限" }, query: { type: "string", description: "自由关键词：品牌/设备/按键（支持中英文）" }, command: { type: "string", description: "按键规范名，如 power/vol_up/mute/ch_up/ok/input" }, limit: { type: "integer", description: "返回条数，默认 8，上限 20" } } } },
+  { name: "ir_code_send", description: "按品牌+设备+按键从码表取码并真实发射（NEC/NECx/Sony/RC5 参数现场编译）。先 ir_available 确认有发射器；码表没有的设备先用 ir_code_import 批量导入或 ir_code_save 单条保存。", parameters: { type: "object", properties: { brand: { type: "string", description: "品牌，如 LG/三星/Sony/东芝/日立/三洋/海信/TCL/海尔/美的/万播" }, device: { type: "string", description: "设备类型，默认 tv" }, command: { type: "string", description: "按键，如 power/音量+/确定" }, frames: { type: "integer", description: "连发帧数 1-5，省略用协议默认（Sony 3，其余 2）" } }, required: ["brand", "command"] } },
+  { name: "ir_code_save", description: "把遥控码保存为用户码表条目（写入 ir_codes KV，同名品牌+设备+按键覆盖内置值）。pronto、carrier_hz+pattern、protocol+code 三选一。", parameters: { type: "object", properties: { brand: { type: "string" }, device: { type: "string", description: "设备类型，默认 tv" }, command: { type: "string", description: "按键名，如 power/vol_up 或自定义英文名" }, model: { type: "string" }, pronto: { type: "string", description: "Pronto Hex 0000 码" }, carrier_hz: { type: "integer", description: "载波频率 Hz，与 pattern 搭配，默认 38000" }, pattern: { type: "array", items: { type: "integer" }, description: "交替 on/off 微秒数组" }, protocol: { type: "string", description: "nec1/nec2/necx1/necx2/sony12/sony15/sony20/rc5" }, code: { type: "integer", description: "协议功能值 0-255，与 protocol 搭配" }, device_no: { type: "integer", description: "协议设备号，省略沿用同品牌既有条目" }, subdevice_no: { type: "integer", description: "协议子设备号 / NECx 高字节" } }, required: ["brand", "command"] } },
+  { name: "ir_code_import", description: "批量导入开源码表（irdb 风格 CSV/JSON）到用户码表（协议仅支持 NEC1/NEC2/NECx1/NECx2/Sony12/15/20/RC5，其余协议行会被跳过并如实返回）。引入的码表数据由来源许可约束。", parameters: { type: "object", properties: { brand: { type: "string", description: "品牌名（irdb 的 CSV 不含品牌，从路径指定）" }, device: { type: "string", description: "设备类型，默认 tv" }, csv: { type: "string", description: "irdb CSV 文本，每行 functionname,protocol,device,subdevice,function" }, rows_json: { type: "string", description: "或 JSON 数组 [{name,protocol,device,subdevice,function}]" } }, required: ["brand"] } },
   { name: "ir_code_delete", description: "删除用户保存的红外码（按 key 或 brand+device+command），不删除内置码表条目。", parameters: { type: "object", properties: { key: { type: "string", description: "ir_code_save 返回的 key" }, brand: { type: "string" }, device: { type: "string" }, command: { type: "string" } } } },
 ] satisfies PiTool[];
 
@@ -748,6 +827,27 @@ const LIVE_GUIDE_EN = [
 ].join("\n");
 
 /**
+ * 自我扩展（P1）：教模型在能力缺口时用 my_tool_create 生成可复用的新工具。
+ */
+const SELF_EXT_GUIDE = [
+  "自我扩展（生成新工具）：",
+  "- 仅当现有工具确实无法完成任务、且该能力预期会再次用到时，才用 my_tool_create 创建新工具；一次性任务不要建工具。",
+  "- 创建前先向用户简要说明：要建什么工具、为什么现有工具组合不够。创建成功后，下一轮对话即可直接调用该 my_* 工具；用 my_tool_test 验证后再正式使用。",
+  "- 工具形态：code 是 exports.tools = [{ name: \"run\", handler: function(args){...} }]；handler 内用 andagent.tool(name, JSON.stringify(args)) 调用 allow 白名单声明的现有工具（如 http_request、db_query、web_read），andagent.kv / andagent.fs / andagent.db 可存取状态，return 结果（可 JSON 序列化）。顶层代码保持纯净，不要在顶层调用工具。",
+  "- parameters_json 写参数 JSON Schema（type/properties/required），description 写清楚何时使用、返回什么，让以后的对话能直接用对。",
+  "- 管理用 my_tool_list / my_tool_read / my_tool_update（改代码需 confirm=true）/ my_tool_delete / my_tool_enable；上限 20 个，禁止 skill_/mcp_/cron_/live_/script_/my_ 前缀工具进白名单。",
+].join("\n");
+
+const SELF_EXT_GUIDE_EN = [
+  "Self-extension (tool generation):",
+  "- Only when existing tools genuinely cannot complete the task AND the capability is likely to be reused, create a new tool with my_tool_create. Do not create tools for one-off tasks.",
+  "- Before creating, briefly tell the user what tool you will build and why existing tools are insufficient. After creation it becomes callable in the next turn; verify with my_tool_test before real use.",
+  "- Tool shape: code is exports.tools = [{ name: \"run\", handler: function(args){...} }]. Inside the handler call allowlisted tools with andagent.tool(name, JSON.stringify(args)) (e.g. http_request, db_query, web_read); use andagent.kv / andagent.fs / andagent.db for state; return a JSON-serializable result. Keep top-level code pure; never call tools at top level.",
+  "- parameters_json is the arguments JSON Schema (type/properties/required); description must state when to use it and what it returns so later conversations use it correctly.",
+  "- Manage with my_tool_list / my_tool_read / my_tool_update (code changes need confirm=true) / my_tool_delete / my_tool_enable; max 20 tools; skill_/mcp_/cron_/live_/script_/my_ prefixed tools are forbidden in the allowlist.",
+].join("\n");
+
+/**
  * R101：网页开发闭环提示词。教 AI「生成网页 → 落盘 → 嵌入 → 用 CDP 查错/验证 → 修 → 交付」，
  * 而不是只在回复里贴一段代码让用户自己贴到浏览器。参考 CHART_GUIDE / LIVE_GUIDE 模式，
  * 中英双语，随语言注入 systemPrompt。
@@ -783,6 +883,18 @@ const NETWORK_GUIDE = [
   "http_request 返回 JSON：status/ok/url/headers/body/truncated/elapsedMs。长正文用 max_chars 控制；非 2xx 时先看 status 与 body 前段再决定是否重试，不要盲目重复同一请求。",
 ].join("\n");
 
+const WIFI_GUIDE = [
+  "Wi-Fi 免密入网（DPP）：wifi_easy_connect 先 action=status 看能力（easyConnectSupported、systemScannerAvailable），支持再 action=scan 拉起系统 DPP 扫码器——本机扫路由器/另一台手机显示的二维码免密入网。拿到一段 DPP URI 文本时用 action=uri 解析（band/信道/MAC/公钥），qr=true 可复刻成二维码给别的手机扫。诚实边界：Android 公开 API 只有 enrollee（本机扫码入网）角色，本机不能当 configurator 给 IoT/摄像头下发凭据（@SystemApi 不可调）——ESPHome 设备的配网要引导用户走设备自身的 Improv/AP 模式流程，不要声称用 wifi_easy_connect 能配 ESPHome。",
+  "Wi-Fi Direct（无路由器互连）：两台手机没有共同 Wi-Fi 时，一台 wifi_direct(action=create_group)（可指定 ssid/passphrase），另一台用「普通 Wi-Fi 连接」该热点即可；群主返回的 groupOwnerIp 可直接 http_request 通信（配合 R81 互传思路）。同网段 P2P 发现走 action=discover → connect（address=MAC）。注意：需要精确定位权限且定位开关打开，否则发现不到设备；用完 remove_group 清理。wifi_direct 是破坏性工具（会改网络连接），status 之外的调用前先向用户说明。",
+  "Wi-Fi RTT 测距：wifi_rtt(action=range) 对周边 802.11mc AP 米级测距，返回距离/标准差/RSSI 与可靠性评级（high/medium/low 按标准差分档）；bssid 可指定某个 AP，include_non_mc=true 仅 Android 12+ 可用且精度差。设备缺 FEATURE_WIFI_RTT 或 isAvailable=false 时如实告知，不要编造距离。需要精确定位权限与定位开关。",
+].join("\n");
+
+const WIFI_GUIDE_EN = [
+  "Wi-Fi passwordless join (DPP): call wifi_easy_connect with action=status first (easyConnectSupported, systemScannerAvailable), then action=scan to launch the system DPP scanner — the phone joins a network without typing a password by scanning the QR shown by a router or another phone. Given a DPP URI string, action=uri parses it (band/channel/MAC/public key) and qr=true re-renders it as a QR PNG for another phone. Honest boundary: the public Android API only offers the enrollee role (this phone joins a network); it cannot act as a configurator to hand credentials to IoT devices/cameras (@SystemApi is unreachable) — for ESPHome provisioning guide the user to the device's own Improv/AP-mode flow instead of claiming wifi_easy_connect can do it.",
+  "Wi-Fi Direct (router-free P2P): when two phones share no Wi-Fi, one runs wifi_direct(action=create_group) (optionally with ssid/passphrase) and the other joins that hotspot with a plain Wi-Fi connection; the owner's groupOwnerIp works directly with http_request (feeds the R81 transfer flow). Same-range peer discovery uses action=discover then connect (address=MAC). Note: requires fine location and the location toggle on, otherwise no peers are found; clean up with remove_group. wifi_direct is destructive (changes network state) — explain before any call beyond status.",
+  "Wi-Fi RTT ranging: wifi_rtt(action=range) ranges nearby 802.11mc APs to metre accuracy, returning distance/standard deviation/RSSI and a reliability grade (high/medium/low by std-dev); bssid targets one AP, include_non_mc=true is Android 12+ only and far less accurate. If the device lacks FEATURE_WIFI_RTT or isAvailable=false, say so — never invent distances. Requires fine location and the location toggle.",
+].join("\n");
+
 const NETWORK_GUIDE_EN = [
   "Network access: http_request is a generic HTTP client supporting GET/POST/PUT/DELETE/PATCH/HEAD, with headers_json for Authorization-style headers and body for payloads. It allows both http:// and https://, so use it first for LAN devices (Home Assistant at http://192.168.x.x:8123/api/, ESPHome, router APIs); keep web_read (HTTPS only) for web page text.",
   "For \"what is on this network\", start with lan_discover (protocol=both by default, SSDP + mDNS in parallel, ~3-5s). It returns name/category per device (tv, speaker, printer, home_assistant, nas, camera, router, cast, computer, iot, andagent = another AndAgent phone), address/port and TXT attributes; a home_assistant device's txt.base_url or location is its API entry, call it with http_request. Use upnp_describe(url=<that device's location>) for the model and controllable services (controlURL/SCPDURL).",
@@ -815,7 +927,7 @@ const SSH_TRANSFER_GUIDE_EN = [
 ].join("\n");
 
 const HARDWARE_GUIDE = [
-  "红外遥控：先用 ir_available 检测发射器。内置离线码表用 ir_code_search 按品牌/设备/按键查（收录 LG/Samsung/Sony/Philips 电视的电源、音量、频道、方向、确定、输入源、数字键，中英文品牌与按键名都能搜），再用 ir_code_send 直接发射。码表没收录的设备：联网查到 Pronto Hex 0000 后先 ir_code_save 存成用户码再发射（也可直接 ir_send_pronto）；自定义协议用 ir_send_raw 发交替 on/off 微秒数组。空调等多状态设备需要含温度/模式/风速的完整状态帧，内置表未收录，查到整帧后 ir_code_save 保存。搜索结果里带 pronto 的码可原样复用。个别机型按一次触发两次时把 ir_code_send 的 frames 设为 1。手机无红外硬件时如实告知，不能声称已发送。",
+  "红外遥控：先用 ir_available 检测发射器。内置码表（Flipper-IRDB，CC0）收录 LG/三星/Sony/东芝/日立/三洋/海信/TCL/海尔 电视、美的空调、万播投影的电源、音量、频道、方向、确定、输入源、数字键、温度等常用键，中英文品牌与按键名都能搜：ir_code_search 查询 → ir_code_send 直接发射，返回结果里带 pronto 的码也可用 ir_send_pronto 发送。码表没有的设备按需补：a) 联网查到 Pronto Hex 0000 后 ir_code_save 单条保存；b) 整品牌批量导入：web_read 取开源码库（如 github.com/probonopd/irdb 的 codes/<品牌>/<设备>/<device>,<subdevice>.csv），把 CSV 原文交给 ir_code_import（brand 必填、device 默认 tv），只接受 NEC1/NEC2/NECx1/NECx2/Sony12/15/20/RC5 参数行，其余协议会被跳过并如实报告，引入时遵守来源许可；c) 自定义协议用 ir_send_raw 发交替 on/off 微秒数组。个别机型按一次触发两次时把 ir_code_send 的 frames 设为 1。空调等多状态设备需要含温度/模式/风速的完整状态帧，用 ir_code_save 保存整帧。手机无红外硬件时如实告知，不能声称已发送。",
   "AirPods：airpods_scan 扫描附近广播；airpods_status / airpods_battery 查询近期状态和电量。",
   "airpods_monitor_start 开启可从通知停止的后台监听；airpods_monitor_stop 停止；airpods_history 取电量与佩戴历史，可用 ```chart 画续航趋势。",
   "监听值写入 KV 的 airpods/latest 和 airpods/history。```live 循环可用 andagent.kv.get('airpods','latest') 读取；检测佩戴状态 true→false 时用 media_send_key(keycode=pause) 暂停。低电量可调用 notify_send；跨 tick 保存上次状态避免重复触发。",
@@ -825,11 +937,12 @@ const HARDWARE_GUIDE = [
   "相机：先 camera_info 查能力（变焦范围、最近对焦、物理镜头角色 ultrawide/tele/macro、深度与 RAW 尺寸、厂商扩展列表）。手动 ISO/快门/曝光补偿/对焦用 camera_capture 的 iso/exposure_ns/ev/focus/focus_distance_cm；缺 MANUAL_SENSOR 时工具会返回 warnings 并降级，不要声称已手动控制。超广角/长焦/微距用 lens，变焦用 zoom（有 CONTROL_ZOOM_RATIO 走光学变焦比，否则中心裁切数码变焦）。RAW 用 camera_raw（DNG，需 RAW 能力）；深度图用 camera_depth（需 DEPTH_OUTPUT，可导 PLY 点云）；连续观察/实时 CV 用 camera_stream（亮度均值、帧间运动、条码、抽帧）；夜景/HDR/人像虚化先 camera_extension extension=info 看支持项，再用同一 extension 拍摄。能力缺失时如实告知，不要编造。",
   "蜂窝信号：问「信号为什么差/几格/什么频段/是不是 5G」先 cell_info 读主服与邻区（RSRP/RSRQ/RSSNR、SS-RSRP/SS-SINR、PCI/EARFCN、LTE 真实带宽、quality.overall 评级），用数值解释强弱（-80~-90 良好、-100 以下偏弱）；定位权限被拒或定位开关关闭会导致空列表，如实说明。cell_scan 只在用户明确要求主动扫网时调用——它需要 MODIFY_PHONE_STATE 签名权限，普通应用通常返回 ok=false/permission_denied，此时只报告缓存邻区，绝不能声称「已扫描到新小区」。问 5G 用 nr_bandwidth：NR 频段（n41/n78…）、NR-ARFCN→中心频率、FR1/FR2、SA/NSA；bandwidthEstimateMhz 是频段上限估算而不是实测占用带宽，必须说明这一点，只有 LTE 的 bandwidthKhz 是真实值。",
   "流量配额：data_policy 给 Data Saver 状态、周期移动流量、Top 应用与配额预测。NetworkPolicyManager 属系统接口，普通应用通常 access=denied，不要编造运营商配额数字；用户报了套餐额度（如 30GB）就传 limit_mb 让工具算剩余量与耗尽天数，再据此建议是否关掉大流量应用或改用 Wi-Fi。缺「使用情况访问」权限时引导用户去 设置 → 特殊应用权限 → 使用情况访问 授权。",
+  "eSIM 管理：换卡/换套餐先 esim_status 看能力与在档 profile（euiccEnabled=false 多为国行阉割 eSIM 或缺 LPA，如实说明别硬试）。下载用 esim_download（activation_code 传运营商二维码里的 LPA:1$smdp$匹配ID，整段原文传入，可选 switch_after）；启用/停用/删除分别用 esim_enable/esim_disable/esim_delete，删除必须 confirm=true 且不可逆。这三类写操作要求 WRITE_EMBEDDED_SUBSCRIPTIONS（签名权限）或该 profile 的运营商特权，普通应用常被拒——返回 reason=permission_denied 时如实说明，并引导走运营商官方 App 或 设置→SIM 卡 手动激活，绝不能声称已下载/已切换/已删除。resultCode=1（resolvable_errors）表示系统 LPA 还有确认项要用户在系统界面点，本工具无法代点。",
   "音频效果链：audio_effect 用 MediaPlayer 播放本地音频并把 eq/bass/reverb/virtualizer 挂在本次 audio session 上；play 立即返回但音频在后台继续，需要调参就 action=set，结束务必 action=stop（否则会一直播放）。eq_preset 用设备预设名，逐频段用 eq_bands=60:4,230:-2；reverb_preset 默认 mediumroom。是否真的生效看 effects[].enabled/hasControl，不能只看请求参数。audio_focus 管理抢占/让出：播放默认申请 gain，被通话或其他播放器抢占会收到 loss/loss_transient（自动暂停或压低音量），status 的 events 是证据；只在用户明确要求时手动 request/abandon。spatial_audio 只在 Android 12+ 存在，RESTRICTED 或 available=false 时如实说明，不要谎称已开启空间音频。audio_record_ex 的 source=unprocessed 才是原始源（关闭 AGC/降噪/均衡），用返回的 rawSource/sourceFallback 判断是否真拿到原始数据；fallback=true 时设备不支持会退回 voice_recognition。",
 ].join("\n");
 
 const HARDWARE_GUIDE_EN = [
-  "Infrared remote: check ir_available first. Use ir_code_search to look up the built-in offline code table by brand/device/command (LG, Samsung, Sony and Philips TVs: power, volume, channel, navigation, OK, input source and digits; Chinese and English brand/command names both work), then fire it with ir_code_send. For devices not in the table, find a Pronto Hex 0000 code online and persist it with ir_code_save before sending (or use ir_send_pronto directly); custom protocols go through ir_send_raw with on/off microsecond patterns. Stateful air conditioners need a full frame encoding temperature, mode and fan speed — the built-in table does not cover them, so save the whole frame with ir_code_save. If a device reacts twice per press, set frames=1 on ir_code_send. If the phone lacks an IR emitter, report that accurately.",
+  "Infrared remote: check ir_available first. The built-in table (Flipper-IRDB, CC0) covers LG, Samsung, Sony, Toshiba, Hitachi, Sanyo, Hisense, TCL and Haier TVs, Midea air conditioners and Wanbo projectors with common keys (power, volume, channel, navigation, OK, input source, digits); Chinese and English brand/command names both work — look up with ir_code_search, fire with ir_code_send; pronto values in the results also work with ir_send_pronto. For missing devices, fill on demand: a) find Pronto Hex 0000 online and persist it with ir_code_save; b) for a whole brand, web_read an open-source code table such as irdb (github.com/probonopd/irdb, codes/<brand>/<device>/<device>,<subdevice>.csv) and hand the CSV text to ir_code_import (brand required, device defaults to tv) — only NEC1/NEC2/NECx1/NECx2/Sony12/15/20/RC5 rows are accepted, others are skipped and reported; respect each source's license; c) custom protocols go through ir_send_raw with on/off microsecond patterns. If a device reacts twice per press, set frames=1 on ir_code_send. Stateful air conditioners need a full frame encoding temperature, mode and fan speed — save the whole frame with ir_code_save. If the phone lacks an IR emitter, report that accurately.",
   "AirPods: use airpods_scan to discover nearby broadcasts; airpods_status / airpods_battery for recent status and charge.",
   "airpods_monitor_start enables background monitoring with a notification stop action; airpods_monitor_stop stops it. airpods_history supplies battery and in-ear history for a ```chart trend.",
   "Monitor data is available in KV at airpods/latest and airpods/history. A ```live loop can read andagent.kv.get('airpods','latest'). On an in-ear true-to-false transition, call media_send_key(keycode=pause); use notify_send for low charge. Save prior state across ticks to avoid repeats.",
@@ -839,6 +952,7 @@ const HARDWARE_GUIDE_EN = [
   "Cameras: call camera_info first (zoom range, minimum focus distance, physical lens roles ultrawide/tele/macro, depth and RAW sizes, OEM extension list). Manual ISO/shutter/EV/focus use camera_capture with iso/exposure_ns/ev/focus/focus_distance_cm; when MANUAL_SENSOR is missing the tool returns warnings and falls back — never claim manual control happened. Pick lenses with lens and zoom with zoom (optical zoom ratio when CONTROL_ZOOM_RATIO exists, otherwise a digital centre crop). RAW/DNG uses camera_raw (RAW capability required); depth maps use camera_depth (DEPTH_OUTPUT required, optional PLY point cloud); continuous observation / real-time CV uses camera_stream (luma mean, inter-frame motion, barcode, frame dumps); night/HDR/bokeh start with camera_extension extension=info before shooting. Report missing capabilities honestly instead of inventing results.",
   "Cellular signal: for 'why is my signal bad / how many bars / which band / is it 5G' start with cell_info (serving and neighbour cells with RSRP/RSRQ/RSSNR, SS-RSRP/SS-SINR, PCI/EARFCN, real LTE bandwidth and quality.overall). Explain strength with the numbers (-80 to -90 good, below -100 weak); a denied location permission or a disabled location switch yields an empty list, so say so. Call cell_scan only when the user explicitly asks for a fresh over-the-air scan — it needs the MODIFY_PHONE_STATE signature permission, so third-party apps usually get ok=false/permission_denied; report the cached cells and never claim new cells were scanned. For 5G use nr_bandwidth (NR bands n41/n78…, NR-ARFCN to centre frequency, FR1/FR2, SA/NSA); bandwidthEstimateMhz is a 3GPP band upper bound, not the measured channel width, and must be described that way — only LTE bandwidthKhz is a real value.",
   "Data quota: data_policy reports Data Saver status, the mobile window usage, top apps and quota projections. NetworkPolicyManager is a system interface, so access is usually denied — never invent carrier quota numbers. When the user states a plan size (e.g. 30GB), pass limit_mb so the tool can compute remaining data and days until exhaustion, then advise on heavy apps or Wi-Fi. Without usage access, guide the user to Settings → Special app access → Usage access.",
+  "eSIM management: before any SIM swap, call esim_status for capability and the on-device profile list (euiccEnabled=false usually means the device ships without eSIM/LPA — common on China-market ROMs; say so instead of forcing the attempt). Download with esim_download (activation_code takes the full LPA:1$smdp$matchingId payload from the carrier QR code; optional switch_after). Enable/disable/delete use esim_enable / esim_disable / esim_delete, and deletion requires confirm=true and is irreversible. These write operations require WRITE_EMBEDDED_SUBSCRIPTIONS (signature permission) or carrier privileges on the target profile, so third-party callers are usually denied — when reason=permission_denied comes back, report it honestly and point the user to the carrier app or Settings → SIM cards; never claim a profile was downloaded, switched or deleted. resultCode=1 (resolvable_errors) means the system LPA still has a consent step the user must complete in its own UI, which this tool cannot do for them.",
   "Audio effect chain: audio_effect plays a local file with MediaPlayer and attaches eq/bass/reverb/virtualizer to that audio session. play returns immediately while audio keeps playing in the background, so use action=set to adjust live and always action=stop when done (otherwise playback continues). eq_preset uses device preset names; per-band shaping uses eq_bands=60:4,230:-2; reverb_preset defaults to mediumroom. Check effects[].enabled/hasControl for what actually took effect instead of trusting the request. audio_focus manages preemption: playback requests gain by default, and loss/loss_transient callbacks (auto-pause or ducking) are recorded in status.events; only call request/abandon manually when the user asks. spatial_audio exists on Android 12+ only; when it returns RESTRICTED or available=false, say so instead of claiming spatial audio is on. For audio_record_ex, only source=unprocessed yields the raw source (AGC/noise suppression/EQ bypassed); use rawSource/sourceFallback to verify, and note that fallback=true silently falls back to voice_recognition on unsupported devices.",
 ].join("\n");
 
@@ -857,6 +971,7 @@ const SHORTCUT_GUIDE_EN = [
 const STORAGE_MEDIA_GUIDE = [
   "文本转音频文件用 tts_to_file；返回 path 后，用 ```audio 围栏展示，内容为 JSON：{\"uri\":\"返回的 path\",\"title\":\"音频\"}。用户可点播放器播放；文件保存在应用 exports 目录。",
   "语音输入用 speech_recognize：用户说话（默认 zh-CN，可用 language 指定）→ 返回 text/confidence → 再按需求处理；它与 tts_to_file 构成「听/说」闭环。设备无系统识别服务时如实报错，不要用 mic_record 假装转写。",
+  "图片文字识别用 ocr_text（离线 OCR，中英混排均可）：用户发来截图/照片/截图路径，或要求「把图里的字读出来/转成文本」时，把图片路径或 uri 作为 source 调用；返回 status/text/lines（含坐标）。status=NO_TEXT 表示图中没有可识别文字，如实告知即可。看不到像素不要猜内容——一切以 ocr_text 返回为准。",
   "结构化存储：用户要记账、清单或笔记库时，先用 db_create 建库，再用 db_exec 建表，后续用参数化 INSERT 和 db_query SELECT。",
   "轻量键值：用户要记住偏好、计数器或小型状态时，用 kv_set 写入，kv_get/kv_keys 读取；临时数据加 ttl_ms；清空命名空间用 kv_clear 且 confirm=true；备份/恢复用 kv_export/kv_import（replace 需 confirm=true）（最多 64 个命名空间、每命名空间 512 键、单值 64KB）。",
   "记账表例：CREATE TABLE records(id INTEGER PRIMARY KEY, date TEXT, item TEXT, amount REAL)。",
@@ -866,6 +981,7 @@ const STORAGE_MEDIA_GUIDE = [
 const STORAGE_MEDIA_GUIDE_EN = [
   "Use tts_to_file to create an audio file from text. After it returns path, show a ```audio fence containing JSON {\"uri\":\"returned path\",\"title\":\"Audio\"}. The user can play it in the card; the file is saved in the app exports directory.",
   "Use speech_recognize for voice input: the user speaks (default zh-CN; set language for other locales) and you get text/confidence to act on. Together with tts_to_file it closes the listen/speak loop. If the device has no recognition service, report the error instead of pretending mic_record transcribed audio.",
+  "For text in images (OCR) use ocr_text (offline, handles mixed Chinese/Latin): pass the image path or uri as source — e.g. the path returned by screen_capture or camera_capture. It returns status/text/lines (with boxes). status=NO_TEXT means no readable text; say so honestly. You cannot see pixels — never guess image content, trust the ocr_text result.",
   "Structured storage: for expenses, lists, or notes, create a database with db_create, then a table with db_exec; use parameterized INSERT and db_query SELECT afterward.",
   "Key-value storage: use kv_set for preferences, counters, or small state; kv_get/kv_keys to read. Use ttl_ms for temporary values. kv_clear requires confirm=true; kv_export/kv_import handle JSON backups (replace requires confirm=true) (up to 64 namespaces, 512 keys per namespace, 64KB per value).",
   "Example expense schema: CREATE TABLE records(id INTEGER PRIMARY KEY, date TEXT, item TEXT, amount REAL).",
@@ -1538,6 +1654,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? WEB_DEV_GUIDE_EN : WEB_DEV_GUIDE,
               currentLanguage() === "en" ? HARDWARE_GUIDE_EN : HARDWARE_GUIDE,
               currentLanguage() === "en" ? NETWORK_GUIDE_EN : NETWORK_GUIDE,
+              currentLanguage() === "en" ? WIFI_GUIDE_EN : WIFI_GUIDE,
               currentLanguage() === "en" ? A11Y_GUIDE_EN : A11Y_GUIDE,
               currentLanguage() === "en" ? SSH_TRANSFER_GUIDE_EN : SSH_TRANSFER_GUIDE,
               currentLanguage() === "en" ? SHORTCUT_GUIDE_EN : SHORTCUT_GUIDE,
@@ -1545,6 +1662,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? MEDIA_CONTEXT_GUIDE_EN : MEDIA_CONTEXT_GUIDE,
               currentLanguage() === "en" ? A2UI_GUIDE_EN : A2UI_GUIDE,
               currentLanguage() === "en" ? PERMISSION_GUIDE_EN : PERMISSION_GUIDE,
+              currentLanguage() === "en" ? SELF_EXT_GUIDE_EN : SELF_EXT_GUIDE,
             ]
               .filter(Boolean)
               .join("\n\n"),

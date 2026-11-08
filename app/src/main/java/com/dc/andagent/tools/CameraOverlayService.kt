@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.SurfaceTexture
+import android.graphics.drawable.GradientDrawable
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -28,6 +29,7 @@ import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -167,13 +169,29 @@ class CameraOverlayService : Service() {
 
     /** 应用内模式：TextureView 挂到宿主 content（decorView 叠加），不经 WindowManager。 */
     private fun buildInAppOverlay(host: FrameLayout): FrameLayout {
-        val frame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        val frame = FrameLayout(this).apply { setBackgroundColor(com.dc.andagent.ui.OverlayChrome.BG) }
         val preview = TextureView(this)
+        preview.surfaceTextureListener = previewListener()
         frame.addView(preview, FrameLayout.LayoutParams(-1, -1))
         texture = preview
         root = frame
         // createOverlay 里 layout 的参数由 WindowManager 用；应用内模式无 updateLayout 意义。
         return frame
+    }
+
+    /** 预览缓冲与视图比例不一致时按 center-crop 变换，避免画面拉伸。 */
+    private fun applyPreviewTransform(view: TextureView, bufferW: Int, bufferH: Int) {
+        main.post {
+            if (view.width <= 0 || view.height <= 0 || bufferW <= 0 || bufferH <= 0) return@post
+            val vw = view.width.toFloat(); val vh = view.height.toFloat()
+            // TextureView 默认把缓冲拉伸铺满视图；矩阵需在拉伸基础上补偿：
+            // 目标是缓冲以统一比例 scale 显示（center-crop），居中裁掉溢出部分。
+            val scale = maxOf(vw / bufferW, vh / bufferH)
+            view.setTransform(android.graphics.Matrix().apply {
+                setScale(scale * bufferW / vw, scale * bufferH / vh)
+                postTranslate((vw - bufferW * scale) / 2f, (vh - bufferH * scale) / 2f)
+            })
+        }
     }
 
     private fun startCameraForeground() {
@@ -192,20 +210,49 @@ class CameraOverlayService : Service() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     private fun createOverlay() {
-        val frame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        val frame = FrameLayout(this).apply {
+            elevation = dp(8).toFloat()
+            com.dc.andagent.ui.OverlayChrome.applyRounded(this)
+            com.dc.andagent.ui.OverlayChrome.background(this)
+        }
         val preview = TextureView(this)
-        val header = LinearLayout(this).apply { setBackgroundColor(0xBB222222.toInt()); gravity = Gravity.CENTER_VERTICAL }
-        val title = TextView(this).apply { text = "相机预览  ·  拖动移动"; setTextColor(Color.WHITE); setPadding(dp(10), 0, dp(8), 0) }
-        val close = TextView(this).apply { text = "✕"; setTextColor(Color.WHITE); textSize = 20f; setPadding(dp(12), 0, dp(12), 0); setOnClickListener { stopSelf() } }
-        header.addView(title, LinearLayout.LayoutParams(0, -1, 1f))
-        header.addView(close, LinearLayout.LayoutParams(-2, -1))
+        // PiP 风格：预览铺满圆角窗口，顶部半透明渐变浮层承载标题与关闭按钮。
+        val header = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xB3000000.toInt(), 0x00000000))
+            setPadding(dp(12), dp(2), dp(4), dp(10))
+        }
+        val title = TextView(this).apply {
+            text = "相机预览"; setTextColor(Color.WHITE); textSize = 13f; isSingleLine = true
+        }
+        val close = TextView(this).apply {
+            text = "✕"; setTextColor(Color.WHITE); textSize = 14f
+            background = GradientDrawable().apply { setColor(0x40FFFFFF.toInt()); cornerRadius = dp(14).toFloat() }
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+            setOnClickListener { stopSelf() }
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(close, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         frame.addView(preview, FrameLayout.LayoutParams(-1, -1))
-        frame.addView(header, FrameLayout.LayoutParams(-1, dp(40), Gravity.TOP))
+        frame.addView(header, FrameLayout.LayoutParams(-1, dp(48), Gravity.TOP))
         var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
         title.setOnTouchListener { _: View, event: MotionEvent ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { downX = event.rawX; downY = event.rawY; startX = layout?.x ?: 0; startY = layout?.y ?: 0; true }
-                MotionEvent.ACTION_MOVE -> { layout?.let { it.x = startX + (event.rawX - downX).toInt(); it.y = startY + (event.rawY - downY).toInt(); windows.updateViewLayout(frame, it); spec = spec.copy(x = (it.x / resources.displayMetrics.density).toInt().coerceIn(-2000, 2000), y = (it.y / resources.displayMetrics.density).toInt().coerceIn(-2000, 2000)) }; true }
+                MotionEvent.ACTION_MOVE -> {
+                    layout?.let {
+                        val dm = resources.displayMetrics
+                        // 边界夹取：浮窗至少保留 56dp 在屏幕内，标题栏始终可抓取。
+                        val grab = dp(56)
+                        it.x = (startX + (event.rawX - downX).toInt()).coerceIn(-(it.width - grab), dm.widthPixels - grab)
+                        it.y = (startY + (event.rawY - downY).toInt()).coerceIn(0, dm.heightPixels - grab)
+                        windows.updateViewLayout(frame, it)
+                        spec = spec.copy(
+                            x = (it.x / dm.density).toInt().coerceIn(-2000, 2000),
+                            y = (it.y / dm.density).toInt().coerceIn(-2000, 2000))
+                    }
+                    true
+                }
                 else -> true
             }
         }
@@ -214,13 +261,17 @@ class CameraOverlayService : Service() {
             gravity = Gravity.TOP or Gravity.START; x = dp(spec.x); y = dp(spec.y)
         }
         windows.addView(frame, params)
+        com.dc.andagent.ui.OverlayChrome.enter(frame)
         root = frame; texture = preview; layout = params
-        preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) { openWhenReady() }
-            override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) { openWhenReady() }
-            override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean { cameraHandler.post { closeCamera() }; return true }
-            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
-        }
+        preview.surfaceTextureListener = previewListener()
+    }
+
+    /** 系统浮窗与应用内模式共用：surface 就绪/变化时打开相机，销毁时释放。 */
+    private fun previewListener() = object : TextureView.SurfaceTextureListener {
+        override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) { openWhenReady() }
+        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) { openWhenReady() }
+        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean { cameraHandler.post { closeCamera() }; return true }
+        override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
     }
 
     private fun updateLayout() {
@@ -243,8 +294,12 @@ class CameraOverlayService : Service() {
                 val id = manager.cameraIdList.firstOrNull { manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == facing }
                     ?: error("设备没有${if (camera == "front") "前" else "后"}置摄像头")
                 val sizes = manager.getCameraCharacteristics(id).get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(SurfaceTexture::class.java)
-                val size = sizes?.minByOrNull { kotlin.math.abs(it.width.toLong() * it.height - width.toLong() * height) }
+                // 先按宽高比匹配（防预览拉伸变形），同比值的候选里再取面积最接近的。
+                val viewRatio = width.toDouble() / height
+                val size = sizes?.groupBy { kotlin.math.abs(it.width.toDouble() / it.height - viewRatio) }
+                    ?.minByOrNull { it.key }?.value?.minByOrNull { kotlin.math.abs(it.width.toLong() * it.height - width.toLong() * height) }
                 surfaceTexture.setDefaultBufferSize(size?.width ?: width, size?.height ?: height)
+                applyPreviewTransform(view, size?.width ?: width, size?.height ?: height)
                 val surface = Surface(surfaceTexture)
                 previewSurface = surface
                 manager.openCamera(id, object : CameraDevice.StateCallback() {
@@ -283,7 +338,12 @@ class CameraOverlayService : Service() {
     private fun fail(message: String) { lastError = message; stopSelf() }
 
     override fun onDestroy() {
-        root?.let { runCatching { windows.removeViewImmediate(it) } }
+        // 应用内模式：清空宿主引用，防止相机挂在已销毁的 decorView 上继续运行。
+        inAppContent = null
+        root?.let { r ->
+            val parent = r.parent as? ViewGroup
+            if (parent != null) parent.removeView(r) else runCatching { windows.removeViewImmediate(r) }
+        }
         root = null; texture = null; layout = null
         if (::cameraHandler.isInitialized) { cameraHandler.post { closeCamera(); cameraThread.quitSafely() } }
         if (instance === this) instance = null
@@ -319,13 +379,12 @@ class CameraOverlayTool(private val context: Context, private val permissions: P
             // 相机预览仍真实渲染（TextureView 在 app 内），授权真实浮窗后可无缝升级。
             val activity = activityProvider()
             if (activity != null) {
+                // contentHook 挂载相机渲染；onDismiss 在浮窗关闭时停止相机服务。
                 com.dc.andagent.tools.InAppOverlayHost.show(
                     activity, "相机预览（应用内浮窗·授权后升级系统级）", spec.widthDp, spec.heightDp, spec.x, spec.y,
-                ) { content ->
-                    // 相机渲染由 CameraOverlayService 的相机管线挂到 content；
-                    // 这里启动服务但让服务以应用内模式挂载（无 WindowManager）。
-                    CameraOverlayService.startInApp(activity, content, spec)
-                }
+                    { content -> CameraOverlayService.startInApp(activity, content, spec) },
+                    { CameraOverlayService.hide(activity) },
+                )
                 return "OK: 无悬浮窗权限，已以应用内伪浮窗显示相机预览（仅本应用内可见）。授权悬浮窗后自动升级系统级浮窗。"
             }
             return overlayError

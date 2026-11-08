@@ -30,20 +30,26 @@ class FloatingMirrorWindow(
     private val wm = context.getSystemService(WindowManager::class.java)
     private val density = context.resources.displayMetrics.density
     private val width = (240 * density).toInt()
+    private val screenW = context.resources.displayMetrics.widthPixels
+    private val screenH = context.resources.displayMetrics.heightPixels
+    private val grab = (56 * density).toInt()
     private val params = WindowManager.LayoutParams(
         width, (width * 9 / 16) + (28 * density).toInt(),
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-        android.graphics.PixelFormat.OPAQUE,
+        android.graphics.PixelFormat.TRANSLUCENT,
     ).apply { gravity = Gravity.TOP or Gravity.START; x = (16 * density).toInt(); y = (80 * density).toInt() }
-    private val border = GradientDrawable().apply { setColor(Color.BLACK) }
+    private val border = GradientDrawable().apply {
+        setColor(com.dc.andagent.ui.OverlayChrome.BG)
+        cornerRadius = 16 * density
+    }
     private val root = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; background = border }
     private val surface = SurfaceView(context)
     private val touchLayer = View(context).apply { visibility = View.GONE }
     private val handler = Handler(Looper.getMainLooper())
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private val message = TextView(context).apply {
-        setTextColor(Color.WHITE); setBackgroundColor(0xcc222222.toInt()); gravity = Gravity.CENTER
+        setTextColor(Color.WHITE); setBackgroundColor(0xCC121721.toInt()); gravity = Gravity.CENTER
         text = "正在连接…"; visibility = View.VISIBLE
         setOnClickListener { onReconnect() }
     }
@@ -68,10 +74,12 @@ class FloatingMirrorWindow(
 
     init {
         updateBorder()
-        val bar = LinearLayout(context).apply { setBackgroundColor(0xff252525.toInt()); gravity = Gravity.CENTER_VERTICAL }
-        val title = TextView(context).apply { text = "ADB 投屏"; setTextColor(Color.WHITE); setPadding(8, 0, 0, 0) }
+        com.dc.andagent.ui.OverlayChrome.applyRounded(root)
+        root.elevation = 8 * density
+        val bar = LinearLayout(context).apply { setBackgroundColor(com.dc.andagent.ui.OverlayChrome.HEADER_BG); gravity = Gravity.CENTER_VERTICAL }
+        val title = TextView(context).apply { text = "ADB 投屏"; setTextColor(com.dc.andagent.ui.OverlayChrome.TEXT); setPadding((12 * density).toInt(), 0, 0, 0) }
         val close = TextView(context).apply {
-            text = "关闭"; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            text = "✕"; setTextColor(com.dc.andagent.ui.OverlayChrome.TEXT_DIM); textSize = 16f; gravity = Gravity.CENTER
             setOnClickListener { onClose() }
         }
         bar.addView(title, LinearLayout.LayoutParams(0, (28 * density).toInt(), 1f))
@@ -107,8 +115,9 @@ class FloatingMirrorWindow(
     }
 
     private fun moveWindow(rawX: Float, rawY: Float) {
-        params.x = startX + (rawX - dragX).toInt()
-        params.y = startY + (rawY - dragY).toInt()
+        // 边界夹取：浮窗至少保留 56dp 在屏幕内。
+        params.x = (startX + (rawX - dragX).toInt()).coerceIn(-(width - grab), screenW - grab)
+        params.y = (startY + (rawY - dragY).toInt()).coerceIn(0, screenH - grab)
         if (shown) wm.updateViewLayout(root, params)
     }
 
@@ -179,7 +188,7 @@ class FloatingMirrorWindow(
         badge.visibility = if (available && !passthrough) View.GONE else View.VISIBLE
     }
 
-    fun show() { wm.addView(root, params); shown = true }
+    fun show() { wm.addView(root, params); com.dc.andagent.ui.OverlayChrome.enter(root); shown = true }
     fun showConnecting() { setControl(false); touchLayer.visibility = View.GONE; message.text = "正在连接…"; message.visibility = View.VISIBLE }
     fun showDisconnected() { setControl(false); touchLayer.visibility = View.GONE; message.text = "连接断开，点击重连"; message.visibility = View.VISIBLE }
     fun showVideo() { message.visibility = View.GONE; touchLayer.visibility = View.VISIBLE }

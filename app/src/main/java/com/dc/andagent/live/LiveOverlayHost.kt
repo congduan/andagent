@@ -3,7 +3,6 @@ package com.dc.andagent.live
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.net.Uri
@@ -56,14 +55,22 @@ class LiveOverlayHost(private val activity: Activity) {
 
     private class ResultCanvas(activity: Activity) : View(activity) {
         var value: JsonElement = JsonPrimitive("")
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 34f }
+        private val density = activity.resources.displayMetrics.density
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         override fun onDraw(canvas: Canvas) {
-            canvas.drawColor(0xEE101820.toInt())
-            paint.color = 0xFF7DD3FC.toInt(); paint.textSize = 34f
-            canvas.drawText("Live", 20f, 42f, paint)
-            paint.color = Color.WHITE; paint.textSize = 25f
+            // 与 OverlayChrome token 对齐：card-bg 圆角底 + 9% 白描边。
+            val r = 16f * density
+            canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r,
+                Paint(Paint.ANTI_ALIAS_FLAG).apply { color = com.dc.andagent.ui.OverlayChrome.BG })
+            canvas.drawRoundRect(density / 2f, density / 2f, width - density / 2f, height - density / 2f, r, r,
+                Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    style = Paint.Style.STROKE; strokeWidth = density; color = com.dc.andagent.ui.OverlayChrome.BORDER
+                })
+            paint.color = com.dc.andagent.ui.OverlayChrome.ACCENT; paint.textSize = 14f * density
+            canvas.drawText("Live", 14f * density, 20f * density, paint)
+            paint.color = com.dc.andagent.ui.OverlayChrome.TEXT; paint.textSize = 11f * density
             val lines = value.toString().chunked(42).take(5)
-            lines.forEachIndexed { index, line -> canvas.drawText(line, 20f, 78f + index * 27f, paint) }
+            lines.forEachIndexed { index, line -> canvas.drawText(line, 14f * density, 36f * density + index * 16f * density, paint) }
         }
     }
 }

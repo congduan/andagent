@@ -285,8 +285,16 @@ function install(): void {
     memoryPrompt: () => "",
     memoryCall: (name) => (name === "memory_get_all" ? "[]" : "{}"),
 
-    /* 技能 */
-    extensionTools: () => "[]",
+    /* 技能 + 自我扩展（my_tool_* 元工具 schema 样例，自建工具列表为空） */
+    extensionTools: () => JSON.stringify([
+      { name: "my_tool_create", description: "[mock] 创建并注册新的自建工具（自我扩展）。", parameters: { type: "object", properties: { name: { type: "string" }, description: { type: "string" }, code: { type: "string" }, allow: { type: "string" }, parameters_json: { type: "string" }, reason: { type: "string" } }, required: ["name", "description", "code"] } },
+      { name: "my_tool_list", description: "[mock] 列出全部自建工具（my_*）。", parameters: { type: "object", properties: {} } },
+      { name: "my_tool_read", description: "[mock] 读取自建工具的 JS 源码。", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
+      { name: "my_tool_update", description: "[mock] 修改自建工具，需 confirm=true。", parameters: { type: "object", properties: { name: { type: "string" }, code: { type: "string" }, confirm: { type: "boolean" } }, required: ["name", "confirm"] } },
+      { name: "my_tool_delete", description: "[mock] 删除自建工具，需 confirm=true。", parameters: { type: "object", properties: { name: { type: "string" }, confirm: { type: "boolean" } }, required: ["name", "confirm"] } },
+      { name: "my_tool_test", description: "[mock] 用测试参数运行自建工具。", parameters: { type: "object", properties: { name: { type: "string" }, args_json: { type: "string" } }, required: ["name"] } },
+      { name: "my_tool_enable", description: "[mock] 启用或停用自建工具。", parameters: { type: "object", properties: { name: { type: "string" }, enabled: { type: "boolean" } }, required: ["name", "enabled"] } },
+    ]),
     skillPrompt: () => "",
     skillManage: () => unavailable("技能管理"),
     mcpManage: () => unavailable("MCP 管理"),

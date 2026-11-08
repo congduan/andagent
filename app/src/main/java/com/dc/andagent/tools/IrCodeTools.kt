@@ -10,8 +10,9 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 
-/** R113：内置红外码表工具（离线查询 + 按品牌按键发射 + 用户码增删）。 */
-val IR_CODE_TOOLS = listOf("ir_code_search", "ir_code_send", "ir_code_save", "ir_code_delete")
+/** R116：内置红外码表工具（离线查询 + 按品牌按键发射 + 用户码增删/批量导入）。 */
+val IR_CODE_TOOLS =
+    listOf("ir_code_search", "ir_code_send", "ir_code_save", "ir_code_import", "ir_code_delete")
 
 /**
  * 码表检索/发射/维护。
@@ -28,28 +29,32 @@ class IrCodeTool(
 
     override val description = when (name) {
         "ir_code_search" ->
-            "在内置红外码表（随 APK 打包，离线）中按品牌/设备/按键检索遥控码。" +
+            "在红外码表中按品牌/设备/按键检索遥控码（内容 = ir_code_import/ir_code_save 导入的用户码，内置品牌表已清空）。" +
                 "指定 command 时直接返回该按键的 Pronto Hex 与波形参数，可交给 ir_send_pronto 或 ir_code_send。"
         "ir_code_send" ->
-            "按品牌+设备+按键从内置红外码表取码并真实发射（NEC/NECx/Sony/RC5）。" +
-                "先 ir_available 确认有发射器；码表没收录的设备用 ir_code_save 存入 Pronto Hex 后用本工具发射。"
+            "按品牌+设备+按键从码表取码并真实发射（NEC/NECx/Sony/RC5 参数由协议编码器现场编译）。" +
+                "先 ir_available 确认有发射器；码表没有的设备，联网查到码后用 ir_code_import 批量导入或 ir_code_save 单条保存。"
         "ir_code_save" ->
             "把遥控码保存为用户码表条目：可用 pronto（Pronto Hex）、carrier_hz+pattern（裸 on/off 微秒数组）" +
-                "或 protocol+code（协议参数，protocol 支持 NEC1/NECx2/Sony12/RC5 等）。同名品牌+设备+按键会覆盖内置码。"
+                "或 protocol+code（协议参数，protocol 支持 NEC1/NECx2/Sony12/RC5 等）。同名品牌+设备+按键会覆盖旧值。"
+        "ir_code_import" ->
+            "批量导入开源码表：给 brand（+device）与 csv（irdb 风格的 functionname,protocol,device,subdevice,function 行）" +
+                "或 rows_json（同字段 JSON 数组），逐行校验协议（NEC/NECx/Sony/RC5）后写入用户码表。" +
+                "不支持的协议会被跳过并如实返回；引入的码表数据由来源许可约束，需自行确认。"
         else ->
-            "删除用户保存的红外码（按 key，或 brand+device+command）。不删除内置码表条目。"
+            "删除用户保存的红外码（按 key，或 brand+device+command）。"
     }
 
     override val parameters = when (name) {
         "ir_code_search" -> schemaOf(
-            "brand" to strParam("品牌，如 LG/三星/Sony/飞利浦；可省略"),
+            "brand" to strParam("品牌，如 Samsung/LG；可省略"),
             "device" to strParam("设备类型，如 tv/ac（默认不限）"),
             "query" to strParam("自由关键词：品牌、设备或按键名（支持中英文，如 音量/静音/电源）"),
             "command" to strParam("按键规范名，如 power/vol_up/mute/ch_up/ok/input；给出时返回可发射的码"),
             "limit" to intParam("返回条数，默认 8，上限 20"),
         )
         "ir_code_send" -> schemaOf(
-            "brand" to strParam("品牌，如 LG/三星/Sony/飞利浦"),
+            "brand" to strParam("品牌，如 Samsung/LG"),
             "device" to strParam("设备类型，默认 tv"),
             "command" to strParam("按键，如 power/vol_up/mute/ok/频道+/音量-"),
             "frames" to intParam("连发帧数 1-5；省略用协议默认（Sony 3，其余 2）"),
@@ -73,6 +78,13 @@ class IrCodeTool(
             "subdevice_no" to intParam("协议子设备号 / NECx 高字节"),
             required = listOf("brand", "command"),
         )
+        "ir_code_import" -> schemaOf(
+            "brand" to strParam("品牌名，如 Hisense/长虹/客厅投影（irdb 的 CSV 不含品牌，需从路径指定）"),
+            "device" to strParam("设备类型，默认 tv"),
+            "csv" to strParam("irdb 风格的 CSV 文本，每行 functionname,protocol,device,subdevice,function；表头行会自动跳过"),
+            "rows_json" to strParam("或直接给 JSON 数组：[{\"name\":\"POWER\",\"protocol\":\"NEC1\",\"device\":4,\"subdevice\":-1,\"function\":8}]"),
+            required = listOf("brand"),
+        )
         else -> schemaOf(
             "key" to strParam("码表键名（ir_code_save 返回的 key，或搜索结果里的 key）"),
             "brand" to strParam("或给品牌"),
@@ -89,6 +101,7 @@ class IrCodeTool(
             "ir_code_search" -> search(args)
             "ir_code_send" -> send(args)
             "ir_code_save" -> save(args)
+            "ir_code_import" -> importRows(args)
             "ir_code_delete" -> delete(args)
             else -> "ERROR: 未知红外码表工具"
         }
@@ -122,6 +135,13 @@ class IrCodeTool(
             put("count", matches.size)
             put("available", IrEmitter.available(context))
             put("totalEntries", book.allEntries().size)
+            book.attribution?.let { attribution ->
+                put("attribution", buildJsonObject {
+                    put("source", attribution.name)
+                    attribution.notice?.let { put("notice", it) }
+                    attribution.url?.let { put("licenseUrl", it) }
+                })
+            }
             if (matches.isEmpty()) {
                 put("hint", hint(book, commandArg))
             }
@@ -243,28 +263,75 @@ class IrCodeTool(
         require(pattern != null || pronto != null || protocol != null) {
             "pronto、carrier_hz+pattern、protocol+code 三选一"
         }
-        val record = IrUserCode(
-            brand = brand,
-            device = device,
-            command = command,
-            model = model,
-            protocol = protocol,
-            deviceNo = deviceNo,
-            subdeviceNo = subdeviceNo,
-            function = function,
-            pronto = pronto,
-            carrierHz = carrierHz,
-            pattern = pattern,
-            savedAt = System.currentTimeMillis(),
+        return saveRecord(
+            IrUserCode(
+                brand = brand,
+                device = device,
+                command = command,
+                model = model,
+                protocol = protocol,
+                deviceNo = deviceNo,
+                subdeviceNo = subdeviceNo,
+                function = function,
+                pronto = pronto,
+                carrierHz = carrierHz,
+                pattern = pattern,
+                savedAt = System.currentTimeMillis(),
+            ),
         )
-        val key = book.save(record)
+    }
+
+    /** 落库并回执；ir_code_save 与 ir_code_import 共用。 */
+    private fun saveRecord(record: IrUserCode): String {
+        val key = book().save(record)
         return buildJsonObject {
             put("saved", true)
             put("key", key)
+            put("brand", record.brand)
+            put("device", record.device)
+            put("command", IrCommands.canonical(record.command) ?: IrCommands.normalizeCommand(record.command))
+            put("note", "已写入 ir_codes KV；ir_code_send 与 ir_code_search 立即生效")
+        }.toString()
+    }
+
+    /* ------------------------------ import ------------------------------ */
+
+    /**
+     * 批量导入开源码表（irdb 口径）。
+     *
+     * 协议不在 [IrProtocols.SUPPORTED] 内、或缺功能值的行直接跳过并计数——
+     * 不做「猜一个协议」的兜底，避免入库一堆发不出去的码。
+     */
+    private fun importRows(args: JsonObject): String {
+        val brand = args.strArg("brand") ?: return "ERROR: 缺少 brand"
+        val device = args.strArg("device") ?: "tv"
+        val rows = mutableListOf<IrImportRow>()
+        args.strArg("csv")?.let { rows += IrCodeImport.parseCsv(it) }
+        args.strArg("rows_json")?.let { rows += IrCodeImport.parseRowsJson(it) }
+        if (rows.isEmpty()) {
+            return "ERROR: 没有解析到可导入的行；csv 需为 functionname,protocol,device,subdevice,function 每行一条，" +
+                "rows_json 需为同字段 JSON 数组"
+        }
+        val book = book()
+        val (records, skipped) = IrCodeImport.buildRecords(rows, brand, device, book.entry(brand, device))
+        for (record in records) book.save(record)
+        val imported = records.size
+        return buildJsonObject {
+            put("imported", imported)
+            put("skipped", skipped.size)
             put("brand", brand)
             put("device", device)
-            put("command", IrCommands.canonical(command) ?: IrCommands.normalizeCommand(command))
-            put("note", "已写入 ir_codes KV；ir_code_send 与 ir_code_search 立即生效")
+            put("commands", records.map { it.command }.distinct().size)
+            if (imported == 0) {
+                put("hint", "没有可用的行；irdb CSV 每行必须是 functionname,protocol,device,subdevice,function，" +
+                    "协议仅支持 ${IrProtocols.SUPPORTED.joinToString("/")}")
+            }
+            if (skipped.isNotEmpty()) {
+                put("skippedRows", JsonArray(skipped.take(10).map { JsonPrimitive(it) }))
+            }
+            if (imported > 0) {
+                put("note", "已写入 ir_codes KV；ir_code_send/ir_code_search 立即生效")
+            }
         }.toString()
     }
 
@@ -278,7 +345,7 @@ class IrCodeTool(
             val command = args.strArg("command") ?: return "ERROR: 需要 key，或 brand+device+command"
             irCodeKey(brand, device, command)
         }
-        if (!book.delete(key)) return "ERROR: 没有找到用户码 $key（内置码表条目不能删除）"
+        if (!book.delete(key)) return "ERROR: 没有找到用户码 $key"
         return buildJsonObject {
             put("deleted", true)
             put("key", key)

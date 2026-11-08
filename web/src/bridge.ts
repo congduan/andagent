@@ -7,7 +7,9 @@ import { waitForMainFrameToken } from "./settingBridge";
 // cell_scan (R113) 主动扫网最长 180s（+20s 收尾），必须走长任务超时。
 const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "significant_motion", "adb_shell", "adb_pull", "adb_push", "adb_screencap", "adb_screencast", "adb_record", "otg_transfer", "cell_scan",
   // R115: ISO-DEP/FeliCa 要先等用户贴卡（最长 60s）再逐条传输，超 65s 默认预算。
-  "nfc_iso_dep_info", "nfc_iso_dep_transceive", "nfc_felica_info", "nfc_felica_transceive", "nfc_felica_read_blocks"]);
+  "nfc_iso_dep_info", "nfc_iso_dep_transceive", "nfc_felica_info", "nfc_felica_transceive", "nfc_felica_read_blocks",
+  // R122: eSIM 下载走运营商 SM-DP+ 全流程，LPA 回调最长 180s。
+  "esim_download"]);
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
  *
@@ -42,7 +44,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "",
   "## 能力总览（按用户意图选择工具）",
   "- 网络搜索：web_search（无需 key）/ web_read（读网页正文）；问时效性问题先用搜索。",
-  "- 设备状态：device_info / battery_detail / sensor_list / sensor_read / location_get / location_status / steps_today / steps_history",
+  "- 设备状态：device_info / battery_detail / sensor_list / sensor_read / location_get / location_status / steps_today / steps_history / health_heart_rate / health_sleep / health_spo2 / health_weight / health_exercise / health_nutrition / health_weekly_report",
   "- 文件与相册：storage_scan / album_stats / file_download / file_search / file_read / file_write / file_edit / file_list / file_pick / image_save / image_info / image_preview / image_edit / image_collage / open_folder",
   "- 日历与提醒：calendar_list / calendar_events / calendar_add / calendar_delete / alarm_set / timer_set",
   "- 通讯：phone_call / sms_send / clipboard_read / clipboard_write / clipboard_write_rich（HTML/URI/图片）/ clipboard_read_rich（全类型+预览）/ clipboard_clear / notify_send / contact 查询暂不支持",
@@ -97,7 +99,7 @@ export const DEFAULT_SYSTEM_PROMPT_EN = [
   "",
   "## Capabilities (choose tools based on user intent)",
   "- Web: web_search (no key required) / web_read (page text). Search first for time-sensitive questions.",
-  "- Device: device_info / battery_detail / sensor_list / sensor_read / location_get / location_status / steps_today / steps_history",
+  "- Device: device_info / battery_detail / sensor_list / sensor_read / location_get / location_status / steps_today / steps_history / health_heart_rate / health_sleep / health_spo2 / health_weight / health_exercise / health_nutrition / health_weekly_report",
   "- Files and photos: storage_scan / album_stats / file_download / file_search / file_read / file_write / file_edit / file_list / file_pick / image_save / image_info / image_preview / image_edit / image_collage / open_folder",
   "- Calendar and reminders: calendar_list / calendar_events / calendar_add / calendar_delete / alarm_set / timer_set",
   "- Communication: phone_call / sms_send / clipboard_read / clipboard_write / clipboard_write_rich (HTML/URI/image) / clipboard_read_rich (all types and previews) / clipboard_clear / notify_send. Contact lookup is not supported yet.",

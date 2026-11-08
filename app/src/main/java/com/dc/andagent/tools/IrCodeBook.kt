@@ -170,9 +170,20 @@ internal data class IrUserCode(
     }
 }
 
+/** 码表数据的许可与署名信息（irdb 许可证要求产品内可见的声明原文）。 */
+internal data class IrAttribution(
+    val name: String,
+    val url: String? = null,
+    val copyright: String? = null,
+    val notice: String? = null,
+    val notifyIssue: String? = null,
+)
+
 internal class IrCodeBook(
     private val entries: List<IrCodeEntry>,
     private val store: IrCodeStore?,
+    /** 数据来源许可信息；ir_code_search 会随结果返回，便于如实回答来源。 */
+    val attribution: IrAttribution? = null,
 ) {
     fun allEntries(): List<IrCodeEntry> = entries
 
@@ -258,8 +269,20 @@ internal class IrCodeBook(
         fun load(builtinJson: String, store: IrCodeStore? = null): IrCodeBook {
             val builtin = parseBuiltin(builtinJson)
             val users = store?.records().orEmpty().mapNotNull { IrUserCode.parse(it) }
-            return IrCodeBook(merge(builtin, users), store)
+            return IrCodeBook(merge(builtin, users), store, parseAttribution(builtinJson))
         }
+
+        /** 解析资产根部的 license 块；缺失或损坏时返回 null（不影响码表使用）。 */
+        fun parseAttribution(json: String): IrAttribution? = runCatching {
+            val license = IR_JSON.parseToJsonElement(json).jsonObject["license"]?.jsonObject ?: return null
+            IrAttribution(
+                name = license.str("name") ?: "irdb",
+                url = license.str("url"),
+                copyright = license.str("copyright"),
+                notice = license.str("notice"),
+                notifyIssue = license.str("notifyIssue"),
+            )
+        }.getOrNull()
 
         fun parseBuiltin(json: String): List<IrCodeEntry> {
             val root = IR_JSON.parseToJsonElement(json).jsonObject
@@ -338,6 +361,7 @@ internal class IrCodeBook(
                         brandId = irSlug(user.brand).ifBlank { "user" },
                         brand = user.brand,
                         device = irSlug(user.device).ifBlank { "tv" },
+                        deviceAliases = deviceAliasesOf(user.device),
                         model = user.model,
                         protocol = user.protocol,
                         deviceNo = user.deviceNo ?: -1,
@@ -363,44 +387,44 @@ internal object IrCommands {
 
     /** 规范名 → 全部别名（含中文），检索与提示词都用同一份。 */
     private val DEFS: List<Pair<String, List<String>>> = listOf(
-        "power" to listOf("pwr", "电源", "开关", "电源键", "遥控开关"),
+        "power" to listOf("pwr", "powertoggle", "电源", "开关", "电源键", "遥控开关"),
         "power_on" to listOf("poweron", "开机", "打开"),
         "power_off" to listOf("poweroff", "关机", "关闭"),
         "vol_up" to listOf("volup", "volumeup", "vol+", "volume+", "音量+", "音量加", "音量增", "加音量", "大声"),
         "vol_down" to listOf("voldown", "volumedown", "vol-", "volume-", "音量-", "音量减", "减音量", "小声"),
-        "mute" to listOf("静音", "静音键"),
+        "mute" to listOf("volumemute", "静音", "静音键"),
         "ch_up" to listOf("chup", "channelup", "ch+", "channel+", "频道+", "频道加", "节目+", "换台+"),
         "ch_down" to listOf("chdown", "channeldown", "ch-", "channel-", "频道-", "频道减", "节目-", "换台-"),
-        "up" to listOf("arrowup", "上", "向上", "上键"),
-        "down" to listOf("arrowdown", "下", "向下", "下键"),
-        "left" to listOf("arrowleft", "左", "向左", "左键"),
-        "right" to listOf("arrowright", "右", "向右", "右键"),
-        "ok" to listOf("enter", "select", "确定", "确认", "确定键", "ok键", "中键"),
+        "up" to listOf("arrowup", "cursorup", "上", "向上", "上键"),
+        "down" to listOf("arrowdown", "cursordown", "下", "向下", "下键"),
+        "left" to listOf("arrowleft", "cursorleft", "左", "向左", "左键"),
+        "right" to listOf("arrowright", "cursorright", "右", "向右", "右键"),
+        "ok" to listOf("enter", "select", "cursorok", "cursorenter", "cursorselect", "确定", "确认", "确定键", "ok键", "中键"),
         "back" to listOf("return", "返回", "返回键"),
         "exit" to listOf("退出", "退出键"),
-        "menu" to listOf("菜单", "菜单键", "设置"),
+        "menu" to listOf("菜单", "菜单键", "设置", "option", "options", "选项"),
         "home" to listOf("主页", "首页", "主屏幕", "桌面"),
-        "input" to listOf("source", "输入", "输入源", "信号源", "切换输入", "切换信号源"),
-        "info" to listOf("信息", "显示信息"),
+        "input" to listOf("source", "inputsource", "tv/video", "tv/videoinput", "输入", "输入源", "信号源", "切换输入", "切换信号源"),
+        "info" to listOf("display", "信息", "显示信息"),
         "guide" to listOf("epg", "节目指南", "电视指南"),
         "play" to listOf("播放"),
         "pause" to listOf("暂停"),
         "stop" to listOf("停止"),
         "next" to listOf("下一曲", "下一个"),
-        "prev" to listOf("previous", "上一曲", "上一个"),
+        "prev" to listOf("previous", "last", "lastchannel", "previouschannel", "prev.channel", "flashback", "recall", "上一曲", "上一个"),
         "rew" to listOf("rewind", "快退"),
         "ff" to listOf("fastforward", "快进"),
         "sleep" to listOf("睡眠", "定时关机", "睡眠定时"),
-        "0" to listOf("零"),
-        "1" to listOf("一"),
-        "2" to listOf("二"),
-        "3" to listOf("三"),
-        "4" to listOf("四"),
-        "5" to listOf("五"),
-        "6" to listOf("六"),
-        "7" to listOf("七"),
-        "8" to listOf("八"),
-        "9" to listOf("九"),
+        "0" to listOf("零", "digit0"),
+        "1" to listOf("一", "digit1"),
+        "2" to listOf("二", "digit2"),
+        "3" to listOf("三", "digit3"),
+        "4" to listOf("四", "digit4"),
+        "5" to listOf("五", "digit5"),
+        "6" to listOf("六", "digit6"),
+        "7" to listOf("七", "digit7"),
+        "8" to listOf("八", "digit8"),
+        "9" to listOf("九", "digit9"),
     )
 
     private val ALIASES: Map<String, String> = buildMap {
@@ -435,6 +459,103 @@ internal object IrCommands {
     }
 }
 
+/** 一行待导入的码表记录（irdb CSV 行或同字段 JSON）。 */
+internal data class IrImportRow(
+    val name: String,
+    val protocol: String,
+    val device: Int? = null,
+    val subdevice: Int? = null,
+    val function: Int? = null,
+)
+
+/** 开源码表（irdb 口径）导入解析：纯函数，便于 JVM 单测。 */
+internal object IrCodeImport {
+    /** 每行 `functionname,protocol,device,subdevice,function`；表头/空名/字段数不符的行跳过。 */
+    fun parseCsv(text: String): List<IrImportRow> {
+        val out = mutableListOf<IrImportRow>()
+        for (raw in text.split('\n', '\r')) {
+            val cells = raw.trim().split(',').map { it.trim() }
+            if (cells.size != 5) continue
+            if (cells[0].isEmpty() || cells[0].equals("functionname", true)) continue
+            if (cells[1].isEmpty()) continue
+            out += IrImportRow(
+                name = cells[0],
+                protocol = cells[1],
+                device = cells[2].toIntOrNull()?.takeIf { it >= 0 },
+                subdevice = cells[3].toIntOrNull()?.takeIf { it >= 0 },
+                function = cells[4].toIntOrNull(),
+            )
+        }
+        return out
+    }
+
+    /**
+     * 把解析出的行编译成用户码记录；协议不支持/缺功能值/参数越界的行计入 skipped。
+     *
+     * 不做「猜协议」兜底：宁可在导入时明确报跳过，也不要入库发不出去的波形。
+     */
+    fun buildRecords(
+        rows: List<IrImportRow>,
+        brand: String,
+        device: String,
+        existing: IrCodeEntry? = null,
+        now: Long = System.currentTimeMillis(),
+    ): Pair<List<IrUserCode>, List<String>> {
+        val records = mutableListOf<IrUserCode>()
+        val skipped = mutableListOf<String>()
+        val seen = linkedSetOf<String>()
+        for (row in rows) {
+            val protocol = row.protocol.trim().lowercase(Locale.US)
+            if (!IrProtocols.isSupported(protocol)) {
+                skipped += "${row.name}(${row.protocol})"
+                continue
+            }
+            val function = row.function
+            if (function == null) {
+                skipped += "${row.name}(缺功能值)"
+                continue
+            }
+            val deviceNo = row.device ?: existing?.deviceNo ?: -1
+            val subdeviceNo = row.subdevice ?: existing?.subdeviceNo ?: -1
+            val compiled = runCatching { IrProtocols.encode(protocol, deviceNo, subdeviceNo, function) }
+            if (compiled.isFailure) {
+                skipped += "${row.name}(${compiled.exceptionOrNull()?.message})"
+                continue
+            }
+            val command = IrCommands.canonical(row.name) ?: IrCommands.normalizeCommand(row.name)
+            if (!seen.add(command)) continue
+            records += IrUserCode(
+                brand = brand,
+                device = device,
+                command = command,
+                protocol = protocol,
+                deviceNo = deviceNo,
+                subdeviceNo = subdeviceNo,
+                function = function,
+                savedAt = now,
+            )
+        }
+        return records to skipped
+    }
+
+    /** `[{name|functionname, protocol, device?, subdevice?, function|code?}]`。 */
+    fun parseRowsJson(text: String): List<IrImportRow> = runCatching {
+        IR_JSON.parseToJsonElement(text).jsonArray.mapNotNull { element ->
+            val obj = element.jsonObject
+            val name = (obj["name"] ?: obj["functionname"])?.jsonPrimitive?.contentOrNull
+            val protocol = obj["protocol"]?.jsonPrimitive?.contentOrNull
+            if (name.isNullOrBlank() || protocol.isNullOrBlank()) return@mapNotNull null
+            IrImportRow(
+                name = name,
+                protocol = protocol,
+                device = obj["device"]?.jsonPrimitive?.intOrNull,
+                subdevice = obj["subdevice"]?.jsonPrimitive?.intOrNull,
+                function = (obj["function"] ?: obj["code"])?.jsonPrimitive?.intOrNull,
+            )
+        }
+    }.getOrElse { emptyList() }
+}
+
 /** 用户码表 KV 键：ASCII 安全且稳定（含中文品牌时附加短哈希防撞）。 */
 internal fun irCodeKey(brand: String, device: String, command: String): String {
     val raw = "${brand.trim().lowercase(Locale.US)}|${device.trim().lowercase(Locale.US)}|${
@@ -448,6 +569,15 @@ internal fun irCodeKey(brand: String, device: String, command: String): String {
         .take(40)
     val hash = Integer.toHexString(raw.hashCode())
     return "${base}_$hash".take(64)
+}
+
+/** 用户新建条目补齐常见设备别名，让「电视/空调」这类中文说法也能命中。 */
+internal fun deviceAliasesOf(device: String): List<String> = when (device.trim().lowercase(Locale.US)) {
+    "tv" -> listOf("电视", "电视机", "television", "电视遥控器")
+    "ac" -> listOf("空调", "airconditioner", "air conditioner")
+    "stb" -> listOf("机顶盒", "settopbox", "set top box")
+    "audio" -> listOf("音响", "音箱", "soundbar", "功放")
+    else -> emptyList()
 }
 
 /** 品牌/设备名的 ASCII 形态（用户自定义条目的 codeId 用）。 */

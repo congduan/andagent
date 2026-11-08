@@ -1,52 +1,62 @@
 {
   "schema": 1,
   "updated": "2026-11-08",
-  "source": "irdb (Simon Peter and contributors) — https://github.com/probonopd/irdb",
-  "note": "条目只存协议参数（protocol/device/subdevice/function），由 IrProtocols 现场编译成波形；同型号遥控器可能有差异，不同批次按键值不同时用 ir_code_save 覆盖。",
+  "license": {
+    "name": "Flipper-IRDB (CC0 1.0)",
+    "url": "https://github.com/Lucaslhm/Flipper-IRDB",
+    "copyright": "Flipper-IRDB contributors (CC0 1.0, no attribution required)",
+    "notice": "IR parameter data derived from Flipper-IRDB (CC0 1.0): https://github.com/Lucaslhm/Flipper-IRDB",
+    "notifyIssue": null
+  },
+  "note": "条目只存协议参数（protocol/device/subdevice/function），由 IrProtocols 现场编译成波形；数据取自 Flipper-IRDB（CC0，无署名义务）的 parsed .ir 文件，来源见 brands[].source。当前 11 个品牌 12 个设备 326 键。raw 私有协议（小米电视/盒子、格力/科龙/志高/TCL 空调等）与未实现协议（RC6/RCA/Kaseikyo）暂不收录；同型号遥控器可能有差异，用 ir_code_save 覆盖。 另注：sanyo 与 tcl 的 EA C7 地址即 Roku TV 通用地址（两品牌 Roku 机型通用）；haier/tv 与 lg/tv 同为 NEC 0x04，键值高度重合。",
   "brands": [
     {
-      "id": "lg",
-      "name": "LG",
-      "aliases": ["lg", "乐金", "엘지", "lg전자"],
+      "id": "haier",
+      "name": "Haier",
+      "aliases": [
+        "haier",
+        "海尔"
+      ],
       "devices": [
         {
           "id": "tv",
-          "aliases": ["tv", "电视", "电视机", "television", "电视遥控器"],
+          "aliases": [
+            "tv",
+            "电视",
+            "电视机",
+            "television"
+          ],
           "protocol": "nec1",
           "device": 4,
           "subdevice": -1,
           "carrier_hz": 38000,
+          "source": "TVs/Haier/Haier_L42C1180.ir",
           "commands": {
             "power": 8,
-            "power_on": 196,
-            "power_off": 197,
             "vol_up": 2,
             "vol_down": 3,
             "mute": 9,
             "ch_up": 0,
             "ch_down": 1,
-            "up": 64,
-            "down": 65,
-            "left": 7,
-            "right": 6,
+            "up": 0,
+            "down": 1,
+            "left": 3,
+            "right": 2,
             "ok": 68,
-            "menu": 67,
-            "back": 40,
             "exit": 91,
+            "menu": 67,
             "input": 11,
             "info": 170,
             "guide": 169,
             "play": 176,
             "stop": 177,
-            "pause": 186,
-            "rew": 178,
-            "ff": 179,
+            "next": 213,
+            "prev": 210,
+            "rew": 211,
+            "ff": 212,
             "sleep": 14,
-            "fav": 30,
-            "qview": 26,
-            "aspect": 121,
-            "cc": 57,
-            "0": 16,
+            "recall": 26,
+            "ccd": 57,
             "1": 17,
             "2": 18,
             "3": 19,
@@ -55,7 +65,241 @@
             "6": 22,
             "7": 23,
             "8": 24,
-            "9": 25
+            "9": 25,
+            "0": 16,
+            "custom": 76,
+            "picture": 77,
+            "audio": 82,
+            "arc": 121,
+            "mts_sap": 10,
+            "usb": 46,
+            "repeat": 245,
+            "favorite": 30,
+            "ch_list": 75,
+            "red": 170,
+            "green": 169,
+            "yellow": 30,
+            "blue": 75
+          }
+        }
+      ]
+    },
+    {
+      "id": "hisense",
+      "name": "Hisense",
+      "aliases": [
+        "hisense",
+        "海信"
+      ],
+      "devices": [
+        {
+          "id": "tv",
+          "aliases": [
+            "tv",
+            "电视",
+            "电视机",
+            "television",
+            "电视遥控器"
+          ],
+          "protocol": "necx2",
+          "device": 0,
+          "subdevice": 191,
+          "carrier_hz": 38000,
+          "source": "TVs/Hisense/Hisense_EN3AH39H.ir（NECext 地址 00 BF，日系型号遥控器）；补充键来自 TVs/Hisense/Hisense_32A4HAU.ir + Hisense_55E7KQ.ir（同地址 00 BF）: home,exit,subtitles,text,chlist,disney,youtube,amazonprime,stan,kayo,deezer,abc_iview,netflix,subtitle",
+          "commands": {
+            "power": 13,
+            "vol_up": 68,
+            "vol_down": 67,
+            "mute": 14,
+            "ch_up": 74,
+            "ch_down": 75,
+            "up": 22,
+            "down": 23,
+            "left": 25,
+            "right": 24,
+            "ok": 21,
+            "back": 72,
+            "exit": 92,
+            "menu": 79,
+            "home": 32,
+            "input": 18,
+            "info": 12,
+            "guide": 29,
+            "play": 30,
+            "pause": 78,
+            "stop": 90,
+            "next": 88,
+            "prev": 89,
+            "rew": 87,
+            "ff": 86,
+            "option": 20,
+            "search": 65,
+            "red": 82,
+            "green": 83,
+            "yellow": 84,
+            "blue": 85,
+            "0": 0,
+            "1": 1,
+            "2": 2,
+            "3": 3,
+            "4": 4,
+            "5": 5,
+            "6": 6,
+            "7": 7,
+            "8": 8,
+            "9": 9,
+            "subtitles": 31,
+            "text": 69,
+            "chlist": 33,
+            "disney": 106,
+            "youtube": 170,
+            "amazonprime": 187,
+            "stan": 176,
+            "kayo": 184,
+            "deezer": 102,
+            "abc_iview": 177,
+            "netflix": 45,
+            "subtitle": 31
+          }
+        }
+      ]
+    },
+    {
+      "id": "hitachi",
+      "name": "Hitachi",
+      "aliases": [
+        "hitachi",
+        "日立"
+      ],
+      "devices": [
+        {
+          "id": "tv",
+          "aliases": [
+            "tv",
+            "电视",
+            "电视机",
+            "television",
+            "电视遥控器"
+          ],
+          "protocol": "nec1",
+          "device": 80,
+          "subdevice": -1,
+          "carrier_hz": 38000,
+          "source": "TVs/Hitachi/Hitachi_CLE-1031.ir（适用 32FHDSM6/40FHDSM8/50UHDSM8/55UHDSM8）",
+          "commands": {
+            "power": 18,
+            "vol_up": 26,
+            "vol_down": 30,
+            "mute": 16,
+            "ch_up": 27,
+            "ch_down": 31,
+            "up": 25,
+            "down": 29,
+            "left": 70,
+            "right": 71,
+            "ok": 10,
+            "menu": 73,
+            "back": 64,
+            "exit": 68,
+            "input": 20,
+            "info": 22,
+            "guide": 11,
+            "play": 87,
+            "pause": 72,
+            "stop": 84,
+            "next": 86,
+            "prev": 89,
+            "rew": 79,
+            "ff": 78,
+            "red": 74,
+            "green": 75,
+            "yellow": 76,
+            "blue": 77,
+            "0": 0,
+            "1": 1,
+            "2": 2,
+            "3": 3,
+            "4": 4,
+            "5": 5,
+            "6": 6,
+            "7": 7,
+            "8": 8,
+            "9": 9
+          }
+        }
+      ]
+    },
+    {
+      "id": "lg",
+      "name": "LG",
+      "aliases": [
+        "lg",
+        "乐金",
+        "엘지"
+      ],
+      "devices": [
+        {
+          "id": "tv",
+          "aliases": [
+            "tv",
+            "电视",
+            "电视机",
+            "television",
+            "电视遥控器"
+          ],
+          "protocol": "nec1",
+          "device": 4,
+          "subdevice": -1,
+          "carrier_hz": 38000,
+          "source": "TVs/LG/LG.ir + TVs/LG/LG_AKB75095307.ir",
+          "commands": {
+            "power": 8,
+            "vol_up": 2,
+            "vol_down": 3,
+            "mute": 9,
+            "ch_up": 0,
+            "ch_down": 1,
+            "input": 11,
+            "menu": 67,
+            "back": 40,
+            "exit": 91,
+            "info": 170
+          }
+        }
+      ]
+    },
+    {
+      "id": "midea",
+      "name": "Midea",
+      "aliases": [
+        "midea",
+        "美的"
+      ],
+      "devices": [
+        {
+          "id": "ac",
+          "aliases": [
+            "ac",
+            "空调",
+            "airconditioner"
+          ],
+          "protocol": "necx2",
+          "device": 1,
+          "subdevice": 255,
+          "carrier_hz": 38000,
+          "source": "ACs/Midea/Midea_MP12SVKBA3RCM.ir + Midea_WWK08CR81N.ir（多数美的空调遥控为 raw，仅此两款 parsed）",
+          "commands": {
+            "power": 18,
+            "sleep": 10,
+            "temp_up": 26,
+            "temp_down": 19,
+            "mode": 2,
+            "swing": 15,
+            "fan_speed": 14,
+            "cont_fan": 79,
+            "timer": 27,
+            "led_sound": 102,
+            "speed": 14
           }
         }
       ]
@@ -63,15 +307,26 @@
     {
       "id": "samsung",
       "name": "Samsung",
-      "aliases": ["samsung", "三星", "삼성"],
+      "aliases": [
+        "samsung",
+        "三星",
+        "삼성"
+      ],
       "devices": [
         {
           "id": "tv",
-          "aliases": ["tv", "电视", "电视机", "television", "电视遥控器"],
+          "aliases": [
+            "tv",
+            "电视",
+            "电视机",
+            "television",
+            "电视遥控器"
+          ],
           "protocol": "necx2",
           "device": 7,
           "subdevice": 7,
           "carrier_hz": 38000,
+          "source": "TVs/Samsung/Samsung.ir（ch_up/ch_down 按 irdb 交叉校验取 18/16，原文件两键同为 16）",
           "commands": {
             "power": 2,
             "input": 1,
@@ -82,18 +337,14 @@
             "ch_down": 16,
             "up": 96,
             "down": 97,
-            "right": 98,
             "left": 101,
+            "right": 98,
             "ok": 104,
             "menu": 26,
             "back": 88,
             "exit": 45,
-            "info": 31,
-            "guide": 79,
             "home": 121,
-            "tools": 75,
-            "ch_list": 107,
-            "last": 19,
+            "info": 31,
             "0": 17,
             "1": 4,
             "2": 5,
@@ -109,85 +360,179 @@
       ]
     },
     {
-      "id": "sony",
-      "name": "Sony",
-      "aliases": ["sony", "索尼", "ソニー"],
+      "id": "sanyo",
+      "name": "Sanyo",
+      "aliases": [
+        "sanyo",
+        "三洋"
+      ],
       "devices": [
         {
           "id": "tv",
-          "aliases": ["tv", "电视", "电视机", "television", "电视遥控器", "bravia"],
-          "protocol": "sony12",
-          "device": 1,
-          "subdevice": -1,
-          "carrier_hz": 40000,
+          "aliases": [
+            "tv",
+            "电视",
+            "电视机",
+            "television",
+            "电视遥控器"
+          ],
+          "protocol": "necx2",
+          "device": 234,
+          "subdevice": 199,
+          "carrier_hz": 38000,
+          "source": "TVs/Sanyo/Sanyo_FW40R49FC.ir（NECext 地址 EA C7）",
           "commands": {
-            "power": 21,
-            "power_on": 46,
-            "power_off": 47,
-            "vol_up": 18,
-            "vol_down": 19,
-            "mute": 20,
-            "ch_up": 16,
-            "ch_down": 17,
-            "up": 116,
-            "down": 117,
-            "left": 52,
-            "right": 51,
-            "ok": 101,
-            "enter": 11,
-            "menu": 96,
-            "exit": 99,
-            "input": 37,
-            "info": 58,
-            "guide": 14,
-            "prev": 59,
-            "sleep": 54,
-            "picture_mode": 100,
-            "freeze": 92,
-            "0": 0,
-            "1": 1,
-            "2": 2,
-            "3": 3,
-            "4": 4,
-            "5": 5,
-            "6": 6,
-            "7": 7,
-            "8": 8,
-            "9": 9
+            "power": 23,
+            "vol_up": 15,
+            "vol_down": 16,
+            "mute": 32,
+            "up": 25,
+            "down": 51,
+            "left": 30,
+            "right": 45,
+            "ok": 42,
+            "back": 102,
+            "home": 3,
+            "menu": 97,
+            "sleep": 98,
+            "rew": 120,
+            "ff": 85,
+            "play": 76
           }
         }
       ]
     },
     {
-      "id": "philips",
-      "name": "Philips",
-      "aliases": ["philips", "飞利浦", "philip"],
+      "id": "sony",
+      "name": "Sony",
+      "aliases": [
+        "sony",
+        "索尼",
+        "ソニー",
+        "bravia"
+      ],
       "devices": [
         {
           "id": "tv",
-          "aliases": ["tv", "电视", "电视机", "television", "电视遥控器"],
-          "protocol": "rc5",
-          "device": 0,
+          "aliases": [
+            "tv",
+            "电视",
+            "电视机",
+            "television",
+            "电视遥控器"
+          ],
+          "protocol": "sony12",
+          "device": 1,
           "subdevice": -1,
-          "carrier_hz": 36000,
+          "carrier_hz": 40000,
+          "source": "TVs/Sony/SonyTV.ir",
           "commands": {
-            "power": 12,
-            "mute": 13,
-            "vol_up": 16,
-            "vol_down": 17,
-            "ch_up": 32,
-            "ch_down": 33,
-            "up": 28,
+            "power": 21,
+            "vol_up": 18,
+            "vol_down": 19,
+            "mute": 20,
+            "up": 116,
+            "down": 117,
+            "left": 52,
+            "right": 51,
+            "ok": 101,
+            "home": 96,
+            "input": 37
+          }
+        }
+      ]
+    },
+    {
+      "id": "tcl",
+      "name": "TCL",
+      "aliases": [
+        "tcl",
+        "汤姆逊"
+      ],
+      "devices": [
+        {
+          "id": "tv",
+          "aliases": [
+            "tv",
+            "电视",
+            "电视机",
+            "television"
+          ],
+          "protocol": "necx2",
+          "device": 234,
+          "subdevice": 199,
+          "carrier_hz": 38000,
+          "source": "TVs/TCL/TCL_32S327.ir + TCL_50S423.ir（Roku TV 世代；RCA 协议机型未收录）",
+          "commands": {
+            "power": 23,
+            "vol_up": 15,
+            "vol_down": 16,
+            "mute": 32,
+            "up": 25,
+            "down": 51,
+            "left": 30,
+            "right": 45,
+            "ok": 42,
+            "back": 102,
+            "exit": 102,
+            "home": 3,
+            "play": 76,
+            "rew": 52,
+            "ff": 85,
+            "instant_replay": 120,
+            "star": 97,
+            "hulu": 77,
+            "netflix": 82,
+            "sling": 6,
+            "now": 108
+          }
+        }
+      ]
+    },
+    {
+      "id": "toshiba",
+      "name": "Toshiba",
+      "aliases": [
+        "toshiba",
+        "东芝"
+      ],
+      "devices": [
+        {
+          "id": "tv",
+          "aliases": [
+            "tv",
+            "电视",
+            "电视机",
+            "television"
+          ],
+          "protocol": "nec1",
+          "device": 64,
+          "subdevice": -1,
+          "carrier_hz": 38000,
+          "source": "TVs/Toshiba/Toshiba CT 8560.ir + Toshiba_CT-32F2.ir + Toshiba_32AV502U.ir",
+          "commands": {
+            "power": 18,
+            "vol_up": 26,
+            "vol_down": 30,
+            "mute": 16,
+            "ch_up": 27,
+            "ch_down": 31,
+            "up": 25,
             "down": 29,
-            "left": 44,
-            "right": 43,
-            "menu": 46,
-            "exit": 15,
-            "input": 56,
-            "sleep": 38,
-            "alt_audio": 35,
-            "a_ch": 34,
-            "0": 0,
+            "left": 66,
+            "right": 64,
+            "ok": 33,
+            "back": 100,
+            "exit": 67,
+            "menu": 91,
+            "input": 20,
+            "info": 22,
+            "play": 103,
+            "pause": 106,
+            "stop": 104,
+            "ff": 107,
+            "txt": 23,
+            "rw": 108,
             "1": 1,
             "2": 2,
             "3": 3,
@@ -196,7 +541,106 @@
             "6": 6,
             "7": 7,
             "8": 8,
-            "9": 9
+            "9": 9,
+            "0": 0,
+            "16_9_wide": 89,
+            "rec": 111,
+            "l_r": 90,
+            "previous_hold": 84,
+            "next_list": 21,
+            "revind_language": 83,
+            "forward_radio": 13,
+            "play_index": 103,
+            "pause_zoom": 106,
+            "stop_reveal": 104,
+            "update_ttx": 110,
+            "list": 71,
+            "red": 72,
+            "green_subtitle": 73,
+            "yellow_fav": 74,
+            "blue": 75,
+            "f1": 34,
+            "s_mode_smart_sound": 28,
+            "p_mode_smart_picture": 24
+          }
+        },
+        {
+          "id": "smart_tv",
+          "aliases": [
+            "smarttv",
+            "firetv",
+            "智能电视"
+          ],
+          "protocol": "necx2",
+          "device": 2,
+          "subdevice": 125,
+          "carrier_hz": 38000,
+          "source": "TVs/Toshiba/Toshiba_50C350LC.ir + Toshiba_43LF421U21.ir",
+          "commands": {
+            "power": 70,
+            "vol_up": 12,
+            "vol_down": 25,
+            "mute": 76,
+            "ch_up": 15,
+            "ch_down": 90,
+            "up": 72,
+            "down": 77,
+            "left": 78,
+            "right": 73,
+            "ok": 74,
+            "back": 13,
+            "menu": 69,
+            "home": 159,
+            "guide": 20,
+            "play": 91,
+            "rew": 22,
+            "ff": 23,
+            "recent_apps": 177,
+            "apps": 162,
+            "netflix": 95,
+            "amazon_music": 163,
+            "prime_video": 161,
+            "bluetooth": 166,
+            "alexa": 160
+          }
+        }
+      ]
+    },
+    {
+      "id": "wanbo",
+      "name": "Wanbo",
+      "aliases": [
+        "wanbo",
+        "万播"
+      ],
+      "devices": [
+        {
+          "id": "projector",
+          "aliases": [
+            "projector",
+            "投影",
+            "投影仪"
+          ],
+          "protocol": "nec1",
+          "device": 59,
+          "subdevice": -1,
+          "carrier_hz": 38000,
+          "source": "Projectors/Wanbo/Wanbo_T6_Max.ir",
+          "commands": {
+            "power": 0,
+            "vol_up": 10,
+            "vol_down": 8,
+            "up": 13,
+            "down": 21,
+            "left": 16,
+            "right": 18,
+            "ok": 17,
+            "back": 14,
+            "menu": 12,
+            "home": 20,
+            "focus_up": 81,
+            "focus_dn": 80,
+            "mic": 102
           }
         }
       ]

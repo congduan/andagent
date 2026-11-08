@@ -74,11 +74,21 @@
 
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
-    <!-- Health Connect step data (runtime grant via Health Connect UI) -->
+    <!-- Health Connect health data (runtime grant via Health Connect UI) -->
     <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_SLEEP" />
+    <uses-permission android:name="android.permission.health.READ_OXYGEN_SATURATION" />
+    <uses-permission android:name="android.permission.health.READ_WEIGHT" />
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <uses-permission android:name="android.permission.health.READ_NUTRITION" />
 
     <!-- R12-R14 system APIs, #15 contacts, #16 SMS: requested on demand. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- R122: eSIM 管理。WRITE_EMBEDDED_SUBSCRIPTIONS 是签名权限：普通应用拿不到，
+         但 EuiccManager 的 download/switch/delete 在持有目标 profile 运营商特权时也可调用。
+         声明它只是表达意图，被拒时工具如实上报并给出运营商 App / 系统设置替代路径。 -->
+    <uses-permission android:name="android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- R35: contacts_add (write) and call_log_read (read-only call history). -->
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
@@ -92,6 +102,11 @@
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+
+    <!-- R122: Wi-Fi 三件套的可选硬件声明（required=false，能力在运行时探测降级）。
+         权限复用已有 ACCESS_WIFI_STATE / CHANGE_WIFI_STATE / ACCESS_FINE_LOCATION。 -->
+    <uses-feature android:name="android.hardware.wifi.direct" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi.rtt" android:required="false" />
 
     <queries>
         <package android:name="com.termux" />

@@ -157,12 +157,11 @@ AndAgent is licensed under Apache-2.0 (see [LICENSE](LICENSE)). The entries belo
 - Source: https://github.com/termux/termux-packages
 - Copyright: Copyright Termux package maintainers and upstream authors; see ATTRIBUTION.md and archive notices
 
-### irdb（内置红外码表数据）
-- License: irdb permission license（非 OSI）；条款见 https://github.com/probonopd/irdb/blob/master/LICENSE.md
-- Source: https://github.com/probonopd/irdb （数据取自 codes/LG/TV/4,-1.csv、codes/Samsung/TV/7,7.csv、codes/Sony/TV/1,-1.csv、codes/Philips/TV/0,-1.csv，归一化为 app/src/main/assets/ir/ir-codes.json 的协议参数）
-- Notice（许可证要求原文）: `Contains/accesses irdb by Simon Peter and contributors, used under permission. For licensing details and for information on how to contribute to the database, see https://github.com/probonopd/irdb`
-- Copyright: Copyright (c) 2013-15 Simon Peter and contributors
-- 待办：许可证条款 1 要求「在把数据库用于产品前，通过 issue 告知 irdb 项目」，公开发布前须在 https://github.com/probonopd/irdb/issues 开一条说明（跟踪于 ROADMAP-TODO R113）
+### Flipper-IRDB（内置红外码表数据，app/src/main/assets/ir/ir-codes.json）
+- License: CC0 1.0 Universal（公共领域贡献，无署名/告知/提供副本义务）
+- Source: https://github.com/Lucaslhm/Flipper-IRDB （取自 TVs/{LG,Samsung,Sony,Hitachi,Sanyo,Hisense,Toshiba,TCL,Haier}、ACs/Midea、Projectors/Wanbo 下的 parsed .ir 文件，经 scripts/gen_ir_codes.py 归一化为协议参数；完整清单见 assets/ir/ir-codes.json 各 device 的 source 字段）
+- Copyright: Flipper-IRDB contributors（CC0 1.0）
+- 注：仅保留来源 URL 以便追溯，非许可要求。
 
 ## Build-only frontend tool
 

@@ -856,7 +856,7 @@ class AgentBridge(
     }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
 
     @JavascriptInterface
-    fun extensionTools(): String = kotlinx.serialization.json.JsonArray(tools.values.filter { it.name.startsWith("skill_") || it.name.startsWith("mcp_") }.map { tool ->
+    fun extensionTools(): String = kotlinx.serialization.json.JsonArray(tools.values.filter { it.name.startsWith("skill_") || it.name.startsWith("mcp_") || it.name.startsWith("my_") }.map { tool ->
         buildJsonObject { put("name", tool.name); put("description", tool.description); put("parameters", tool.parameters) }
     }).toString()
 

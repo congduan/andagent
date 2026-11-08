@@ -130,7 +130,8 @@ class QuickJsEngine(
                 api.setProperty("tool", JSCallFunction { args ->
                     val name = args.getOrNull(0)?.toString().orEmpty()
                     val raw = args.getOrNull(1)?.toString() ?: "{}"
-                    if (name in setOf("js_eval", "script_run", "script_save", "script_check", "live_start", "live_stop", "live_pause")) return@JSCallFunction "ERROR: 不允许递归执行 $name"
+                    if (name in setOf("js_eval", "script_run", "script_save", "script_check", "live_start", "live_stop", "live_pause",
+                            "my_tool_create", "my_tool_update", "my_tool_delete")) return@JSCallFunction "ERROR: 不允许递归执行 $name"
                     if (allow != null && name !in allow) return@JSCallFunction "ERROR: 技能未获工具权限 $name"
                     val tool = tools[name] ?: return@JSCallFunction "ERROR: 未知工具 $name"
                     val parsed: JsonObject = try { JsonFixer.parseObject(raw) }

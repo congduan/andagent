@@ -150,11 +150,33 @@ function UserText({ text }: TextMessagePartProps) {
   return <div className="user-text">{text}</div>;
 }
 
-/** R88: 用户消息里的图片附件缩略图（src 走 /local/ 只读路由，不塞 base64）。 */
+/** R88: 用户消息里的图片附件缩略图（src 走 /local/ 只读路由，不塞 base64），点开灯箱预览。 */
 function UserImage({ image }: ImageMessagePartProps) {
+  const { t } = useI18n();
+  const [preview, setPreview] = useState(false);
   return (
     <div className="user-image">
-      <img src={image} alt="" loading="lazy" />
+      <button
+        type="button"
+        className="user-image-thumb"
+        onClick={() => setPreview(true)}
+        aria-label={t("enlargeImage")}
+        title={t("enlargeImage")}
+      >
+        <img src={image} alt="" loading="lazy" />
+      </button>
+      {preview && (
+        <div
+          className="image-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("imagePreview")}
+          onClick={() => setPreview(false)}
+        >
+          <button type="button" onClick={() => setPreview(false)} aria-label={t("closePreview")}>×</button>
+          <img src={image} alt="" />
+        </div>
+      )}
     </div>
   );
 }
@@ -1199,7 +1221,8 @@ export default function App() {
                 aria-label={settings.model || t("connectModel")}
                 onClick={openModelSetup}
               >
-                ⚙️
+                {/* 大脑图标代表模型：统一线性 SVG，不用 emoji。 */}
+                <Icon name="brain" size={14} />
               </button>
               <button
                 type="button"

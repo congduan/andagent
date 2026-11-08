@@ -4151,6 +4151,7 @@ button:disabled {
   color: var(--faint);
 }
 
-/* 用户气泡里的图片缩略图。 */
-.user-image { margin: 2px 0; max-width: 220px; }
-.user-image img { display: block; max-width: 100%; border-radius: 12px; }
+/* 用户气泡里的图片缩略图：限制宽高，点击灯箱放大。 */
+.user-image { margin: 2px 0; max-width: 148px; }
+.user-image-thumb { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.user-image-thumb img { display: block; width: auto; max-width: 100%; max-height: 148px; border-radius: 12px; object-fit: contain; }
