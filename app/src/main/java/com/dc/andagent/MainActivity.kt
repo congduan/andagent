@@ -550,7 +550,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(STORE_TOOLS.associateWith { StoreTool(shizuku, it) })
         tools.putAll(DEVTOOLS_TOOLS.associateWith { DevToolsTool(appContext, it) })
         tools.putAll(INTENT_TOOLS.associateWith { IntentTool(appContext, it) })
-        tools.putAll(listOf("web_search", "web_read").associateWith { WebSearchTool(it) })
+        // R96: 复用 R51 起就在的 KV 底座实例（共享 andagent_kv prefs），供 web_search 读自定义引擎配置。
+        tools.putAll(listOf("web_search", "web_read").associateWith { WebSearchTool(it, liveKv) })
         // R73: http_request (generic client, http:// allowed for LAN devices) + lan_scan (LAN probe).
         tools.putAll(HTTP_TOOLS.associateWith { HttpTool(it, appContext) })
         // R91: SSH 远程运维（JSch 会话池，TOFU known_hosts，破坏性命令分级）。
@@ -734,7 +735,16 @@ class MainActivity : ComponentActivity() {
                 override fun onPageFinished(view: WebView, url: String) {
                     // 重新加载/跳转后要补写一次；没有文档级注入能力的旧版
                     // WebView 只有这条路径（首帧后顶栏会补上避让高度）。
-                    view.evaluateJavascript(safeTopScriptBody(), null)
+                    runCatching { view.evaluateJavascript(safeTopScriptBody(), null) }
+                    // R96 review 必修项：每次导航/刷新轮换主帧凭证，只经
+                    // evaluateJavascript（只作用于主帧）把 token 注入主帧 window，
+                    // iframe（opaque origin / 跨源）读不到 parent.window，故取不到。
+                    // 全包裹 runCatching：注入失败不得影响页面加载（never-crash 纪律）。
+                    runCatching {
+                        if (::bridge.isInitialized) {
+                            view.evaluateJavascript(bridge.rotateSettingTokenAndInjectionScript(), null)
+                        }
+                    }
                 }
             }
         }

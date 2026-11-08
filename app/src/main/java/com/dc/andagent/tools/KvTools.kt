@@ -15,7 +15,47 @@ val KV_TOOLS = listOf(
     "kv_export", "kv_import",
 )
 
-class KvTool(private val context: Context, override val name: String) : Tool {
+/** R96: secure 命名空间默认拒绝时的一句式错误文案。 */
+const val KV_SECURE_DENIED_ERROR =
+    "ERROR: secure 命名空间不开放给工具调用（敏感配置存储；读写走原生设置页）"
+
+/**
+ * R96: secure 命名空间访问门禁（纯策略判定，不依赖 Context/KvStore，便于 JVM 单测）。
+ * 返回拒绝时的错误文案，null 表示放行。命中 secure 时仅 kv_get/kv_set 的「单键」
+ * 操作可能被 [secureAccess] 放行（前端设置页经 AgentBridge 注入「仅 engines」策略）；
+ * 批量写入/删除/列举/清空/导出 secure 一律拒绝。kv_import 由 KvStore.parseBackup
+ * 拒绝 secure，kv_namespaces 单独隐藏 secure，二者不走本门禁。
+ */
+fun kvSecureDenied(
+    toolName: String,
+    args: JsonObject,
+    secureAccess: (String?) -> Boolean,
+): String? {
+    val namespace = args.strArg("namespace")
+    val key = args.strArg("key")
+    val targetsSecure = when (toolName) {
+        "kv_export" -> namespace == KvStore.SECURE_NAMESPACE || args.boolArg("include_secure") == true
+        "kv_get", "kv_set", "kv_delete", "kv_keys", "kv_clear" ->
+            namespace == KvStore.SECURE_NAMESPACE
+        else -> false
+    }
+    if (!targetsSecure) return null
+    val singleKeyReadWrite = toolName in setOf("kv_get", "kv_set") &&
+        key != null && args["items_json"] == null
+    return if (singleKeyReadWrite && secureAccess(key)) null else KV_SECURE_DENIED_ERROR
+}
+
+class KvTool(
+    private val context: Context,
+    override val name: String,
+    // R96: 注入的 secure 访问策略（key -> 是否放行）。默认恒 false = 全拒绝；
+    // 模型/QuickJS 经 execute 走此默认策略，前端桥经 executeWithSecureAccess 覆盖。
+    private val secureAccess: (String?) -> Boolean = { _ -> false },
+) : Tool {
+    // R96 便捷构造：allowSecure=true 全量放行 secure，仅供 JVM 测试/受信任内部使用。
+    constructor(context: Context, name: String, allowSecure: Boolean) :
+        this(context, name, { _ -> allowSecure })
+
     private val store = KvStore(context, KeystoreCipher())
 
     override val description: String = when (name) {
@@ -79,19 +119,32 @@ class KvTool(private val context: Context, override val name: String) : Tool {
     // replace 需要 confirm=true（工具内校验），merge 也允许覆盖同名键。
     override val destructive: Boolean = name == "kv_clear" || name == "kv_import"
 
-    override suspend fun execute(args: JsonObject): String = runCatching {
-        when (name) {
-            "kv_get" -> get(args)
-            "kv_set" -> set(args)
-            "kv_delete" -> delete(args)
-            "kv_keys" -> keys(args)
-            "kv_namespaces" -> namespaces()
-            "kv_clear" -> clear(args)
-            "kv_export" -> export(args)
-            "kv_import" -> importBackup(args)
-            else -> "ERROR: 未知 KV 工具 $name"
-        }
-    }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+    // R96: 模型/QuickJS 通道走实例默认策略（拒绝一切 secure）。
+    override suspend fun execute(args: JsonObject): String = dispatch(args, secureAccess)
+
+    /**
+     * R96: 前端设置页（AgentBridge.kvCall）专用通道——用调用方策略覆盖实例默认策略，
+     * 仅放行 secure/engines 单键读写；其余 secure 操作仍返回 KV_SECURE_DENIED_ERROR。
+     */
+    suspend fun executeWithSecureAccess(args: JsonObject, policy: (String?) -> Boolean): String =
+        dispatch(args, policy)
+
+    private fun dispatch(args: JsonObject, policy: (String?) -> Boolean): String {
+        kvSecureDenied(name, args, policy)?.let { return it }
+        return runCatching {
+            when (name) {
+                "kv_get" -> get(args)
+                "kv_set" -> set(args)
+                "kv_delete" -> delete(args)
+                "kv_keys" -> keys(args)
+                "kv_namespaces" -> namespaces()
+                "kv_clear" -> clear(args)
+                "kv_export" -> export(args)
+                "kv_import" -> importBackup(args)
+                else -> "ERROR: 未知 KV 工具 $name"
+            }
+        }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+    }
 
     private fun get(args: JsonObject): String {
         val namespace = KvStore.namespaceOrDefault(args.strArg("namespace"))
@@ -178,7 +231,8 @@ class KvTool(private val context: Context, override val name: String) : Tool {
     }
 
     private fun namespaces(): String {
-        val items = store.namespaces()
+        // R96: secure 为系统敏感命名空间，不向工具/模型暴露其存在（实现取简：直接隐藏）。
+        val items = store.namespaces().filter { it.namespace != KvStore.SECURE_NAMESPACE }
         return buildJsonObject {
             put("count", items.size)
             put("namespaces", buildJsonArray {

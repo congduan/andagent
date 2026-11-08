@@ -12,7 +12,9 @@ import android.webkit.WebView
 import com.dc.andagent.widget.WidgetApi
 import com.dc.andagent.widget.data.WidgetDataScheduler
 import com.dc.andagent.tools.Tool
+import com.dc.andagent.tools.KvTool
 import com.dc.andagent.tools.JsonFixer
+import com.dc.andagent.tools.strArg
 import com.dc.andagent.tools.SshTransferCancel
 import com.dc.andagent.tools.SshTransferEvent
 import com.dc.andagent.cron.CronScheduler
@@ -43,6 +45,8 @@ import android.net.Uri
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.security.SecureRandom
+import java.security.MessageDigest
 
 /**
  * JS <-> Kotlin bridge.
@@ -117,6 +121,14 @@ class AgentBridge(
 
     @Volatile
     private var released = false
+
+    // R96 review 必修项：设置通道主帧能力凭证。@JavascriptInterface 会把
+    // AndroidBridge 注入所有 iframe（canvas/HTML 卡片 sandbox opaque origin、
+    // web_embed 跨源网页），键名白名单挡不住 iframe 直调。token 仅由 MainActivity
+    // 在 onPageFinished 经 evaluateJavascript（只作用于主帧）注入主帧 window，
+    // iframe 读不到 parent.window，故拿不到该凭证；kvSettingCall 校验不符即拒绝。
+    @Volatile
+    private var settingToken: String = newSettingToken()
 
     /** {"version":"0.6.0"} — shown on the home screen. */
     @JavascriptInterface
@@ -354,6 +366,11 @@ class AgentBridge(
      * kv_set 同级；导出只读。参数与返回值与工具执行结果一致；写失败（如
      * 64KB 上限）以 "ERROR:" 前缀返回，前端据此回退 localStorage，绝不静默
      * 吞写失败。
+     *
+     * R96: secure 命名空间是加密敏感配置存储，对模型/QuickJS/canvas/live iframe
+     * 一律拒绝（本方法走 KvTool 实例默认全拒策略）。设置页读写 secure/engines
+     * 必须走专用窄通道 [kvSettingCall]——本方法不留任何 secure 例外，堵住
+     * CanvasCard 等 RPC 转发路径把模型生成代码的 KV 请求送达敏感配置的绕过面。
      */
     @JavascriptInterface
     fun kvCall(name: String, raw: String): String {
@@ -361,6 +378,48 @@ class AgentBridge(
         val tool = tools[name] ?: return "ERROR: 未知工具"
         val args = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return "ERROR: 参数不是 JSON 对象"
         return runCatching { runBlocking { tool.execute(args) } }.getOrElse { "ERROR: ${it.message}" }
+    }
+
+    /**
+     * R96: 设置页专用 secure 通道（仅 R96 搜索引擎配置页调用）。只放行
+     * kv_get/kv_set 的 secure/engines 单键读写，其余 secure 操作与工具名一律拒绝；
+     * 与 [kvCall]（全拒）严格分离，避免 canvas/live iframe 的 RPC 转发借道读写
+     * 敏感配置。响应形状与 kv_get/kv_set 完全一致。
+     *
+     * R96 review 必修项：@JavascriptInterface 会把 AndroidBridge 注入所有 iframe，
+     * 模型生成代码可直接调本方法读含 Google CSE key 的 secure/engines 配置或
+     * kv_set 篡改。故调用方必须在 args JSON 内携带 `__token`（主帧专用凭证，
+     * 仅经 evaluateJavascript 注入主帧 window；iframe opaque origin 无 parent
+     * 访问权、跨源同理，读不到该值）。token 校验在函数入口完成，不符立即拒绝；
+     * 通过后从 args 移除该键，避免 KvTool 收到未知参数，再走 namespace/key 校验
+     * 与 executeWithSecureAccess。不新增任何暴露 token 的 @JavascriptInterface。
+     */
+    @JavascriptInterface
+    fun kvSettingCall(name: String, raw: String): String {
+        if (name != "kv_get" && name != "kv_set") return "ERROR: 设置通道仅支持 kv_get/kv_set"
+        val tool = tools[name] as? KvTool ?: return "ERROR: 未知工具"
+        val parsed = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return "ERROR: 参数不是 JSON 对象"
+        // R96 review 必修项：恒定时间比对主帧凭证，缺失/不匹配一律拒绝。
+        val token = parsed.strArg("__token")
+        if (token == null || !MessageDigest.isEqual(token.toByteArray(), settingToken.toByteArray()))
+            return "ERROR: 设置通道凭证无效"
+        val args = JsonObject(parsed.filterKeys { it != "__token" })
+        if (args.strArg("namespace") != "secure" || args.strArg("key") != "engines" || args["items_json"] != null)
+            return "ERROR: 设置通道仅限 secure/engines 单键读写"
+        return runCatching {
+            runBlocking { tool.executeWithSecureAccess(args) { key -> key == "engines" } }
+        }.getOrElse { "ERROR: ${it.message}" }
+    }
+
+    /**
+     * R96 review 必修项：每次页面加载（onPageFinished）轮换主帧凭证，返回注入
+     * 脚本体。token 经 JsonPrimitive 编码成合法 JS 字符串字面量防注入；脚本只能
+     * 由 MainActivity 用 evaluateJavascript 注入主帧，绝不新增 @JavascriptInterface
+     * 出口暴露 token。每次导航/刷新都会触发 onPageFinished，token 随之轮换。
+     */
+    fun rotateSettingTokenAndInjectionScript(): String {
+        settingToken = newSettingToken()
+        return "window.__kvSettingToken=${JsonPrimitive(settingToken).toString()};"
     }
 
     /* --------------------------- permissions ---------------------------- */
@@ -1061,5 +1120,13 @@ class AgentBridge(
             "host", "content-length", "connection", "transfer-encoding",
             "accept-encoding", "keep-alive", "upgrade", "proxy-connection",
         )
+
+        // R96 review 必修项：128-bit 随机主帧凭证，hex 编码 32 字符。
+        private val settingTokenRandom = SecureRandom()
+        private fun newSettingToken(): String {
+            val bytes = ByteArray(16)
+            settingTokenRandom.nextBytes(bytes)
+            return bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
     }
 }

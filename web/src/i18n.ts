@@ -446,6 +446,22 @@ const zh = {
   sshScrubConfirm: "扫描全部会话并替换疑似明文密码？此操作不可撤销。",
   sshScrubDone: "已清理 {count} 处",
   sshScrubNone: "没有发现需要清理的明文密码",
+  // R96: 自定义搜索引擎设置页
+  searchEngines: "搜索引擎", searchEnginesSub: "自定义引擎 · SearXNG · 预设模板",
+  searchAppOnly: "需要在 App 内使用（浏览器预览没有 KV 桥，无法读写配置，保存已禁用）",
+  searchLoadFailed: "读取引擎配置失败。为避免覆盖现有配置，保存已禁用——点「刷新」重试。",
+  searchPrivacyNote: "自定义引擎请求由用户自己承担，不经任何中转；URL 模板只保存在本机 KV。",
+  searchFallbackNote: "无配置或全部停用时，web_search 回落内置 Bing + DuckDuckGo；自定义引擎不可达或 0 结果时也会自动回落并标注 fallback_from。",
+  searchEngineList: "已配置引擎", searchEmpty: "还没有自定义引擎。无配置时 web_search 使用内置 Bing + DuckDuckGo。",
+  searchName: "名称", searchNamePlaceholder: "如：我的 SearXNG",
+  searchUrlTemplate: "URL 模板", searchUrlPlaceholder: "https://…/?q={query}",
+  searchTemplateHint: "必须含 {query} 占位符且以 https:// 开头；{query} 会经 URL 编码后替换，其余部分原样。",
+  searchGoogleCseNote: "Google CSE 需要自带 API key 与 cx，请把模板里的 USER_KEY / CX 换成你自己的值（不要把真实密钥写进分享出去的配置）。",
+  searchPresetLabel: "预设模板", searchPresetChoose: "选择预设一键填入…",
+  searchAddTitle: "新增引擎", searchAdd: "添加",
+  searchDefault: "默认", searchSetDefault: "设为默认",
+  searchDeleteConfirm: "删除引擎「{name}」？",
+  searchNeedName: "请填写名称", searchNeedQuery: "模板必须包含 {query} 占位符", searchNeedHttps: "模板必须以 https:// 开头",
 } as const;
 type Key = keyof typeof zh;
 const en: Record<Key, string> = {
@@ -892,6 +908,22 @@ const en: Record<Key, string> = {
   sshScrubConfirm: "Scan every session and redact suspected plaintext secrets? This cannot be undone.",
   sshScrubDone: "Scrubbed {count} occurrence(s)",
   sshScrubNone: "No plaintext passwords found",
+  // R96: custom search engine settings
+  searchEngines: "Search engines", searchEnginesSub: "Custom engines · SearXNG · presets",
+  searchAppOnly: "Requires the app — browser preview has no KV bridge, so config cannot be read or written (saving is disabled).",
+  searchLoadFailed: "Failed to load engine config. Saving is disabled to avoid overwriting the existing config — press Refresh to retry.",
+  searchPrivacyNote: "Custom engine requests are made by you directly, with no relay; URL templates are stored only in local KV.",
+  searchFallbackNote: "With no config or all engines disabled, web_search falls back to built-in Bing + DuckDuckGo; an unreachable custom engine or zero results also falls back and is marked with fallback_from.",
+  searchEngineList: "Configured engines", searchEmpty: "No custom engines yet. Without config, web_search uses built-in Bing + DuckDuckGo.",
+  searchName: "Name", searchNamePlaceholder: "e.g. My SearXNG",
+  searchUrlTemplate: "URL template", searchUrlPlaceholder: "https://…/?q={query}",
+  searchTemplateHint: "Must contain {query} and start with https://; {query} is URL-encoded before substitution, the rest is kept as-is.",
+  searchGoogleCseNote: "Google CSE needs your own API key and cx — replace USER_KEY / CX in the template with your values (never put real keys in a config you share).",
+  searchPresetLabel: "Preset template", searchPresetChoose: "Choose a preset to fill in…",
+  searchAddTitle: "Add engine", searchAdd: "Add",
+  searchDefault: "Default", searchSetDefault: "Set default",
+  searchDeleteConfirm: "Delete engine “{name}”?",
+  searchNeedName: "Enter a name", searchNeedQuery: "Template must contain {query}", searchNeedHttps: "Template must start with https://",
 };
 
 export function getLanguageMode(): LanguageMode {

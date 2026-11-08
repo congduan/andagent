@@ -3,6 +3,7 @@ import {
   cronDelete, cronExactAllowed, cronList, cronOpenExactSettings, cronPauseAll,
   cronToggle, getAppVersion, getDevToolsStatus, getProjectionStatus,
   getShizukuStatus, getTermuxStatus, grantTermuxViaShizuku, hasBridge,
+  hasKvBridge, kvCall,
   memoryCall, persistSettings, requestHealthPermission, requestProjectionConsent,
   setDevToolsEnabled, skillManage, stopProjection,
   sshCredentialDelete, sshCredentialEdit, sshCredentialsList, sshCredentialsOpen,
@@ -11,6 +12,7 @@ import {
   defaultSystemPrompt, hasSavedSystemPrompt, isDefaultSystemPrompt,
   type ExternalStateStatus, type Settings, type SshCredentialMeta,
 } from "./bridge";
+import { hasSettingBridge, kvSettingCall } from "./settingBridge";
 import { SessionStore } from "./sessions";
 import noticesText from "../../THIRD-PARTY-NOTICES.md?raw";
 import { loadThemeMode, setTheme, type ThemeMode } from "./theme";
@@ -40,7 +42,7 @@ type Props = {
 
 export type SettingsPage =
   | "home" | "model" | "prompt" | "appearance" | "memory" | "automation"
-  | "ssh" | "skills" | "extensions" | "storage" | "data" | "about" | "notices";
+  | "ssh" | "skills" | "extensions" | "search" | "storage" | "data" | "about" | "notices";
 
 type ShizukuStatus = ReturnType<typeof getShizukuStatus>;
 type ProjectionStatus = ReturnType<typeof getProjectionStatus>;
@@ -54,6 +56,65 @@ type SkillResult = { name?: string; description?: string; repo?: string; source:
 const THEME_OPTIONS: ThemeMode[] = ["system", "light", "dark"];
 const CONFIRM_OPTIONS: ConfirmMode[] = ["off", "destructive", "all"];
 const CONFIRM_LABELS = { off: "confirmModeOff", destructive: "confirmModeDestructive", all: "confirmModeAll" } as const;
+
+/* --------------------- R96: 自定义搜索引擎配置 --------------------- */
+interface SearchEngine {
+  name: string;
+  urlTemplate: string;
+  enabled: boolean;
+  isDefault: boolean;
+}
+const SEARCH_KV_NS = "secure";
+const SEARCH_KV_KEY = "engines";
+/** 五个预设一键填入表单；Google CSE 模板只放占位符，绝不带真实 API key。 */
+const SEARCH_PRESETS: Array<{ key: string; label: string; name: string; urlTemplate: string }> = [
+  { key: "searxng", label: "SearXNG", name: "SearXNG", urlTemplate: "https://<your-instance>/search?q={query}&format=json" },
+  { key: "bing", label: "Bing", name: "Bing", urlTemplate: "https://www.bing.com/search?q={query}" },
+  { key: "ddg", label: "DuckDuckGo", name: "DuckDuckGo", urlTemplate: "https://html.duckduckgo.com/html/?q={query}" },
+  { key: "brave", label: "Brave", name: "Brave", urlTemplate: "https://search.brave.com/search?q={query}" },
+  { key: "googlecse", label: "Google CSE", name: "Google CSE", urlTemplate: "https://www.googleapis.com/customsearch/v1?key=USER_KEY&cx=CX&q={query}" },
+];
+type SearchTemplateError = "searchNeedQuery" | "searchNeedHttps";
+function validateSearchTemplate(tpl: string): SearchTemplateError | null {
+  if (!tpl.includes("{query}")) return "searchNeedQuery";
+  if (!tpl.startsWith("https://")) return "searchNeedHttps";
+  return null;
+}
+/** R96 review 建议项1：数组含任何无效条目不再静默过滤，返回 null（读取失败禁保存）。
+ * 只有全部条目满足 {name:string,urlTemplate:string} 才返回规整列表。 */
+function coerceEngines(value: unknown): SearchEngine[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: SearchEngine[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") return null;
+    const o = entry as Record<string, unknown>;
+    if (typeof o.name !== "string" || typeof o.urlTemplate !== "string") return null;
+    out.push({
+      name: String(o.name),
+      urlTemplate: String(o.urlTemplate),
+      enabled: o.enabled !== false,
+      isDefault: o.isDefault === true,
+    });
+  }
+  return out;
+}
+/** kv_get 的 value 是存入的 JSON 数组本体（非字符串包裹）。
+ * R96 review 必修项3：区分「尚无配置」与「读取失败」——found=false 是合法空态（首次配置），
+ * 无桥 / 桥调用失败 / 返回 ERROR / 含无效条目才是 null（禁止保存防覆盖）。
+ * R96 review 必修项：kvSettingCall 已 async 化（等待主帧凭证），此处 await。 */
+async function loadSearchEngines(): Promise<SearchEngine[] | null> {
+  if (!hasSettingBridge()) return null;
+  const res = await kvSettingCall<{ found?: boolean; value?: unknown }>("kv_get", { namespace: SEARCH_KV_NS, key: SEARCH_KV_KEY });
+  if (!res) return null; // 桥调用失败 / 被门禁拒绝：配置状态未知，禁止保存
+  if (!res.found) return []; // 键不存在：合法空态，首次配置可保存
+  return coerceEngines(res.value); // 值损坏 / 含无效条目：coerceEngines 返回 null，防保存清掉异常数据
+}
+async function saveSearchEngines(list: SearchEngine[]): Promise<boolean> {
+  const res = await kvSettingCall<{ ok?: boolean }>("kv_set", {
+    namespace: SEARCH_KV_NS, key: SEARCH_KV_KEY, value_json: JSON.stringify(list),
+  });
+  return res?.ok === true;
+}
 
 export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onSave, onModelSetup, closing }: Props) {
   const { t, mode, language } = useI18n();
@@ -86,8 +147,17 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   const [external, setExternal] = useState<ExternalStateStatus>(() => externalStateStatus());
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
+  // R96: 自定义搜索引擎（KV namespace=search_engines，单键存 JSON 数组）。null = KV 读取失败，禁止保存防覆盖。
+  const [engines, setEngines] = useState<SearchEngine[] | null>([]);
+  const [searchDraft, setSearchDraft] = useState({ name: "", urlTemplate: "" });
+  const [searchPreset, setSearchPreset] = useState("");
+  const bridgeOk = hasKvBridge();
+
   // R63: 子页按需惰性加载（进入页面才拉数据，替代旧版全量 useState 平铺）。
   useEffect(() => {
+    // R96 review 必修项：loadSearchEngines 已 async 化，页面快速切换时旧 promise
+    // 结果不要覆盖新页（局部 cancelled 标志）。
+    let cancelled = false;
     if (page === "automation") { setCronTasks(cronList()); setExactAllowed(cronExactAllowed()); setCronLoaded(true); }
     if (page === "skills") { try { setSkills(JSON.parse(skillManage("list"))); } catch { setSkills([]); } setSkillsLoaded(true); }
     if (page === "ssh") { setCreds(sshCredentialsList()); setCredsLoaded(true); }
@@ -101,7 +171,14 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     }
     if (page === "data" && hasBridge()) { setShizuku(getShizukuStatus()); setTermuxStatus(getTermuxStatus()); setProjection(getProjectionStatus()); setDevtools(hasBridge() ? getDevToolsStatus() : null); }
     if (page === "storage") setExternal(externalStateStatus());
+    if (page === "search") {
+      void (async () => {
+        const list = await loadSearchEngines();
+        if (!cancelled) setEngines(list);
+      })();
+    }
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
+    return () => { cancelled = true; };
   }, [page]);
 
   // 原生录入 / 编辑界面返回后自动刷新元数据列表（两侧不共享状态）。
@@ -116,6 +193,46 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
 
   const refreshCron = () => { setCronTasks(cronList()); setExactAllowed(cronExactAllowed()); };
   const refreshSkills = () => { try { setSkills(JSON.parse(skillManage("list"))); } catch { setSkills([]); } };
+
+  // R96: 引擎列表就地编辑、默认标记、新增与整体保存。
+  const updateEngine = (index: number, patch: Partial<SearchEngine>) =>
+    setEngines(prev => (prev ?? []).map((e, i) => i === index ? { ...e, ...patch } : e));
+  const setEngineDefault = (index: number) =>
+    setEngines(prev => (prev ?? []).map((e, i) => ({ ...e, isDefault: i === index })));
+  const removeEngine = (index: number) => setEngines(prev => (prev ?? []).filter((_, i) => i !== index));
+  const applySearchPreset = (key: string) => {
+    setSearchPreset(key);
+    const p = SEARCH_PRESETS.find(x => x.key === key);
+    if (p) setSearchDraft({ name: p.name, urlTemplate: p.urlTemplate });
+  };
+  const addSearchEngine = () => {
+    const name = searchDraft.name.trim();
+    const urlTemplate = searchDraft.urlTemplate.trim();
+    if (!name) { showError(t("searchNeedName")); return; }
+    const err = validateSearchTemplate(urlTemplate);
+    if (err) { showError(t(err)); return; }
+    setEngines(prev => [...(prev ?? []), { name, urlTemplate, enabled: true, isDefault: (prev ?? []).length === 0 }]);
+    setSearchDraft({ name: "", urlTemplate: "" });
+    setSearchPreset("");
+  };
+  const persistSearchEngines = async () => {
+    // R96 review 必修项3：engines === null 表示 KV 读取失败（配置状态未知），
+    // 此时保存会把未知状态覆盖成空数组——直接拒绝并提示刷新。
+    if (!bridgeOk || engines === null) return;
+    for (const e of engines) {
+      if (!e.name.trim()) { showError(t("searchNeedName")); return; }
+      const err = validateSearchTemplate(e.urlTemplate.trim());
+      if (err) { showError(`${e.name}: ${t(err)}`); return; }
+    }
+    let seenDefault = false;
+    const normalized: SearchEngine[] = (engines ?? []).map(e => {
+      const isDefault = e.enabled && e.isDefault && !seenDefault;
+      if (isDefault) seenDefault = true;
+      return { ...e, name: e.name.trim(), urlTemplate: e.urlTemplate.trim(), isDefault };
+    });
+    if (await saveSearchEngines(normalized)) { setEngines(normalized); showSuccess(t("saved")); }
+    else showError(t("modelSaveFailed"));
+  };
 
   // 桥调用是同步阻塞的：先把「搜索中 / 安装中」画出来再发起请求，否则按钮毫无反馈。
   const searchSkills = () => {
@@ -219,6 +336,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     { key: "automation", icon: "timer", tint: "#f59e0b", title: t("cron"), sub: t("cronNote"), badge: cronLoaded ? `${cronTasks.length}` : undefined, badgeTone: "count" },
     { key: "skills", icon: "puzzle", tint: "#10b981", title: t("skills"), sub: `${t("install")} · ${t("enabled")} · ${t("search")}`, badge: skillsLoaded ? `${skills.length}` : undefined, badgeTone: "count" },
     { key: "ssh", icon: "key", tint: "#f43f5e", title: t("sshCredentials"), sub: t("sshCredentialsGroupSub"), badge: credsLoaded ? `${creds.length}` : undefined, badgeTone: "count" },
+    { key: "search", icon: "search", tint: "#f97316", title: t("searchEngines"), sub: t("searchEnginesSub") },
     { key: "storage", icon: "hard-drive", tint: "#14b8a6", title: t("storageGroup"), sub: external.degraded ? t("storageModeDegraded") : t("storageModePublic"), badge: external.hasSnapshot ? "ok" : undefined, badgeTone: external.hasSnapshot ? "ok" : "warn" },
     { key: "extensions", icon: "toolbox", tint: "#0ea5e9", title: t("extensionsGroup"), sub: "Shizuku · Termux · DevTools" },
     { key: "data", icon: "bar-chart", tint: "#06b6d4", title: t("dataGroup"), sub: `${t("health")} · ${t("projection")}` },
@@ -708,10 +826,70 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     </div>,
   );
 
+  // ===== 搜索引擎（R96：自定义 web_search 引擎，存 KV secure/engines——模板可能含密钥，走加密命名空间）=====
+  const searchPage = sub(t("searchEngines"), <>
+    {!bridgeOk && <div className="settings-alert"><span>{t("searchAppOnly")}</span></div>}
+    {bridgeOk && engines === null && <div className="settings-alert"><span>{t("searchLoadFailed")}</span></div>}
+    <p className="settings-page-note">{t("searchPrivacyNote")}</p>
+    <p className="settings-page-note">{t("searchFallbackNote")}</p>
+    {section(`${t("searchEngineList")} (${(engines ?? []).length})`, <>
+      {(engines ?? []).length === 0
+        ? <p className="settings-empty">{t("searchEmpty")}</p>
+        : <div className="settings-list">
+            {(engines ?? []).map((e, i) => (
+              <div key={i} className={`settings-list-item${e.enabled ? "" : " is-off"}`}>
+                <label className="field"><span>{t("searchName")}</span>
+                  <input value={e.name} onChange={ev => updateEngine(i, { name: ev.target.value })}
+                    autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+                </label>
+                <label className="field"><span>{t("searchUrlTemplate")}</span>
+                  <input value={e.urlTemplate} onChange={ev => updateEngine(i, { urlTemplate: ev.target.value })}
+                    autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+                </label>
+                <div className="settings-card-actions">
+                  <label className="settings-switch">
+                    <input type="checkbox" checked={e.enabled} onChange={ev => updateEngine(i, { enabled: ev.target.checked })} />
+                    <span>{t("enabled")}</span>
+                  </label>
+                  {e.isDefault
+                    ? <span className="skill-badge">{t("searchDefault")}</span>
+                    : <button type="button" className="btn-ghost btn-sm" disabled={!e.enabled} onClick={() => setEngineDefault(i)}>{t("searchSetDefault")}</button>}
+                  <button type="button" className="btn-ghost btn-sm" onClick={async () => {
+                    if (await appConfirm(t("searchDeleteConfirm", { name: e.name }))) removeEngine(i);
+                  }}>{t("delete")}</button>
+                </div>
+              </div>
+            ))}
+          </div>}
+    </>)}
+    {section(t("searchAddTitle"), <>
+      <label className="field"><span>{t("searchPresetLabel")}</span>
+        <select value={searchPreset} onChange={ev => applySearchPreset(ev.target.value)}>
+          <option value="">{t("searchPresetChoose")}</option>
+          {SEARCH_PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+        </select>
+      </label>
+      <label className="field"><span>{t("searchName")}</span>
+        <input value={searchDraft.name} onChange={ev => setSearchDraft({ ...searchDraft, name: ev.target.value })}
+          placeholder={t("searchNamePlaceholder")} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+      </label>
+      <label className="field"><span>{t("searchUrlTemplate")}</span>
+        <input value={searchDraft.urlTemplate} onChange={ev => setSearchDraft({ ...searchDraft, urlTemplate: ev.target.value })}
+          placeholder={t("searchUrlPlaceholder")} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+      </label>
+      <p className="settings-card-note">{t("searchTemplateHint")}</p>
+      {searchPreset === "googlecse" && <p className="settings-card-note">{t("searchGoogleCseNote")}</p>}
+      <div className="settings-card-actions">
+        <button type="button" className="btn-primary" onClick={addSearchEngine}>{t("searchAdd")}</button>
+        <button type="button" className="btn-ghost" onClick={async () => { setEngines(await loadSearchEngines()); }}>{t("refresh")}</button>
+      </div>
+    </>)}
+  </>, <button type="button" className="btn-primary" disabled={!bridgeOk || engines === null} onClick={persistSearchEngines}>{t("save")}</button>);
+
   const subPages: Record<SettingsPage, React.ReactNode> = {
     home: null, model: modelPage, prompt: promptPage, appearance: appearancePage, memory: memoryPage,
     automation: automationPage, skills: skillsPage, ssh: sshPage, extensions: extensionsPage,
-    storage: storagePage, data: dataPage, about: aboutPage, notices: noticesPage,
+    search: searchPage, storage: storagePage, data: dataPage, about: aboutPage, notices: noticesPage,
   };
 
   return (

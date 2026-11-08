@@ -161,6 +161,8 @@ interface AndroidBridge {
   getSettings(): string;
   memoryPrompt?(query: string): string;
   memoryCall?(name: string, argsJson: string): string;
+  /** R96: 设置页专用 secure/engines 通道（kvCall 对 secure 全拒，此处窄放行）。 */
+  kvSettingCall?(name: string, argsJson: string): string;
   /** R53: 原生 KV 通道（kv_get/kv_set/... 六工具），同步返回工具结果 JSON。 */
   kvCall?(name: string, argsJson: string): string;
   consumeDeeplink(): string;

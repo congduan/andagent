@@ -73,48 +73,114 @@ internal object WebHtml {
     }
 }
 
-class WebSearchTool(override val name: String) : Tool {
+class WebSearchTool(
+    override val name: String,
+    private val engineStore: SearchEngineStore = SearchEngineStore({ null }, {}),
+    private val fetcher: ((String) -> String)? = null,
+) : Tool {
+    /** 生产入口：复用 MainActivity 传入的 KvStore（共享 andagent_kv prefs，不新建存储实例）。 */
+    constructor(name: String, kvStore: KvStore) : this(name, SearchEngineStore(kvStore))
+
     override val description = if (name == "web_search")
-        "无需 API key 搜索互联网。Bing 网页搜索为主，DuckDuckGo 即时答案补充；返回标题、链接、摘要及来源。时效性问题先搜索。"
+        "无需 API key 搜索互联网。默认 Bing 网页搜索为主、DuckDuckGo 即时答案补充；可在「设置 → 搜索引擎」配置自定义引擎（含自建 SearXNG），用 engine 参数指定名称可只走该引擎；自定义引擎不可达或 0 结果时自动回落内置 Bing+DDG 并附 fallback_from。返回标题、链接、摘要及来源。时效性问题先搜索。"
     else "读取 HTTPS 网页正文，去除脚本、样式和标签；最多返回 max_chars 字符。"
     override val parameters = if (name == "web_search") schemaOf(
         "query" to strParam("搜索词"), "limit" to intParam("结果上限，默认 8，最多 20"),
-        "mkt" to strParam("Bing 市场，默认 zh-CN"), required = listOf("query"),
+        "mkt" to strParam("Bing 市场，默认 zh-CN"),
+        "engine" to strParam("可选：指定设置页配置的自定义搜索引擎名称；省略则用默认/首个启用的自定义引擎；指定了不存在的名称会直接报错（不发请求）；无配置时忽略"),
+        required = listOf("query"),
     ) else schemaOf("url" to strParam("HTTPS 网页地址"), "max_chars" to intParam("最大正文字数，默认 8000，最多 20000"), required = listOf("url"))
 
+    // R96 review 必修项2：禁 OkHttp 自动跟随重定向（followRedirects=false）——
+    // 默认实现会在校验前就随 30x 跳到下一跳，模板含 API key 时 key 可能已发往明文
+    // http 目标。改为逐跳手动跟随：仅对 3xx 解析 Location，发起下一跳前校验仍是 https。
     private val http = OkHttpClient.Builder().connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(12, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS).build()
+        .readTimeout(12, TimeUnit.SECONDS).callTimeout(12, TimeUnit.SECONDS)
+        .followRedirects(false).followSslRedirects(false).build()
 
     override suspend fun execute(args: JsonObject): String = runCatching {
         if (name == "web_search") search(args) else read(args)
     }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
 
-    private fun fetch(url: String): String {
-        val request = Request.Builder().url(url).header("User-Agent", ANDROID_CHROME_UA)
-            .header("Accept", "text/html,application/json;q=0.9,*/*;q=0.8").build()
-        http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) error("HTTP ${response.code}")
-            if (!response.request.url.isHttps) error("重定向到非 HTTPS 页面")
-            val body = response.body ?: error("空响应")
-            // Bound memory for unusually large pages.
-            val bytes = body.byteStream().use { stream ->
-                val out = java.io.ByteArrayOutputStream()
-                val buf = ByteArray(8192)
-                while (out.size() < 1_000_000) {
-                    val n = stream.read(buf, 0, minOf(buf.size, 1_000_000 - out.size()))
-                    if (n < 0) break
-                    out.write(buf, 0, n)
+    /** 测试可注入 fetcher，生产为 null 时走真实 OkHttp。 */
+    private fun fetch(url: String): String = fetcher?.invoke(url) ?: realFetch(url)
+
+    private fun realFetch(url: String): String {
+        // 逐跳手动跟随：Location 相对路径按当前 URL 解析，非 https 下一跳直接拒绝。
+        var currentUrl = url
+        repeat(MAX_REDIRECTS) {
+            val call = http.newCall(Request.Builder().url(currentUrl).header("User-Agent", ANDROID_CHROME_UA)
+                .header("Accept", "text/html,application/json;q=0.9,*/*;q=0.8").build())
+            call.execute().use { response ->
+                if (!currentUrl.startsWith("https://", ignoreCase = true)) error("拒绝非 HTTPS 请求：$currentUrl")
+                val loc = response.header("Location")
+                val isRedirect = response.code in 300..399
+                if (!isRedirect) {
+                    if (!response.isSuccessful) error("HTTP ${response.code}")
+                    val body = response.body ?: error("空响应")
+                    // Bound memory for unusually large pages.
+                    val bytes = body.byteStream().use { stream ->
+                        val out = java.io.ByteArrayOutputStream()
+                        val buf = ByteArray(8192)
+                        while (out.size() < 1_000_000) {
+                            val n = stream.read(buf, 0, minOf(buf.size, 1_000_000 - out.size()))
+                            if (n < 0) break
+                            out.write(buf, 0, n)
+                        }
+                        out.toByteArray()
+                    }
+                    return String(bytes, body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8)
                 }
-                out.toByteArray()
+                // R96: 3xx 必须带 Location，缺失视为协议错误而非静默吞掉。
+                if (loc.isNullOrBlank()) error("HTTP ${response.code} 重定向缺少 Location")
+                currentUrl = java.net.URI(currentUrl).resolve(loc).toString()
+                if (!currentUrl.startsWith("https://", ignoreCase = true)) error("重定向到非 HTTPS 页面")
             }
-            return String(bytes, body.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8)
         }
+        error("重定向次数超过 $MAX_REDIRECTS")
+    }
+
+    private companion object {
+        /** 与浏览器实践对齐的重定向上限；逐跳 https 校验见 [realFetch]。 */
+        const val MAX_REDIRECTS = 5
     }
 
     private fun search(args: JsonObject): String {
         val query = args.strArg("query") ?: error("缺少 query")
         val limit = (args.intArg("limit") ?: 8).coerceIn(1, 20)
         val mkt = args.strArg("mkt")?.takeIf { it.matches(Regex("[A-Za-z]{2}-[A-Za-z]{2}")) } ?: "zh-CN"
+        // R96 review 必修项3：显式指定 engine 且配置里没有时，明确报错——
+        // 不允许静默改用默认引擎（请求会发往用户未指定的第三方引擎）。
+        val usable = usableEngines(engineStore.load())
+        val requested = args.strArg("engine")?.trim()?.takeIf { it.isNotEmpty() }
+        if (requested != null) {
+            val hit = usable.firstOrNull { it.name.equals(requested, ignoreCase = true) }
+                ?: return "ERROR: 未找到名为「$requested」的自定义搜索引擎（设置 → 搜索引擎 中配置）；web_search 未执行，未产生网络请求"
+            // R96 review 必修项3 编译收口：searchVia 回落内置搜索需带 mkt（与默认引擎分支一致）。
+            return searchVia(hit, query, limit, mkt)
+        }
+        val engine = defaultEngine(usable)
+        // 无配置 / 全部停用 / 模板非法 → 现有 Bing+DDG 路径原样，不叠加自定义引擎。
+        if (engine == null) return builtinSearch(query, limit, mkt)
+        return searchVia(engine, query, limit, mkt)
+    }
+
+    /** 经单个引擎搜索：不可达或 0 结果回落内置 Bing+DDG，首元素附 fallback_from 提示。 */
+    private fun searchVia(engine: CustomEngine, query: String, limit: Int, mkt: String): String {
+        val custom = runCatching {
+            val body = fetch(buildSearchUrl(engine.urlTemplate, query))
+            parseCustomResults(body, engine.name, limit)
+        }
+        val customResults = custom.getOrNull().orEmpty()
+        if (customResults.isNotEmpty()) {
+            // 自定义引擎可用 → 只走该引擎，结果 engine 字段为自定义引擎名。
+            return JsonArray(customResults.map { it.toJson() }).toString()
+        }
+        return attachFallbackFrom(builtinSearch(query, limit, mkt), engine.name)
+    }
+
+    /** 内置 Bing HTML + DDG IA 路径（逻辑与改造前一致；fetch 经注入点便于 JVM 测）。 */
+    private fun builtinSearch(query: String, limit: Int, mkt: String): String {
         val q = URLEncoder.encode(query, "UTF-8")
         var diagnostic = ""
         val bing = runCatching {
