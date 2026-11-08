@@ -60,7 +60,17 @@ export function WebViewCard({ uri, local }: { uri: string; local?: boolean }) {
   // （设置通道主帧凭证）并继承 AndroidBridge 直调 kvSettingCall 读取 secure KV
   //（含 API key）——凭据永不过模型铁律。本地 HTML 展示请用 local=true 的
   // 原生内嵌 WebView（无 AndroidBridge，且 DevTools eval 已被安全策略拦）。
-  if (/^https:\/\/appassets\.androidplatform\.net\//i.test(uri)) {
+  // R96 review 三轮必修项1：字符串正则挡不住 `:443` 默认端口规范化（浏览器视
+  // 其为同一 origin）——改用 URL 解析取 host（端口无关：该域非公网可路由，
+  // 任何端口命中都拦，保守无副作用）；解析失败按危险处理（fail-closed）。
+  const isShellOriginUri = (() => {
+    try {
+      return new URL(uri).hostname.toLowerCase() === "appassets.androidplatform.net";
+    } catch {
+      return true;
+    }
+  })();
+  if (isShellOriginUri) {
     return (
       <div className="webview-card">
         <div className="webview-bar">
@@ -87,7 +97,11 @@ export function WebViewCard({ uri, local }: { uri: string; local?: boolean }) {
           src={uri}
           loading="lazy"
           referrerPolicy="no-referrer"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+          // R96 review 三轮必修项1（纵深）：撤掉 allow-same-origin——iframe 变
+          // opaque origin，即便页面运行时把自己导航到同源 URL 也读不到
+          // parent.__kvSettingToken（src 检查只管初始加载）。代价：远端页
+          // Cookie/localStorage 失效，完整体验走「外部窗口」bridge-less WebView。
+          sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
         />
       )}
     </div>

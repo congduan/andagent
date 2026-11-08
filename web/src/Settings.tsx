@@ -225,8 +225,11 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     // 下 update 把 null 规整为数组、保存按钮随之点亮覆盖未知配置。
     setEngines(prev => (Array.isArray(prev) ? prev.map((e, i) => i === index ? { ...e, ...patch } : e) : prev));
   const setEngineDefault = (index: number) =>
-    setEngines(prev => (prev ?? []).map((e, i) => ({ ...e, isDefault: i === index })));
-  const removeEngine = (index: number) => setEngines(prev => (prev ?? []).filter((_, i) => i !== index));
+    // R96 review 三轮必修项3：与 updateEngine 同口径——仅在数组就绪态修改，
+    // undefined/null 态经 `?? []` 规整会把未知配置重新开放保存。
+    setEngines(prev => (Array.isArray(prev) ? prev.map((e, i) => ({ ...e, isDefault: i === index })) : prev));
+  const removeEngine = (index: number) =>
+    setEngines(prev => (Array.isArray(prev) ? prev.filter((_, i) => i !== index) : prev));
   const applySearchPreset = (key: string) => {
     setSearchPreset(key);
     const p = SEARCH_PRESETS.find(x => x.key === key);
