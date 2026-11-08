@@ -4,10 +4,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.ServerSocket
+import java.net.SocketTimeoutException
 import java.util.Base64
 
 /**
@@ -308,5 +310,89 @@ class AdbClientTest {
     private fun okHandshake(inp: InputStream, out: OutputStream, localId: Int, remoteId: Int) {
         // OPEN 已在调用方读过；这里只回 OKAY
         AdbProtocol.writeMessage(out, AdbMessage(A_OKAY, remoteId, localId, ByteArray(0)))
+    }
+
+    /* ---------------- R105 收尾：A_OPEN 后 ACK 快速失败 ---------------- */
+
+    /**
+     * 纯 JVM 脚本式 fake transport：无 socket、单线程、确定性。inputStream 由
+     * [input] 提供；[setReadTimeout] 全程记录，便于断言 ACK 窗口结束后读超时
+     * 一定恢复为 SESSION_TIMEOUT_MS；outputStream 是 sink（只收客户端写帧，不回
+     * 响应，故无需服务端线程）。connect() 与 openStream() 共用同一条流，正好模拟
+     * 一条真实 TCP 连接上「握手帧读完后接着读 OPEN 响应」。
+     */
+    private class ScriptedTransport(private val input: InputStream) : AdbTransport {
+        val timeouts = mutableListOf<Int>()
+        private val sink = ByteArrayOutputStream()
+        override fun open(host: String, port: Int, timeoutMs: Int) {}
+        override fun inputStream(): InputStream = input
+        override fun outputStream(): OutputStream = sink
+        override fun setReadTimeout(ms: Int) { timeouts += ms }
+        override fun isAlive(): Boolean = true
+        override fun close() {}
+    }
+
+    /** 先吐出 [prefix]（握手用 CNXN 帧），之后每次 read 抛 SocketTimeoutException，
+     * 模拟目标静默：熄屏/被占用/无线调试页退出。[delayMs] 防止忙等甩异常。 */
+    private class SilentInputStream(prefix: ByteArray, private val delayMs: Long) : InputStream() {
+        private val src = ByteArrayInputStream(prefix)
+        override fun read(): Int = if (src.available() > 0) src.read() else silent()
+        override fun read(b: ByteArray, off: Int, len: Int): Int =
+            if (src.available() > 0) src.read(b, off, len) else silent()
+        private fun silent(): Nothing {
+            if (delayMs > 0) Thread.sleep(delayMs)
+            throw SocketTimeoutException("fake adbd silent")
+        }
+    }
+
+    private fun frameBytes(vararg msgs: AdbMessage): ByteArray {
+        val bos = ByteArrayOutputStream()
+        msgs.forEach { AdbProtocol.writeMessage(bos, it) }
+        return bos.toByteArray()
+    }
+
+    private fun cnxnFrame() = AdbMessage(A_CNXN, A_VERSION, MAX_DATA, ByteArray(0))
+
+    @Test
+    fun openStreamFastFailsWithGuidanceWhenNoAckInWindow() {
+        val fake = ScriptedTransport(SilentInputStream(frameBytes(cnxnFrame()), 10))
+        // 注入 80ms 窗口：纯 JVM 单测不必真等 8s，行为与 8s 默认窗口完全一致。
+        val client = AdbClient(transport = fake, ackWindowMs = 80)
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+
+        val start = System.currentTimeMillis()
+        val result = client.openStream("echo hi")
+        val elapsed = System.currentTimeMillis() - start
+
+        assertTrue("应快速失败，实际=$result", result.startsWith("ERROR"))
+        assertTrue("缺少『8 秒内未收到目标确认』", result.contains("8 秒内未收到目标确认"))
+        assertTrue("缺少①熄屏/锁屏引导", result.contains("熄屏"))
+        assertTrue("缺少②被其它 adb 客户端占用引导", result.contains("其它 adb 客户端"))
+        assertTrue("缺少③无线调试页退出引导", result.contains("无线调试"))
+        assertTrue("应在 ACK 窗口内快速失败而非干等 90s，实际 ${elapsed}ms", elapsed < 3000)
+        // ACK 探测窗口把读超时压到 1s；快速失败后必须恢复，不能泄漏到后续操作。
+        assertTrue("ACK 窗口应设过 1s 读超时", fake.timeouts.contains(1_000))
+        assertEquals("退出后读超时必须恢复为 SESSION_TIMEOUT_MS",
+            AdbClient.SESSION_TIMEOUT_MS, fake.timeouts.last())
+    }
+
+    @Test
+    fun openStreamReturnsOutputWhenAckArrivesInWindow() {
+        val localId = 1 // connect() 不占用 localId，openStream 第一次取 1
+        val frames = frameBytes(
+            cnxnFrame(),
+            AdbMessage(A_OKAY, SERVER_ID, localId, ByteArray(0)),
+            AdbMessage(A_WRTE, localId, SERVER_ID, "hi\n".toByteArray()),
+            AdbMessage(A_CLSE, localId, SERVER_ID, ByteArray(0)),
+        )
+        val fake = ScriptedTransport(ByteArrayInputStream(frames))
+        val client = AdbClient(transport = fake, ackWindowMs = 80)
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+
+        // 正常 adbd 毫秒级回 OKAY → 收到 ACK 关闭快速失败窗口 → 正常返回输出。
+        assertEquals("hi\n", client.openStream("echo hi"))
+        assertEquals("退出后读超时必须恢复为 SESSION_TIMEOUT_MS",
+            AdbClient.SESSION_TIMEOUT_MS, fake.timeouts.last())
+        assertTrue("ACK 窗口应设过 1s 读超时", fake.timeouts.contains(1_000))
     }
 }
