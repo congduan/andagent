@@ -106,6 +106,30 @@ class DevToolsClientTest {
     }
 
     @Test
+    fun urlNormalizationVariantsAreJudgedByParsedOrigin() {
+        val pages = parseDevToolsPages(jsonBody)
+        val shell = pages[0]
+        // R96 review 三轮必修项2：`:443` 默认端口规范化与主 shell 同 origin——
+        // 过滤必须命中（防 WebViewCard 之外的 CDP 通道漏判）。
+        assertTrue(DevToolsClient.isMainShellPage(shell.copy(url = "https://appassets.androidplatform.net:443/assets/web/index.html")))
+        assertTrue(!DevToolsClient.canModelExecutePage(shell.copy(url = "https://appassets.androidplatform.net:443/assets/web/index.html")))
+        // `:443` + /local/ 仍是合法暂存页（R101 闭环不因端口归一被误伤）。
+        val local443 = pages[0].copy(id = "L443", url = "https://appassets.androidplatform.net:443/local/page_1.html")
+        assertTrue(DevToolsClient.isLocalStagedPage(local443))
+        assertTrue(DevToolsClient.canModelExecutePage(local443))
+        // 非默认端口同域：不是主 shell，但仍是 appassets 域（eval 拦截）。
+        val shell8443 = shell.copy(url = "https://appassets.androidplatform.net:8443/assets/web/index.html")
+        assertTrue(!DevToolsClient.isMainShellPage(shell8443))
+        assertTrue(!DevToolsClient.canModelExecutePage(shell8443))
+        // 非 appassets 域 URL 不受解析失败 fail-closed 影响。
+        assertTrue(DevToolsClient.canModelExecutePage(pages[1]))
+        // 解析失败的病态 URL：按危险处理（当主 shell 过滤 / 拒绝模型执行）。
+        val garbage = pages[0].copy(url = "http://[::1") // 未闭合 IPv6
+        assertTrue(DevToolsClient.isMainShellPage(garbage))
+        assertTrue(!DevToolsClient.canModelExecutePage(garbage))
+    }
+
+    @Test
     fun localStagedPageDetectsLocalRouteOnly() {
         val pages = parseDevToolsPages(jsonBody)
         val local = pages[0].copy(id = "L", url = "https://appassets.androidplatform.net/local/page_42.html")

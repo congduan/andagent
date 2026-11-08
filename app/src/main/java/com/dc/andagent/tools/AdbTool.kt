@@ -351,7 +351,9 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         val target = args.strArg("target") ?: return "ERROR: 缺少 target"
         val c = AdbSessionHub.client(target) ?: return noTarget(target)
         val remote = "/data/local/tmp/andagent_sc_${System.currentTimeMillis()}.png"
-        val shot = c.openStream("screencap -p $remote")
+        // screencap 无 stdout：追加 echo 让 openStream 能凭输出判定命令真实完成，
+        // 避免 TLS 上 CLSE 延迟时读循环干等（体感「半天没返回」）。
+        val shot = c.openStream("screencap -p $remote && echo SC_OK")
         if (shot.startsWith("ERROR")) return "ERROR: screencap 执行失败：$shot"
         return when (val r = c.syncPull(remote, SCREENCAP_MAX_BYTES)) {
             is AdbClient.AdbSyncResult.Pulled -> {

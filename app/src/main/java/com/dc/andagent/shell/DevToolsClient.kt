@@ -30,6 +30,8 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.io.File
 import java.io.IOException
+import java.net.URI
+import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -67,7 +69,9 @@ private fun JsonObject.str(key: String): String? =
     this[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
 
 /** 主 WebView 的 shell 页面 URL（与 MainActivity.SHELL_ORIGIN 加载地址一致）。 */
-private val MAIN_SHELL_URL = "https://appassets.androidplatform.net/assets/web/index.html"
+/** R96 review 三轮必修项2：判定统一走 URI 解析（parseAppAssetsUrl），常量留作文档与测试基线。 */
+private const val APPASSETS_HOST = "appassets.androidplatform.net"
+private val MAIN_SHELL_URL = "https://$APPASSETS_HOST/assets/web/index.html"
 
 /** 解析 /json 响应。保留全部 target 类型（page/service_worker 等）由 agent 自行选择。 */
 fun parseDevToolsPages(body: String): List<DevToolsPage> {
@@ -241,14 +245,32 @@ object DevToolsClient {
     }
 
     /**
-     * R96 review 必修项1：主 shell 页面判定。URL 精确匹配 /assets/web/index.html
-     * （MainActivity SHELL_ORIGIN 唯一加载入口；SPA 无 hash/query 路由，URL 恒定）；
+     * R96 review 必修项1：主 shell 页面判定。路径精确 /assets/web/index.html
+     * （MainActivity SHELL_ORIGIN 唯一加载入口；SPA 无路由，URL 恒定）。
      * web_embed 本地页走 /local/ 路由、远程页走外部 https，均不受影响。过滤放在
      * listPages 出口，resolvePage/devtools_status/eval/console/errors/screenshot
      * 全部消费同一份列表。
+     *
+     * R96 review 三轮必修项2：字符串 equals 挡不住 URL 规范化变体（`:443` 默认
+     * 端口、大小写、编码）——改按解析后的 scheme/host/port/path 判定。CDP 回报
+     * URL 恒为绝对 https；解析失败按主 shell 处理（fail-closed，宁误伤不漏判）。
+     * query/hash 后缀仍是主 shell（同页面）。
      */
     fun isMainShellPage(page: DevToolsPage): Boolean =
-        page.url.equals(MAIN_SHELL_URL, ignoreCase = true)
+        parseAppAssetsUrl(page.url) { scheme, host, port, path ->
+            scheme == "https" && host == APPASSETS_HOST && port == 443 && path == "/assets/web/index.html"
+        } ?: true
+
+    /** appassets 域解析（scheme 小写 / host 小写去尾点 / 默认端口归一 443 / 路径解码）。 */
+    private inline fun <T> parseAppAssetsUrl(raw: String, judge: (scheme: String, host: String, port: Int, path: String) -> T): T? {
+        val uri = runCatching { URI(raw) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase() ?: return null
+        val host = uri.host?.lowercase()?.trimEnd('.') ?: return null
+        if (host != APPASSETS_HOST) return null
+        val port = if (uri.port == -1) if (scheme == "https") 443 else -1 else uri.port
+        val path = runCatching { URLDecoder.decode(uri.rawPath ?: "/", "UTF-8") }.getOrDefault(uri.rawPath ?: "/")
+        return judge(scheme, host, port, path)
+    }
 
     /**
      * R96 review 二轮必修项1（纵深防御）：
@@ -263,10 +285,14 @@ object DevToolsClient {
      *   误注册 target）拒模型页面执行：eval/screenshot 同样可能触达桥或凭据。
      */
     fun isLocalStagedPage(page: DevToolsPage): Boolean =
-        page.url.startsWith("https://appassets.androidplatform.net/local/", ignoreCase = true)
+        parseAppAssetsUrl(page.url) { scheme, host, port, path ->
+            scheme == "https" && host == APPASSETS_HOST && port == 443 && path.startsWith("/local/")
+        } ?: false
 
     fun isAppAssetsPage(page: DevToolsPage): Boolean =
-        page.url.startsWith("https://appassets.androidplatform.net/", ignoreCase = true)
+        parseAppAssetsUrl(page.url) { scheme, host, _port, _path ->
+            scheme == "https" && host == APPASSETS_HOST
+        } ?: true
 
     /** devtools_eval / screenshot 等页面级执行白名单：非 appassets 页 + /local/ 暂存页。 */
     fun canModelExecutePage(page: DevToolsPage): Boolean =

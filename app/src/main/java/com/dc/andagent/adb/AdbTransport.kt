@@ -133,8 +133,11 @@ class TlsTransport(
     override fun isAlive(): Boolean = handle != null
 
     override fun close() {
-        handle?.let { runCatching { native.close(it) } }
+        // 先置 null 再 close：在飞 read/write 拿到 null handle 返回 EOF/IOException，
+        // 不再进入 native；等它们退出 monitor 后这里才真正 free（@Synchronized 互斥保证）。
+        val h = handle
         handle = null
+        h?.let { runCatching { native.close(it) } }
     }
 
     private inner class TlsInputStream : InputStream() {
@@ -143,6 +146,7 @@ class TlsTransport(
             return if (read(one, 0, 1) < 0) -1 else one[0].toInt() and 0xff
         }
 
+        @Synchronized
         override fun read(b: ByteArray, off: Int, len: Int): Int {
             if (len == 0) return 0
             val h = handle ?: return -1
@@ -163,6 +167,9 @@ class TlsTransport(
     private inner class TlsOutputStream : OutputStream() {
         override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
 
+        // @Synchronized 与 read 互斥：disconnect 并发 close 时不会 free 在飞 SSL_read
+        // 的句柄（use-after-free 崩溃根因——AdbSessionHub 与 AdbClient 是两把锁，覆盖不了）。
+        @Synchronized
         override fun write(b: ByteArray, off: Int, len: Int) {
             val h = handle ?: throw IOException("TLS 未连接")
             val data = if (off == 0 && len == b.size) b else b.copyOfRange(off, off + len)
