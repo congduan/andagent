@@ -262,7 +262,7 @@ class ProjectionService : Service() {
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setContentTitle(tr("AndAgent 屏幕捕获", "AndAgent screen capture"))
-            .setContentText(tr("截屏 / 录屏通道已就绪，可在设置中停止。", "Screenshot / recording channel ready; stop it in Settings."))
+            .setContentText(tr("截屏 / 录屏 / 系统内录通道已就绪，可在设置中停止。", "Screenshot / recording / system-audio channel ready; stop it in Settings."))
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .build()

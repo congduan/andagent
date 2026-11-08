@@ -494,6 +494,22 @@ private fun audioSourceValue(name: String): Int? = when (name.lowercase()) {
     else -> null
 }
 
+/**
+ * AudioManager 对 UNPROCESSED 原始录音源的公开能力声明（Android 7+）。
+ * null 表示系统未给结论（按支持处理，交给录音初始化失败兜底）。
+ */
+private fun unprocessedSupported(context: Context): Boolean? {
+    val raw = runCatching {
+        (context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)
+            ?.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)
+    }.getOrNull()?.trim() ?: return null
+    return when {
+        raw.equals("true", true) -> true
+        raw.equals("false", true) -> false
+        else -> null
+    }
+}
+
 /* -------------------------------- tools ------------------------------- */
 
 class HardwareStatusTool(
@@ -524,7 +540,8 @@ class HardwareStatusTool(
                 "也可自定义 timings+amplitudes；无振幅硬件的设备降级为开关波形。"
         "audio_record_ex" ->
             "参数化录音：录音源（mic/voice_recognition/voice_communication/camcorder/unprocessed）、采样率 8k–48k、单/双声道，" +
-                "wav 直接 PCM 落盘并返回峰值/RMS 电平；m4a 走 AAC。"
+                "wav 直接 PCM 落盘并返回峰值/RMS 电平；m4a 走 AAC。unprocessed 走 MediaRecorder/AudioRecord 的 " +
+                "UNPROCESSED 原始源（关闭 AGC/降噪/均衡），设备不支持时按 fallback 退回 voice_recognition。"
         "audio_route" ->
             "查询或切换音频输出路由：speaker（扬声器）/earpiece（听筒）/bluetooth/wired/usb/auto（恢复默认）。" +
                 "返回当前模式、通信设备与全部可用输出设备。"
@@ -568,6 +585,7 @@ class HardwareStatusTool(
             "sample_rate" to intParam("采样率 Hz，默认 44100，范围 8000..48000"),
             "channels" to intParam("声道数 1（默认）或 2"),
             "format" to strParam("wav（默认，PCM16）或 m4a（AAC）"),
+            "fallback" to boolParam("source=unprocessed 且设备不支持时退回 voice_recognition，默认 true；false 则直接报错"),
         )
         "audio_route" -> schemaOf(
             "action" to strParam("list（默认）| set | reset"),
@@ -1250,9 +1268,24 @@ class HardwareStatusTool(
     /* -------------------------- audio record ex ------------------------- */
 
     private suspend fun audioRecordEx(args: JsonObject): String {
-        val sourceName = (args.strArg("source") ?: "mic").lowercase()
-        val source = audioSourceValue(sourceName)
-            ?: return "ERROR: 不支持的录音源「$sourceName」（mic/voice_recognition/voice_communication/camcorder/voice_call/unprocessed/voice_performance）"
+        val requestedSourceName = (args.strArg("source") ?: "mic").lowercase()
+        var source = audioSourceValue(requestedSourceName)
+            ?: return "ERROR: 不支持的录音源「$requestedSourceName」（mic/voice_recognition/voice_communication/camcorder/voice_call/unprocessed/voice_performance）"
+        var sourceName = requestedSourceName
+        val allowFallback = args.boolArg("fallback") ?: true
+        val unprocessedSupport = if (requestedSourceName == "unprocessed") unprocessedSupported(context) else null
+        var sourceFallback = false
+        var sourceNote: String? = null
+        if (requestedSourceName == "unprocessed" && unprocessedSupport == false) {
+            if (!allowFallback) {
+                return "ERROR: 本机 AudioManager 报告不支持 UNPROCESSED 原始录音源" +
+                    "（PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED=false）；可改用 source=mic 或 fallback=true"
+            }
+            sourceName = "voice_recognition"
+            source = MediaRecorder.AudioSource.VOICE_RECOGNITION
+            sourceFallback = true
+            sourceNote = "本机不支持 UNPROCESSED，已退回 voice_recognition（音频仍经过系统处理）"
+        }
         val seconds = (args.intArg("seconds") ?: 10).coerceIn(1, 300)
         val sampleRate = (args.intArg("sample_rate") ?: 44_100).coerceIn(8000, 48_000).let {
             // AudioRecord/MediaRecorder only accept a handful of rates; snap to the nearest common one.
@@ -1265,16 +1298,34 @@ class HardwareStatusTool(
 
         val canPublish = Build.VERSION.SDK_INT >= 29 ||
             permissions.ensure(listOf(Manifest.permission.WRITE_EXTERNAL_STORAGE))
-        val out = File(audioRecordDir(context), "rec_ex_${sourceName}_${stamp()}.$format")
+        val out = File(audioRecordDir(context), "rec_ex_${requestedSourceName}_${stamp()}.$format")
         return try {
             if (format == "wav") {
-                val recorded = recordWavEx(out, source, sampleRate, channels, seconds)
+                val recorded = try {
+                    recordWavEx(out, source, sampleRate, channels, seconds)
+                } catch (e: Exception) {
+                    if (!sourceFallback && allowFallback && requestedSourceName == "unprocessed") {
+                        out.delete()
+                        source = MediaRecorder.AudioSource.VOICE_RECOGNITION
+                        sourceName = "voice_recognition"
+                        sourceFallback = true
+                        sourceNote = "UNPROCESSED 初始化失败（${e.message ?: e.javaClass.simpleName}），已退回 voice_recognition"
+                        recordWavEx(out, source, sampleRate, channels, seconds)
+                    } else {
+                        throw e
+                    }
+                }
                 val uri = if (canPublish) publishRecording(context, out, "wav", recorded.durationMs) else null
                 buildJsonObject {
                     put("status", "WRITTEN")
                     put("path", out.absolutePath)
                     put("format", "wav")
+                    put("requestedSource", requestedSourceName)
                     put("source", sourceName)
+                    put("rawSource", sourceName == "unprocessed")
+                    put("sourceFallback", sourceFallback)
+                    unprocessedSupport?.let { put("unprocessedSupported", it) }
+                    sourceNote?.let { put("sourceNote", it) }
                     put("sampleRate", sampleRate)
                     put("channels", channels)
                     put("bits", 16)
@@ -1287,13 +1338,31 @@ class HardwareStatusTool(
                     put("note", if (recorded.level.peakDbfs <= -119) "全程静音（peak≈-120 dBFS）：检查录音源是否被占用或权限/隐私开关" else "PCM16 单文件，可直接用 ```audio 围栏播放")
                 }.toString()
             } else {
-                val durationMs = recordM4aEx(out, source, sampleRate, channels, seconds)
+                val durationMs = try {
+                    recordM4aEx(out, source, sampleRate, channels, seconds)
+                } catch (e: Exception) {
+                    if (!sourceFallback && allowFallback && requestedSourceName == "unprocessed") {
+                        out.delete()
+                        source = MediaRecorder.AudioSource.VOICE_RECOGNITION
+                        sourceName = "voice_recognition"
+                        sourceFallback = true
+                        sourceNote = "UNPROCESSED 初始化失败（${e.message ?: e.javaClass.simpleName}），已退回 voice_recognition"
+                        recordM4aEx(out, source, sampleRate, channels, seconds)
+                    } else {
+                        throw e
+                    }
+                }
                 val uri = if (canPublish) publishRecording(context, out, "m4a", durationMs) else null
                 buildJsonObject {
                     put("status", "WRITTEN")
                     put("path", out.absolutePath)
                     put("format", "m4a")
+                    put("requestedSource", requestedSourceName)
                     put("source", sourceName)
+                    put("rawSource", sourceName == "unprocessed")
+                    put("sourceFallback", sourceFallback)
+                    unprocessedSupport?.let { put("unprocessedSupported", it) }
+                    sourceNote?.let { put("sourceNote", it) }
                     put("sampleRate", sampleRate)
                     put("channels", channels)
                     put("durationMs", durationMs)

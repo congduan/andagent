@@ -29,6 +29,8 @@
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-feature android:name="android.software.midi" android:required="false" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- R121: mDNS/DNS-SD 发现需要收 224.0.0.251 组播（MulticastLock），普通权限免运行时申请 -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <!-- Calendar (runtime) -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
@@ -100,6 +102,8 @@
         </intent>
     </queries>
 
+    <!-- allowAudioPlaybackCapture：targetSdk=28 默认禁止被内录，显式打开后
+         本应用自己的播放（TTS/媒体）也能被 AudioPlaybackCapture 录到。 -->
     <application
         android:name=".AndAgentApp"
         android:label="AndAgent"
@@ -107,7 +111,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.AndAgent"
         android:allowBackup="false"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:allowAudioPlaybackCapture="true">
 
         <receiver android:name=".cron.CronReceiver" android:exported="false">
             <intent-filter>

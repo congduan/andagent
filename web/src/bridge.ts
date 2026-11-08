@@ -4,7 +4,10 @@ import { loadConfirmMode } from "./confirmMode";
 import { TOOL_DESTRUCTIVE, TOOL_META } from "./toolMeta";
 import { waitForMainFrameToken } from "./settingBridge";
 // significant_motion (R84) 会主动阻塞等待硬件触发，最长 300s，必须走长任务超时。
-const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "significant_motion", "adb_shell", "adb_pull", "adb_push", "adb_screencap", "adb_screencast", "adb_record", "otg_transfer"]);
+// cell_scan (R113) 主动扫网最长 180s（+20s 收尾），必须走长任务超时。
+const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "significant_motion", "adb_shell", "adb_pull", "adb_push", "adb_screencap", "adb_screencast", "adb_record", "otg_transfer", "cell_scan",
+  // R115: ISO-DEP/FeliCa 要先等用户贴卡（最长 60s）再逐条传输，超 65s 默认预算。
+  "nfc_iso_dep_info", "nfc_iso_dep_transceive", "nfc_felica_info", "nfc_felica_transceive", "nfc_felica_read_blocks"]);
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
  *
@@ -61,10 +64,12 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "- 通用 Intent：intent_send 可发任意 action（拍照 IMAGE_CAPTURE / 分享 SEND / 选择器 PICK 等），不确定接收方先用 intent_resolve 探查；发给第三方 app 的标准 scheme 跳转优先 open_uri，特殊 action 才用 intent_send；自定义广播用 intent_broadcast（系统保护广播被拦截）。",
   "- 桌面小组件：widget_generate 先规划 WidgetSpec v2 JSON，widget_save_and_pin 保存并请求添加；数据可绑定系统或 QuickJS 工具",
   "- NFC：nfc_status / nfc_read（UID、tech 列表、NDEF）/ nfc_write_text / nfc_write_uri / nfc_write_raw（写 NDEF）/ nfc_hce_status；MIFARE 深度读写：nfc_mf_dump（Classic 逐扇区认证 + 全卡 hex/ASCII dump，存 .bin）/ nfc_mf_write_block（Classic 写块）/ nfc_ul_read / nfc_ul_write_page（Ultralight/NTAG 页读写）/ nfc_keys_manage（自定义 key 库，可导入 MCT/Proxmark3 字典）。贴卡类工具调用前先提示用户贴卡；写类必须先说明改动并让用户确认。合规：MIFARE Classic 的 Crypto-1 已被破解，上述 MIFARE 读写工具仅可用于你自己拥有的卡或获得授权的安全测试，禁止用于未授权的卡片。",
+  "- ISO-DEP APDU 透传：nfc_iso_dep_info（ATS/历史字节、最大传输长度、compact TLV）→ nfc_iso_dep_transceive（IsoDep.transceive，apdu 可多条 hex，aid 可先自动 SELECT，SW=61xx 自动 GET RESPONSE）用于公交卡余额、门禁卡、DESFire、电子护照。命中证件（eMRTD/eID）或支付类 AID 时工具返回 CONFIRM_REQUIRED：必须先向用户说明读什么、为什么读，取得当面同意后带 confirm_privacy=true 与 purpose=<如实转述用户用途> 重试，禁止自行编造 purpose；含写入/擦除/校验 PIN 指令需 confirm=true。",
+  "- FeliCa（日系卡）：nfc_felica_info（IDm/PMm/系统码）/ nfc_felica_read_blocks（Read Without Encryption 读 16 字节块，服务码如 008B）/ nfc_felica_transceive（原始帧透传）。写/认证类命令需 confirm=true。",
   "",
   "## 工作纪律",
   "1. 先读懂意图再选工具；一次任务里相关工具可连续调用，但每步等结果再决定下一步。",
-  "2. 写入/破坏性操作（calendar_add、calendar_delete、alarm_set、file_write、file_edit、file_download、image_save、sms_send、phone_call、pkg_install、nfc_write_*、nfc_mf_write_block、nfc_ul_write_page、ssh_exec、adb_shell、adb_pull、adb_push、adb_record）：执行前用一句话说明将改动什么；用户已明确要求的可直接执行。nfc_mf_write_block 写块 0（厂商块/UID）可能使卡永久变砖，必须 allow_block0 + confirm_block0 双重确认并如实告知风险。ssh_exec 命中破坏性 pattern 时返回 CONFIRM_REQUIRED，必须先取得用户确认再以 confirm=true 重试。adb_shell 复用同一破坏性命令 guard：命中 rm -rf/mkfs/dd/reboot 等会返回 CONFIRM_REQUIRED，须向用户说明并以 confirm=true 重试；adb_connect 首次连接需在目标手机弹框点「允许」后重连一次。",
+  "2. 写入/破坏性操作（calendar_add、calendar_delete、alarm_set、file_write、file_edit、file_download、image_save、sms_send、phone_call、pkg_install、nfc_write_*、nfc_mf_write_block、nfc_ul_write_page、nfc_iso_dep_transceive、nfc_felica_transceive、ssh_exec、adb_shell、adb_pull、adb_push、adb_record）：执行前用一句话说明将改动什么；用户已明确要求的可直接执行。nfc_mf_write_block 写块 0（厂商块/UID）可能使卡永久变砖，必须 allow_block0 + confirm_block0 双重确认并如实告知风险。nfc_iso_dep_transceive 命中证件/支付类 AID 时必须取得用户当面同意并带 confirm_privacy=true + purpose；写入/校验 PIN 类指令还要 confirm=true（PIN 连续错误会锁卡）。ssh_exec 命中破坏性 pattern 时返回 CONFIRM_REQUIRED，必须先取得用户确认再以 confirm=true 重试。adb_shell 复用同一破坏性命令 guard：命中 rm -rf/mkfs/dd/reboot 等会返回 CONFIRM_REQUIRED，须向用户说明并以 confirm=true 重试；adb_connect 首次连接需在目标手机弹框点「允许」后重连一次。",
   "3. 权限被拒时按权限纪律处理（见下），不要反复重试同一权限。",
   "4. 涉及删除、发送短信、拨打电话：除非用户明确给出对象和内容，否则先复述待执行动作等确认。",
   "",
@@ -114,10 +119,12 @@ export const DEFAULT_SYSTEM_PROMPT_EN = [
   "- Intents: intent_send sends actions such as IMAGE_CAPTURE / SEND / PICK. Probe unknown handlers with intent_resolve. Prefer open_uri for standard app links; intent_broadcast handles custom broadcasts, while protected broadcasts are blocked.",
   "- Widgets: plan WidgetSpec v2 JSON with widget_generate, then save and request pinning with widget_save_and_pin. Data can bind to system or QuickJS tools.",
   "- NFC: nfc_status / nfc_read (UID, tech, NDEF) / nfc_write_text / nfc_write_uri / nfc_write_raw / nfc_hce_status. MIFARE: nfc_mf_dump (Classic sector authentication and full hex/ASCII dump saved as .bin), nfc_mf_write_block, nfc_ul_read, nfc_ul_write_page, nfc_keys_manage (custom key library, MCT/Proxmark3 dictionaries). Ask the user to tap a card before read tools. Explain writes and obtain confirmation. Crypto-1 is broken; use these tools only on your own cards or authorized security tests, never on unauthorized cards.",
+  "- ISO-DEP APDUs: nfc_iso_dep_info (ATS/historical bytes, max transceive length, compact TLV) then nfc_iso_dep_transceive (IsoDep.transceive; several hex APDUs per call, optional aid auto-SELECT, automatic GET RESPONSE for SW=61xx). Covers transit balances, access control, DESFire and electronic passports. Travel-document (eMRTD/eID) and payment AIDs return CONFIRM_REQUIRED: explain what is read and why, obtain in-person consent, then retry with confirm_privacy=true and purpose=<the user's own words>; never invent a purpose. Write/erase/PIN-verify instructions also need confirm=true.",
+  "- FeliCa (Japanese cards): nfc_felica_info (IDm/PMm/system code), nfc_felica_read_blocks (Read Without Encryption, 16-byte blocks, e.g. service 008B), nfc_felica_transceive (raw frames). Write/authentication commands need confirm=true.",
   "",
   "## Working rules",
   "1. Understand the request before choosing tools. Related tools can be used in sequence, but wait for each result before deciding the next step.",
-  "2. Before writes or destructive actions (calendar_add, calendar_delete, alarm_set, file_write, file_edit, file_download, image_save, sms_send, phone_call, pkg_install, nfc_write_*, nfc_mf_write_block, nfc_ul_write_page, ssh_exec, adb_shell, adb_pull, adb_push, adb_record), state what will change in one sentence. If the user already clearly asked, proceed. Writing MIFARE block 0 can permanently brick a card; require allow_block0 and confirm_block0 and explain the risk. ssh_exec returns CONFIRM_REQUIRED for destructive patterns; obtain user confirmation, then retry with confirm=true. adb_shell reuses the same command guard: rm -rf/mkfs/dd/reboot etc. return CONFIRM_REQUIRED — explain the impact, then retry with confirm=true. adb_connect first connection needs the user to tap Allow on the target phone, then reconnect once.",
+  "2. Before writes or destructive actions (calendar_add, calendar_delete, alarm_set, file_write, file_edit, file_download, image_save, sms_send, phone_call, pkg_install, nfc_write_*, nfc_mf_write_block, nfc_ul_write_page, nfc_iso_dep_transceive, nfc_felica_transceive, ssh_exec, adb_shell, adb_pull, adb_push, adb_record), state what will change in one sentence. If the user already clearly asked, proceed. Writing MIFARE block 0 can permanently brick a card; require allow_block0 and confirm_block0 and explain the risk. nfc_iso_dep_transceive needs in-person consent plus confirm_privacy=true and purpose when a travel-document or payment AID is involved; write/PIN-verify instructions additionally need confirm=true (repeated wrong PINs lock the card). ssh_exec returns CONFIRM_REQUIRED for destructive patterns; obtain user confirmation, then retry with confirm=true. adb_shell reuses the same command guard: rm -rf/mkfs/dd/reboot etc. return CONFIRM_REQUIRED — explain the impact, then retry with confirm=true. adb_connect first connection needs the user to tap Allow on the target phone, then reconnect once.",
   "3. Follow the permission rules below if access is denied. Do not repeat the same permission request.",
   "4. For deletion, SMS, or calls, restate the action and wait for confirmation unless the user explicitly specified the target and content.",
   "",

@@ -63,7 +63,7 @@ class VpnTool(
 
     override val description: String = when (name) {
         "vpn_start" ->
-            "开启本地 VPN（无需 root）：建立 tun 并把系统 DNS 指向它，做 hosts 级广告拦截与 DNS 抓包。" +
+            "开启本地 VPN（无需 root）：建立 tun 并把系统 DNS 指向虚拟 DNS 服务器，做 hosts 级广告拦截与 DNS 抓包。" +
                 "只接管 DNS，不影响正常上网。可顺带设置按应用分流（split_mode + packages）。" +
                 "首次会弹出一次系统 VPN 授权，之后全自动。"
         "vpn_stop" -> "关闭本地 VPN，恢复系统 DNS。"
@@ -247,7 +247,8 @@ class VpnTool(
             }
             putJsonObject("tun") {
                 put("address", "${AndagentVpnService.TUN_ADDRESS}/${AndagentVpnService.TUN_PREFIX}")
-                put("dns", AndagentVpnService.TUN_ADDRESS)
+                put("dns", AndagentVpnService.DNS_ADDRESS)
+                put("route", "${AndagentVpnService.DNS_ADDRESS}/${AndagentVpnService.DNS_PREFIX}")
                 put("scope", "dns-only")
             }
             putJsonObject("split") {
@@ -278,6 +279,12 @@ class VpnTool(
             }
             if (running && store.splitMode == VpnStore.SPLIT_INCLUDE && store.packages.isEmpty()) {
                 hints.add("分流模式为 include 但名单为空，当前等同于不接管任何应用的 DNS")
+            }
+            if (running && (VpnTelemetry.snapshot()["packetsIn"] ?: 0L) == 0L) {
+                hints.add(
+                    "运行中但一个 DNS 报文都没收到：确认系统 DNS 指向 ${AndagentVpnService.DNS_ADDRESS}、" +
+                        "分流名单没有把发起查询的应用排除在外（packetsIn=0 时问题不在上游 DNS）",
+                )
             }
             if (hints.isNotEmpty()) {
                 putJsonArray("hints") { hints.forEach { add(it) } }
@@ -710,6 +717,7 @@ class VpnTool(
                 if ((snapshot["dnsFailed"] ?: 0L) > 0L) add("存在上游 DNS 失败，可在 vpn_start 里指定更稳定的 upstream（如 223.5.5.5）")
                 if (service?.privateDnsActive() == true) add("系统「私人 DNS」已开启，会绕过本 VPN：请在网络设置里关闭")
                 if ((snapshot["capturedPackets"] ?: 0L) > 0L) add("可用 vpn_diag(action=pcap) 导出 pcap，在 Wireshark 里查看")
+                if (running && (snapshot["packetsIn"] ?: 0L) == 0L) add("运行中但 tun 里没有任何报文：系统 DNS 应指向 ${AndagentVpnService.DNS_ADDRESS}，并检查分流名单是否漏掉发起查询的应用")
             }
         }.toString()
     }

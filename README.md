@@ -45,6 +45,7 @@ The WebView loads `https://appassets.androidplatform.net/assets/web/index.html` 
 | Files / media store / image editing | 28 | `file_list/read/write/search/download`, `file_copy/move/delete`, `album_photos`, `image_edit/preview/collage`, `saf_tree_*`, `storage_scan` |
 | Calendar / alarms / timers / cron | 14 | `calendar_list/events/add/delete`, `alarm_set`, `timer_set`, `countdown`, `cron_create/list/toggle/delete/run_now` |
 | Calls / location / recording / contacts / SMS | 8 | `phone_call`, `sms_send/read`, `location_get`, `mic_record`, `contacts_search`, `provider_query` |
+| Cellular signal / data quota | 4 | `cell_info` (RSRP/RSRQ/SS-RS* per SIM, LTE real bandwidth, NR bands), `cell_scan` (`requestNetworkScan`, needs a system permission — degrades honestly), `nr_bandwidth` (NR-ARFCN→MHz, FR1/FR2, SA/NSA), `data_policy` (Data Saver, `NetworkPolicyManager` probe, `NetworkStatsManager` usage, quota projection) |
 | Bluetooth / Wi-Fi | 11 | `bt_scan/connect/toggle`, `wifi_connect/saved_list/forget/toggle`, `wifi_info` |
 | Local VPN (VpnService, no root) | 7 | `vpn_start/stop/status` (DNS-only tun, one system consent), `vpn_split` (per-app allow/deny list), `vpn_hosts` (hosts-level ad blocking, remote list import), `vpn_traffic` (per-app usage via `NetworkStatsManager`), `vpn_diag` (DNS log, blocked ranking, pcap export) |
 | Sensors / health | 4 | `sensor_list/read`, `steps_today/history` |
@@ -54,7 +55,7 @@ The WebView loads `https://appassets.androidplatform.net/assets/web/index.html` 
 | SQLite | 8 | `db_create/exec/query/...`, `db_gui` |
 | Document generation | 3 | `docx_create`, `pptx_create`, `xlsx_create` |
 | Home-screen widgets | 2 | `widget_generate`, `widget_save_and_pin` |
-| NFC | 11 | `nfc_status/read/write_text/write_uri/write_raw/hce_status` (NDEF+HCE), `nfc_mf_dump`, `nfc_mf_write_block`, `nfc_ul_read`, `nfc_ul_write_page`, `nfc_keys_manage` (MIFARE Classic/Ultralight 深度读写) |
+| NFC | 16 | `nfc_status/read/write_text/write_uri/write_raw/hce_status` (NDEF+HCE), `nfc_mf_dump`, `nfc_mf_write_block`, `nfc_ul_read`, `nfc_ul_write_page`, `nfc_keys_manage` (MIFARE Classic/Ultralight deep read-write), `nfc_iso_dep_info`, `nfc_iso_dep_transceive` (ISO-DEP APDUs: transit/access/DESFire/eMRTD, privacy-gated), `nfc_felica_info`, `nfc_felica_transceive`, `nfc_felica_read_blocks` (FeliCa: Suica/PASMO style cards) |
 | Embedded web page in chat | 1 | `web_embed` |
 | ZIP archives | 5 | `zip_create/list/extract/add/test` |
 | Email (SMTP) | 3 | `email_send`, `email_verify`, `email_draft` |

@@ -6,10 +6,13 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.FrameLayout
 import android.nfc.NfcAdapter
+import com.dc.andagent.tools.NfcApduTool
 import com.dc.andagent.tools.NfcSession
 import com.dc.andagent.tools.NfcTool
 import com.dc.andagent.tools.IrTool
 import com.dc.andagent.tools.IR_TOOLS
+import com.dc.andagent.tools.IR_CODE_TOOLS
+import com.dc.andagent.tools.IrCodeTool
 import com.dc.andagent.tools.NfcMifareTool
 import com.dc.andagent.tools.WebEmbedTool
 import android.content.Intent
@@ -127,6 +130,12 @@ import com.dc.andagent.tools.MicListTool
 import com.dc.andagent.tools.OrientationTool
 import com.dc.andagent.tools.OtgTool
 import com.dc.andagent.tools.MicRecordTool
+import com.dc.andagent.tools.SystemAudioRecordTool
+import com.dc.andagent.tools.AudioEffectTool
+import com.dc.andagent.tools.AudioFocusTool
+import com.dc.andagent.tools.SpatialAudioTool
+import com.dc.andagent.tools.SystemAudioRecordStopTool
+import com.dc.andagent.tools.SystemAudioRecorder
 import com.dc.andagent.tools.SpeechRecognizeTool
 import com.dc.andagent.tools.CameraInfoTool
 import com.dc.andagent.tools.CameraCaptureTool
@@ -181,6 +190,8 @@ import com.dc.andagent.tools.DevToolsTool
 import com.dc.andagent.tools.WebSearchTool
 import com.dc.andagent.tools.HttpTool
 import com.dc.andagent.tools.HTTP_TOOLS
+import com.dc.andagent.tools.DiscoveryTool
+import com.dc.andagent.tools.DISCOVERY_TOOLS
 import com.dc.andagent.tools.DEVTOOLS_TOOLS
 import com.dc.andagent.tools.WifiInfoTool
 import com.dc.andagent.tools.R35Tool
@@ -191,6 +202,8 @@ import com.dc.andagent.tools.BtUsbExtTool
 import com.dc.andagent.tools.BT_USB_EXT_TOOLS
 import com.dc.andagent.tools.VpnTool
 import com.dc.andagent.tools.VPN_TOOLS
+import com.dc.andagent.tools.CellularTool
+import com.dc.andagent.tools.CELLULAR_TOOLS
 import com.dc.andagent.tools.AndroidReflectTool
 import com.dc.andagent.tools.RestrictedReflectExecutor
 import com.dc.andagent.tools.ApiToolFactory
@@ -411,6 +424,12 @@ class MainActivity : ComponentActivity() {
             "nfc_ul_read" to NfcMifareTool(nfcSession, appContext, "nfc_ul_read"),
             "nfc_ul_write_page" to NfcMifareTool(nfcSession, appContext, "nfc_ul_write_page"),
             "nfc_keys_manage" to NfcMifareTool(nfcSession, appContext, "nfc_keys_manage"),
+            // R115: ISO-DEP APDU passthrough (transit/access/DESFire/eMRTD) + FeliCa frames.
+            "nfc_iso_dep_info" to NfcApduTool(nfcSession, "nfc_iso_dep_info"),
+            "nfc_iso_dep_transceive" to NfcApduTool(nfcSession, "nfc_iso_dep_transceive"),
+            "nfc_felica_info" to NfcApduTool(nfcSession, "nfc_felica_info"),
+            "nfc_felica_transceive" to NfcApduTool(nfcSession, "nfc_felica_transceive"),
+            "nfc_felica_read_blocks" to NfcApduTool(nfcSession, "nfc_felica_read_blocks"),
             "web_embed" to WebEmbedTool(),
             "device_info" to DeviceInfoTool(appContext),
             "storage_scan" to StorageScanTool(appContext),
@@ -464,6 +483,13 @@ class MainActivity : ComponentActivity() {
             "widget_generate" to WidgetGenerateTool(appContext),
             "widget_save_and_pin" to WidgetSaveAndPinTool(appContext),
             "mic_record" to MicRecordTool(appContext, permissionBroker),
+            // R114: 音频效果链（EQ/Bass/Reverb/Virtualizer）、AudioFocus 抢占与让出、API 32 空间音频。
+            "audio_effect" to AudioEffectTool(appContext),
+            "audio_focus" to AudioFocusTool(appContext),
+            "spatial_audio" to SpatialAudioTool(appContext),
+            // 系统内录：AudioPlaybackCapture + MediaProjection（Android 10+），录设备正在播的声音。
+            "system_audio_record" to SystemAudioRecordTool(appContext, permissionBroker),
+            "system_audio_record_stop" to SystemAudioRecordStopTool(),
             "speech_recognize" to SpeechRecognizeTool(appContext, permissionBroker),
             "camera_overlay_show" to CameraOverlayTool(appContext, permissionBroker, "camera_overlay_show", activityProvider = { this.takeIf { !it.isFinishing } }),
             "camera_overlay_update" to CameraOverlayTool(appContext, permissionBroker, "camera_overlay_update", activityProvider = { this.takeIf { !it.isFinishing } }),
@@ -540,6 +566,8 @@ class MainActivity : ComponentActivity() {
             ).associateWith { AccessibilityTool(appContext, it) },
         )
         tools.putAll(IR_TOOLS.associateWith { IrTool(appContext, it) })
+        // R113: 内置红外码表（assets/ir/ir-codes.json + ir_codes KV 用户码）。
+        tools.putAll(IR_CODE_TOOLS.associateWith { IrCodeTool(appContext, liveKv, it) })
         tools.putAll(com.dc.andagent.events.EVENT_TOOLS.associateWith { com.dc.andagent.events.EventTool(appContext, it) })
         tools.putAll(com.dc.andagent.pods.PODS_TOOLS.associateWith { com.dc.andagent.pods.PodsTool(appContext, permissionBroker, it) })
         // R12/R13 system APIs + R14 automation.
@@ -556,6 +584,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(listOf("web_search", "web_read").associateWith { WebSearchTool(it, liveKv) })
         // R73: http_request (generic client, http:// allowed for LAN devices) + lan_scan (LAN probe).
         tools.putAll(HTTP_TOOLS.associateWith { HttpTool(it, appContext) })
+        // R121: 语义化局域网发现（SSDP/UPnP + mDNS/DNS-SD）：电视/音箱/打印机/HA 识别 + UPnP 描述文档。
+        tools.putAll(DISCOVERY_TOOLS.associateWith { DiscoveryTool(it, appContext) })
         // R91: SSH 远程运维（JSch 会话池，TOFU known_hosts，破坏性命令分级）。
         tools.putAll(SSH_TOOLS.associateWith { SshTool(appContext, it) })
         tools.putAll(SSH_TRANSFER_TOOLS.associateWith { SshTransferTool(appContext, it) { event ->
@@ -573,6 +603,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(BT_USB_EXT_TOOLS.associateWith { BtUsbExtTool(appContext, permissionBroker, it) })
         // R120: 本地 VPN（VpnService，纯应用权限）：DNS ads 拦截 + 分应用分流 + 流量统计 + pcap 诊断。
         tools.putAll(VPN_TOOLS.associateWith { VpnTool(appContext, permissionBroker, it) })
+        // R113: 蜂窝深度（CellInfo/RSRP 诊断、requestNetworkScan 邻区扫描、5G NR 频段/带宽、流量配额）。
+        tools.putAll(CELLULAR_TOOLS.associateWith { CellularTool(appContext, permissionBroker, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.
         tools["android_reflect"] = AndroidReflectTool(RestrictedReflectExecutor(appContext))
         tools.putAll(com.dc.andagent.memory.MEMORY_TOOLS.associateWith { com.dc.andagent.memory.MemoryTool(memoryStore, it) })
@@ -612,9 +644,12 @@ class MainActivity : ComponentActivity() {
             projectionStatusJson = { projectionStatusJson(appContext) },
             projectionRequest = { requestProjectionConsent() },
             projectionStop = {
+                // 先收尾系统内录：MediaProjection 一旦销毁，采集线程只能报错退出。
+                val audio = SystemAudioRecorder.stop()
                 val stopped = com.dc.andagent.tools.projectionStopRecording(appContext)
                 ProjectionService.stop(appContext)
-                stopped ?: "没有进行中的投影录屏；已停止屏幕捕获服务"
+                val prefix = if (audio != null) "系统内录已停止；" else ""
+                prefix + (stopped ?: "没有进行中的投影录屏；已停止屏幕捕获服务")
             },
             embeddedWebviewOpen = { uri -> openEmbeddedWebview(uri) },
             embeddedResourceVisible = { synchronized(embeddedLock) { embeddedLayer != null && embeddedBrowser != null } },

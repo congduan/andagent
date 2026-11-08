@@ -156,6 +156,13 @@ AndAgent is licensed under Apache-2.0 (see [LICENSE](LICENSE)). The entries belo
 - Source: https://github.com/termux/termux-packages
 - Copyright: Copyright Termux package maintainers and upstream authors; see ATTRIBUTION.md and archive notices
 
+### irdb（内置红外码表数据）
+- License: irdb permission license（非 OSI）；条款见 https://github.com/probonopd/irdb/blob/master/LICENSE.md
+- Source: https://github.com/probonopd/irdb （数据取自 codes/LG/TV/4,-1.csv、codes/Samsung/TV/7,7.csv、codes/Sony/TV/1,-1.csv、codes/Philips/TV/0,-1.csv，归一化为 app/src/main/assets/ir/ir-codes.json 的协议参数）
+- Notice（许可证要求原文）: `Contains/accesses irdb by Simon Peter and contributors, used under permission. For licensing details and for information on how to contribute to the database, see https://github.com/probonopd/irdb`
+- Copyright: Copyright (c) 2013-15 Simon Peter and contributors
+- 待办：许可证条款 1 要求「在把数据库用于产品前，通过 issue 告知 irdb 项目」，公开发布前须在 https://github.com/probonopd/irdb/issues 开一条说明（跟踪于 ROADMAP-TODO R113）
+
 ## Build-only frontend tool
 
 ### Vite 6.4.5

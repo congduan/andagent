@@ -51,6 +51,32 @@ internal fun validatePattern(pattern: IntArray) {
     require(pattern.sumOf { it.toLong() } <= 2_000_000L) { "红外信号总时长不能超过 2 秒" }
 }
 
+/**
+ * ConsumerIrManager 封装：可用性探测与实际发射，供 ir_* 与 ir_code_* 工具共用。
+ * 载波范围外的请求在这里统一拦截，避免把「系统静默不发」误报成发送成功。
+ */
+internal object IrEmitter {
+    fun manager(context: Context): ConsumerIrManager? =
+        context.getSystemService(Context.CONSUMER_IR_SERVICE) as? ConsumerIrManager
+
+    fun available(context: Context): Boolean =
+        runCatching { manager(context)?.hasIrEmitter() == true }.getOrDefault(false)
+
+    /** 发射信号；成功返回 null，失败返回可直接回给模型的中文错误文案。 */
+    fun send(context: Context, signal: IrSignal): String? {
+        val manager = manager(context) ?: return "ERROR: 设备没有可用的红外发射器"
+        if (!available(context)) return "ERROR: 设备没有可用的红外发射器"
+        val ranges = runCatching { manager.carrierFrequencies }.getOrNull()
+        if (!ranges.isNullOrEmpty() && ranges.none { signal.carrierHz in it.minFrequency..it.maxFrequency }) {
+            return "ERROR: 设备不支持 ${signal.carrierHz} Hz 载波"
+        }
+        return runCatching {
+            manager.transmit(signal.carrierHz, signal.pattern)
+            null
+        }.getOrElse { e -> "ERROR: 红外发射失败：${e.message ?: e.javaClass.simpleName}" }
+    }
+}
+
 class IrTool(private val context: Context, override val name: String) : Tool {
     override val description = when (name) {
         "ir_available" -> "检测手机红外发射器并返回支持的载波频率范围。"
@@ -97,10 +123,7 @@ class IrTool(private val context: Context, override val name: String) : Tool {
                 }
                 else -> error("未知红外工具")
             }
-            val ranges = manager.carrierFrequencies
-            if (ranges != null && ranges.isNotEmpty() && ranges.none { signal.carrierHz in it.minFrequency..it.maxFrequency })
-                return "ERROR: 设备不支持 ${signal.carrierHz} Hz 载波"
-            manager.transmit(signal.carrierHz, signal.pattern)
+            IrEmitter.send(context, signal)?.let { return it }
             buildJsonObject {
                 put("sent", true)
                 put("carrierHz", signal.carrierHz)

@@ -132,7 +132,8 @@ class MicRecordTool(private val context: Context, private val permissions: Permi
     }
 }
 
-private fun publishAudio(context: Context, file: File, format: String, durationMs: Long): String? = runCatching {
+/** 把录音复制进系统媒体库（Music/AndAgent）；返回 uri，失败返回 null。系统内录复用。 */
+internal fun publishAudio(context: Context, file: File, format: String, durationMs: Long): String? = runCatching {
     val resolver = context.contentResolver
     val values = ContentValues().apply {
         put(MediaStore.Audio.Media.DISPLAY_NAME, file.name)
@@ -161,14 +162,22 @@ private fun publishAudio(context: Context, file: File, format: String, durationM
 
 class MicListTool(private val context: Context) : Tool {
     override val name = "mic_list"
-    override val description = "列出 AndAgent 录音，包括应用文件和音频库中可见的录音。"
+    override val description = "列出 AndAgent 录音（麦克风 mic_* 与系统内录 sys_*），包括应用文件和音频库中可见的录音。"
     override val parameters = schemaOf()
     override suspend fun execute(args: JsonObject): String {
         val rows = linkedMapOf<String, JsonObject>()
         val directories = listOf(recordingDir(context), context.getExternalFilesDir(null) ?: context.filesDir).distinct()
-        directories.flatMap { it.listFiles()?.toList().orEmpty() }.filter { it.isFile && it.name.startsWith("mic_") && it.extension.lowercase() in setOf("m4a", "wav") }.forEach { file ->
+        directories.flatMap { it.listFiles()?.toList().orEmpty() }.filter { it.isFile && (it.name.startsWith("mic_") || it.name.startsWith("sys_")) && it.extension.lowercase() in setOf("m4a", "wav") }.forEach { file ->
             val duration = runCatching {
-                if (file.extension.equals("wav", true)) ((file.length() - 44).coerceAtLeast(0) * 1000 / 32_000)
+                if (file.extension.equals("wav", true)) {
+                    // mic_* 是 16kHz/单声道（32000 B/s），sys_* 是 44.1kHz/立体声。
+                    val bytesPerSecond = if (file.name.startsWith(SystemAudioCaptureRules.FILE_PREFIX)) {
+                        SystemAudioCaptureRules.BYTES_PER_SECOND
+                    } else {
+                        32_000
+                    }
+                    (file.length() - 44).coerceAtLeast(0) * 1000 / bytesPerSecond
+                }
                 else MediaMetadataRetriever().let { retriever ->
                     try { retriever.setDataSource(file.absolutePath); retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L }
                     finally { retriever.release() }
@@ -179,7 +188,8 @@ class MicListTool(private val context: Context) : Tool {
         runCatching {
             context.contentResolver.query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                 arrayOf(MediaStore.Audio.Media.DISPLAY_NAME, MediaStore.Audio.Media.DURATION, MediaStore.Audio.Media.SIZE, MediaStore.Audio.Media.DATE_MODIFIED, MediaStore.Audio.Media._ID),
-                "${MediaStore.Audio.Media.DISPLAY_NAME} LIKE ?", arrayOf("mic_%"), "${MediaStore.Audio.Media.DATE_MODIFIED} DESC")?.use { cursor ->
+                "(${MediaStore.Audio.Media.DISPLAY_NAME} LIKE ? OR ${MediaStore.Audio.Media.DISPLAY_NAME} LIKE ?)",
+                arrayOf("mic_%", "sys_%"), "${MediaStore.Audio.Media.DATE_MODIFIED} DESC")?.use { cursor ->
                 while (cursor.moveToNext() && rows.size < 500) {
                     val name = cursor.getString(0) ?: continue
                     if (!name.endsWith(".m4a") && !name.endsWith(".wav")) continue

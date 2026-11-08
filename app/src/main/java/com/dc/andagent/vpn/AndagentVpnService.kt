@@ -31,15 +31,21 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 纯应用权限的本地 VPN（VpnService，无需 root）。
  *
  * 工作方式：
- *  - 建立 tun 只接管 `10.111.222.0/24` 这一个网段，并把系统 DNS 指向
- *    `10.111.222.1`（tun 自己）。因此**只有 DNS 查询**进入用户态，
- *    正常 TCP/UDP 流量仍走物理网卡 —— 不会因为 VPN 断网，也不需要在
- *    用户态实现完整的 TCP/IP 栈。
+ *  - 建立 tun 只接管 `10.111.222.1/32` 这一个地址（虚拟 DNS 服务器），并把
+ *    系统 DNS 指向它。因此**只有 DNS 查询**进入用户态，正常 TCP/UDP 流量
+ *    仍走物理网卡 —— 不会因为 VPN 断网，也不需要在用户态实现完整的 TCP/IP 栈。
  *  - 每个 DNS 查询先查 hosts 规则：命中直接本地应答（0.0.0.0 / NXDOMAIN），
  *    未命中则用 protect() 过的 socket 转发到上游 DNS 并把应答写回 tun。
  *  - 按应用分流用 VpnService.Builder 的 addAllowedApplication /
  *    addDisallowedApplication（纯应用权限）。
  *  - 每个经过的 IP 报文同时写入 pcap 缓冲，供 vpn_diag 导出。
+ *
+ * 关键约束（踩过的坑）：**tun 接口地址必须与 DNS 地址分开，且接口地址必须是
+ * /32**。内核会把"接口地址"所在网段一起放进 `local` 路由表当成本机地址，
+ * 一旦 DNS 地址落在这里，查询根本不会写入 tun，而是本地回环 → tun 上没人
+ * 监听 53 → 立刻 ICMP port unreachable，全机域名解析"秒失败"
+ * （unable to resolve host / packetsIn 恒为 0）。所以：
+ *   tun 接口 = 10.111.222.2/32，DNS = 10.111.222.1/32（单独 addRoute 进 tun）。
  *
  * 已知边界：App 内置硬编码 DNS（DoH/DoT 或直连 8.8.8.8）不经过系统
  * resolver，因此不会被拦截；系统"私人 DNS"开启时同理。
@@ -50,9 +56,13 @@ class AndagentVpnService : VpnService() {
         const val CHANNEL_ID = "andagent_vpn"
         const val NOTIFICATION_ID = 4310
 
-        const val TUN_ADDRESS = "10.111.222.1"
-        const val TUN_NETWORK = "10.111.222.0"
-        const val TUN_PREFIX = 24
+        /** tun 接口自身地址：只用于承载回包源，必须与 DNS 地址不同，且必须是 /32。 */
+        const val TUN_ADDRESS = "10.111.222.2"
+        const val TUN_PREFIX = 32
+
+        /** 下发给系统的 DNS 服务器地址：/32 单独路由进 tun，由本 service 应答。 */
+        const val DNS_ADDRESS = "10.111.222.1"
+        const val DNS_PREFIX = 32
 
         private const val DNS_PORT = 53
         private const val UPSTREAM_TIMEOUT_MS = 2500
@@ -199,8 +209,8 @@ class AndagentVpnService : VpnService() {
             .setSession("AndAgent")
             .setMtu(1500)
             .addAddress(TUN_ADDRESS, TUN_PREFIX)
-            .addDnsServer(TUN_ADDRESS)
-            .addRoute(TUN_NETWORK, TUN_PREFIX)
+            .addDnsServer(DNS_ADDRESS)
+            .addRoute(DNS_ADDRESS, DNS_PREFIX)
 
         val packages = store.packages
         if (packages.isNotEmpty()) {
@@ -373,13 +383,22 @@ class AndagentVpnService : VpnService() {
 
     private fun discoverSystemDns(): List<String> {
         val manager = getSystemService(ConnectivityManager::class.java) ?: return emptyList()
-        for (network in manager.allNetworks) {
+        // 先试有 INTERNET 能力且非 VPN 的网络（Wi-Fi / 蜂窝），再退到其余网络，
+        // 避免拿到一个"连着但没网"的网络的 DNS 当成上游。
+        val ordered = manager.allNetworks.sortedByDescending { network ->
+            val caps = manager.getNetworkCapabilities(network)
+            val usable = caps != null &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            if (usable) 1 else 0
+        }
+        for (network in ordered) {
             val caps = manager.getNetworkCapabilities(network) ?: continue
             if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
             val properties = manager.getLinkProperties(network) ?: continue
             val servers = properties.dnsServers
                 .mapNotNull { it.hostAddress }
-                .filter { it.isNotEmpty() && it != TUN_ADDRESS && it != "0.0.0.0" && it != "::" }
+                .filter { it.isNotEmpty() && it != TUN_ADDRESS && it != DNS_ADDRESS && it != "0.0.0.0" && it != "::" }
             if (servers.isNotEmpty()) return servers.take(2)
         }
         return emptyList()
