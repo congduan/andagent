@@ -17,7 +17,7 @@ import kotlin.concurrent.thread
 /** Official Termux bootstrap is built for /data/data/com.termux/files/usr.
  * dash/bash are validated before advertising the embedded backend; apt/dpkg's
  * compile-time PREFIX is redirected via APT_CONFIG / DPKG_ADMINDIR. */
-class TermuxEnv(private val context: Context, private val shizuku: ShizukuShell? = null) {
+class TermuxEnv(private val context: Context) {
     private val paths = AndagentTermuxPaths(context)
     private val prefix = paths.prefix
     private val home = paths.home.apply { mkdirs() }
@@ -237,8 +237,7 @@ class TermuxEnv(private val context: Context, private val shizuku: ShizukuShell?
         // Path order under targetSdk 28:
         //  1. DIRECT exec — data-dir execve is legal (W^X only for targetSdk>=29).
         //  2. memfd — for ROMs that somehow still restrict direct exec.
-        //  3. Shizuku (shell uid) — for restricted ROMs.
-        //  4. Termux App bridge — handled by exec().
+        //  3. Termux App bridge — handled by exec().
         try {
             val proc = ProcessBuilder(dash.path, "-c", command).directory(home)
                 .apply { environment().putAll(environment()) }.start()
@@ -270,32 +269,15 @@ class TermuxEnv(private val context: Context, private val shizuku: ShizukuShell?
                 }
                 "errno=13 (EACCES)，ROM 也拦截 memfd"
             } catch (e2: Exception) {
-                Log.w("TermuxEnv", "memfd failed; trying Shizuku", e2)
+                Log.w("TermuxEnv", "memfd failed", e2)
                 e2.message ?: e2.javaClass.simpleName
-            }
-            shizuku?.let { sh ->
-                val shizukuCmd = buildString {
-                    append("LD_LIBRARY_PATH=").append(prefix.path).append("/lib ")
-                    append("PREFIX=").append(prefix.path).append(" ")
-                    append("HOME=").append(home.path).append(" ")
-                    append("PATH=").append(prefix.path).append("/bin:/system/bin ")
-                    append("TMPDIR=").append(context.cacheDir.path).append(" ")
-                    append(dash.path).append(" -c '")
-                    append(command.replace("'", "'\\''"))
-                    append("'")
-                }
-                val viaShizuku = sh.run(shizukuCmd, timeoutSeconds * 1000L)
-                if (viaShizuku.exitCode != -1 || !viaShizuku.stderr.contains("Shizuku")) {
-                    return formatResult(viaShizuku.exitCode, viaShizuku.stdout, viaShizuku.stderr, "shizuku")
-                }
             }
             return buildString {
                 append("ERROR: 内嵌后端所有执行路径都失败")
                 sessionFailure?.let { append("\n[session] ").append(it) }
                 append("\n[direct] ").append(directFailure)
                 append("\n[memfd] ").append(memfdFailure)
-                append("\n[shizuku] 未成功或 Shizuku 未授权")
-                append("。请激活 Shizuku（设置页），或安装 Termux App 作回退")
+                append("。请安装 Termux App 作回退")
             }
         }
     }
@@ -311,7 +293,7 @@ class TermuxEnv(private val context: Context, private val shizuku: ShizukuShell?
 class TermuxAppBackend(private val context: Context) {
     suspend fun exec(command: String, timeoutSeconds: Int): String = withContext(Dispatchers.IO) {
         if (context.checkSelfPermission("com.termux.permission.RUN_COMMAND") != PackageManager.PERMISSION_GRANTED)
-            return@withContext "ERROR: 未获 Termux RUN_COMMAND 权限。①（推荐）在 AndAgent 设置页点击「Shizuku 代授权」；②在电脑执行 adb shell pm grant com.dc.andagent com.termux.permission.RUN_COMMAND。授权后还需在 Termux 的 termux.properties 设置 allow-external-apps=true 并重启 Termux。"
+            return@withContext "ERROR: 未获 Termux RUN_COMMAND 权限。在电脑执行 adb shell pm grant com.dc.andagent com.termux.permission.RUN_COMMAND。授权后还需在 Termux 的 termux.properties 设置 allow-external-apps=true 并重启 Termux。"
         val id = UUID.randomUUID().toString()
         val pending = TermuxResultReceiver.Pending(CountDownLatch(1))
         TermuxResultReceiver.pending[id] = pending

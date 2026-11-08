@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   cronDelete, cronExactAllowed, cronList, cronOpenExactSettings, cronPauseAll,
   cronToggle, getAppVersion, getDevToolsStatus, getProjectionStatus,
-  getShizukuStatus, getTermuxStatus, grantTermuxViaShizuku, hasBridge,
+  getTermuxStatus, grantTermuxPermission, hasBridge,
   hasKvBridge, kvCall,
   memoryCall, persistSettings, requestHealthPermission, requestProjectionConsent,
   setDevToolsEnabled, skillManage, stopProjection,
@@ -44,7 +44,6 @@ export type SettingsPage =
   | "home" | "model" | "prompt" | "appearance" | "memory" | "automation"
   | "ssh" | "skills" | "extensions" | "search" | "storage" | "data" | "about" | "notices";
 
-type ShizukuStatus = ReturnType<typeof getShizukuStatus>;
 type ProjectionStatus = ReturnType<typeof getProjectionStatus>;
 type DevToolsStatus = ReturnType<typeof getDevToolsStatus> | null;
 type CronTask = ReturnType<typeof cronList>[number];
@@ -122,7 +121,6 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   useEffect(() => { setDraft(prev => !hasSavedSystemPrompt() && isDefaultSystemPrompt(prev.systemPrompt) ? { ...prev, systemPrompt: defaultSystemPrompt() } : prev); }, [language]);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const [confirmMode, updateConfirmMode] = useState<ConfirmMode>(() => loadConfirmMode());
-  const [shizuku, setShizuku] = useState<ShizukuStatus>(() => getShizukuStatus());
   const [termuxStatus, setTermuxStatus] = useState(() => getTermuxStatus());
   const [cronTasks, setCronTasks] = useState<CronTask[]>([]);
   const [cronLoaded, setCronLoaded] = useState(false);
@@ -177,7 +175,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
       }
       setMemoriesLoaded(true);
     }
-    if (page === "data" && hasBridge()) { setShizuku(getShizukuStatus()); setTermuxStatus(getTermuxStatus()); setProjection(getProjectionStatus()); setDevtools(hasBridge() ? getDevToolsStatus() : null); }
+    if (page === "data" && hasBridge()) { setTermuxStatus(getTermuxStatus()); setProjection(getProjectionStatus()); setDevtools(hasBridge() ? getDevToolsStatus() : null); }
     if (page === "storage") setExternal(externalStateStatus());
     if (page === "search") {
       // R96 review 二轮建议项1：进入页面先重置加载态（清掉上一次会话残留的
@@ -325,30 +323,19 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
 
   useEffect(() => {
     if (!hasBridge() || (page !== "data" && page !== "home")) return;
-    const refresh = () => { setShizuku(getShizukuStatus()); setTermuxStatus(getTermuxStatus()); setProjection(getProjectionStatus()); };
+    const refresh = () => { setTermuxStatus(getTermuxStatus()); setProjection(getProjectionStatus()); };
     refresh();
     const timer = window.setInterval(refresh, 4000);
     return () => window.clearInterval(timer);
   }, [page]);
 
-  // 状态查询带回来的错误（Shizuku / DevTools / 投屏）同样走顶部 toast，不再各写一套红字。
+  // 状态查询带回来的错误（DevTools / 投屏）同样走顶部 toast，不再各写一套红字。
   // 浏览器预览下这些原生能力整体不可用（页面已有「浏览器预览模式」说明），不弹错误。
   useEffect(() => {
     if (!hasBridge()) return;
-    if (shizuku.lastRequestError) showError(`${t("authorizationFailed")}：${shizuku.lastRequestError}`);
     if (devtools?.error) showError(devtools.error);
     if (projection.error) showError(projection.error);
-  }, [shizuku.lastRequestError, devtools?.error, projection.error, t]);
-
-  const askShizuku = () => {
-    const ack = (() => {
-      // 与旧版一致：走 bridge 的 shizuku 请求（getShizukuStatus 同族函数在 bridge 内）。
-      const fn = (window as unknown as { AndroidBridge?: { shizukuRequest?: () => unknown } }).AndroidBridge?.shizukuRequest;
-      return typeof fn === "function" ? { message: null } : { message: null };
-    })();
-    showResult(ack.message ?? "");
-    window.setTimeout(() => setShizuku(getShizukuStatus()), 800);
-  };
+  }, [devtools?.error, projection.error, t]);
 
   const askHealth = () => {
     const ack = requestHealthPermission();
@@ -386,7 +373,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     { key: "ssh", icon: "key", tint: "#f43f5e", title: t("sshCredentials"), sub: t("sshCredentialsGroupSub"), badge: credsLoaded ? `${creds.length}` : undefined, badgeTone: "count" },
     { key: "search", icon: "search", tint: "#f97316", title: t("searchEngines"), sub: t("searchEnginesSub") },
     { key: "storage", icon: "hard-drive", tint: "#14b8a6", title: t("storageGroup"), sub: external.degraded ? t("storageModeDegraded") : t("storageModePublic"), badge: external.hasSnapshot ? "ok" : undefined, badgeTone: external.hasSnapshot ? "ok" : "warn" },
-    { key: "extensions", icon: "toolbox", tint: "#0ea5e9", title: t("extensionsGroup"), sub: "Shizuku · Termux · DevTools" },
+    { key: "extensions", icon: "toolbox", tint: "#0ea5e9", title: t("extensionsGroup"), sub: "Termux · DevTools" },
     { key: "data", icon: "bar-chart", tint: "#06b6d4", title: t("dataGroup"), sub: `${t("health")} · ${t("projection")}` },
     { key: "about", icon: "info", tint: "#64748b", title: t("about"), sub: `${t("version")} ${getAppVersion()}` },
   ];
@@ -537,31 +524,10 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   </>);
 
   const extensionsPage = sub(t("extensionsGroup"), <>
-    {section(t("shizuku"), <>
-      <dl className="settings-rows">
-        <div className="settings-row">
-          <dt>{t("status")}</dt>
-          <dd className={shizuku.status === "granted" ? "is-ok" : "is-warn"}>
-            {t(shizuku.status === "granted" ? "granted" : shizuku.status === "not_granted" ? "notGranted" : "unavailable")}
-            {shizuku.managerVersion ? ` · v${shizuku.managerVersion}` : ""}
-          </dd>
-        </div>
-      </dl>
-      <p className="settings-card-note">{shizuku.note ?? t("shizukuNote")}</p>
-      <div className="settings-card-actions">
-        <button type="button" className="btn-primary" onClick={askShizuku}>{t("requestAccess")}</button>
-        <a className="btn-ghost" href="market://details?id=moe.shizuku.privileged.api">{t("activateShizuku")}</a>
-        <button type="button" className="btn-ghost" onClick={() => setShizuku(getShizukuStatus())}>{t("refreshStatus")}</button>
-      </div>
-      <details className="settings-details">
-        <summary>{t("shizukuSteps")}</summary>
-        <ol><li>{t("shizukuStep1")}</li><li>{t("shizukuStep2")}</li><li>{t("shizukuStep3")}</li><li>{t("shizukuStep4")}</li><li>{t("shizukuStep5")}</li></ol>
-      </details>
-    </>)}
     {section(t("scriptBackend"), <>
       <p className="settings-card-note">{t("termuxNote")}</p>
       <div className="settings-card-actions">
-        <button type="button" className="btn-primary" onClick={() => { showResult(grantTermuxViaShizuku()); setTermuxStatus(getTermuxStatus()); }}>{t("shizukuGrant")}</button>
+        <button type="button" className="btn-primary" onClick={() => { showResult(grantTermuxPermission()); setTermuxStatus(getTermuxStatus()); }}>{t("termuxGrant")}</button>
       </div>
     </>)}
     {section(t("devtools"), <>

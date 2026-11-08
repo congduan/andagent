@@ -3925,6 +3925,15 @@ button:disabled {
 }
 .resource-hub-empty strong{font-size:13px;font-weight:600;color:var(--text)}
 .resource-hub-empty small{font-size:12px;line-height:1.6;color:var(--muted);max-width:280px}
+/* 读取失败态的重试按钮：与行内动作按钮同一套描边/悬停，不用浏览器默认样式 */
+.resource-hub-empty button{
+  margin-top:4px;min-height:30px;padding:0 14px;
+  border:1px solid var(--border);border-radius:8px;
+  background:transparent;color:var(--text);
+  font-size:12px;transition:background .16s ease,border-color .16s ease;
+}
+.resource-hub-empty button:hover{background:var(--wash-3);border-color:var(--border-strong)}
+.resource-hub-empty button:active{background:var(--wash-4)}
 .resource-hub-group{margin:8px 0 0}
 .resource-hub-group-head{
   display:flex;align-items:center;gap:6px;

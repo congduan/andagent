@@ -8,36 +8,24 @@ import org.junit.Test
 
 /**
  * R28: pure-logic coverage for the MediaProjection capture path — routing
- * order (projection → shizuku → consent flow) and the single-slot recording
- * tracker. No Android framework classes touched.
+ * (projection → consent flow) and the single-slot recording tracker. No
+ * Android framework classes touched.
  */
 class ProjectionRoutingTest {
 
     @Test
-    fun `projection ready wins regardless of shizuku`() {
+    fun `projection channel when projection is ready`() {
         assertEquals(
             CaptureChannel.PROJECTION,
-            ProjectionRouting.route(projectionReady = true, shizukuGranted = true),
-        )
-        assertEquals(
-            CaptureChannel.PROJECTION,
-            ProjectionRouting.route(projectionReady = true, shizukuGranted = false),
+            ProjectionRouting.route(projectionReady = true),
         )
     }
 
     @Test
-    fun `shizuku is the fallback when projection not ready`() {
-        assertEquals(
-            CaptureChannel.SCRCPY,
-            ProjectionRouting.route(projectionReady = false, shizukuGranted = true),
-        )
-    }
-
-    @Test
-    fun `need consent when neither channel available`() {
+    fun `need consent when projection not ready`() {
         assertEquals(
             CaptureChannel.NEED_CONSENT,
-            ProjectionRouting.route(projectionReady = false, shizukuGranted = false),
+            ProjectionRouting.route(projectionReady = false),
         )
     }
 

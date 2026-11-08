@@ -31,7 +31,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.dc.andagent.MainActivity
-import com.dc.andagent.shell.ShizukuShell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.buildJsonObject
@@ -47,8 +46,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * R28: MediaProjection capture path — screenshot / recording with no Shizuku
- * dependency, only the one-time system consent dialog.
+ * R28: MediaProjection capture path — screenshot / recording that needs only
+ * the one-time system consent dialog (no external privilege backend).
  *
  * Flow: ProjectionConsentActivity (trampoline, same pattern as
  * FilePickActivity) collects resultCode+data → ProjectionService (foreground,
@@ -67,18 +66,15 @@ import java.util.concurrent.atomic.AtomicReference
 /* ------------------------- pure logic (unit tested) --------------------- */
 
 /** Which implementation a screen tool should use right now. */
-enum class CaptureChannel { PROJECTION, SCRCPY, NEED_CONSENT }
+enum class CaptureChannel { PROJECTION, NEED_CONSENT }
 
 /**
- * Routing order per R28 brief: authorized MediaProjection first; Shizuku
- * (scrcpy / screenrecord) second; otherwise trigger the consent flow.
+ * Routing order per R28 brief: authorized MediaProjection first; otherwise
+ * trigger the consent flow.
  */
 object ProjectionRouting {
-    fun route(projectionReady: Boolean, shizukuGranted: Boolean): CaptureChannel = when {
-        projectionReady -> CaptureChannel.PROJECTION
-        shizukuGranted -> CaptureChannel.SCRCPY
-        else -> CaptureChannel.NEED_CONSENT
-    }
+    fun route(projectionReady: Boolean): CaptureChannel =
+        if (projectionReady) CaptureChannel.PROJECTION else CaptureChannel.NEED_CONSENT
 }
 
 /**
@@ -361,8 +357,8 @@ private fun saveToPictures(context: Context, jpeg: ByteArray, name: String): Str
 /**
  * Screenshot through the live projection: mirror the main display into an
  * RGBA ImageReader, take one frame, rotate per display rotation, save JPEG
- * to MediaStore Pictures/AndAgent (pre-29: direct file) and return the same
- * protocol as the scrcpy screen_capture path.
+ * to MediaStore Pictures/AndAgent (pre-29: direct file) and return the
+ * screen_capture protocol (path + thumbnailBase64 + mime).
  */
 suspend fun projectionCaptureFrame(context: Context): String = withContext(Dispatchers.IO) {
     val projection = ProjectionService.instance?.projection
@@ -448,13 +444,13 @@ private val projectionRecordings = ProjectionRecordings()
 
 /**
  * Resolve the capture channel per routing order and provision it:
- * projection ready → PROJECTION; Shizuku granted → SCRCPY; neither → show
- * the system consent dialog and wait (blocking, tool executor threads only).
- * The wait stays under the WebView 60s tool timeout; if the user grants
- * later, the next call routes to PROJECTION automatically.
+ * projection ready → PROJECTION; otherwise show the system consent dialog and
+ * wait (blocking, tool executor threads only). The wait stays under the
+ * WebView 60s tool timeout; if the user grants later, the next call routes to
+ * PROJECTION automatically.
  */
-suspend fun ensureCaptureChannel(context: Context, shizuku: ShizukuShell): CaptureChannel {
-    val channel = ProjectionRouting.route(ProjectionService.ready, shizuku.isGranted())
+suspend fun ensureCaptureChannel(context: Context): CaptureChannel {
+    val channel = ProjectionRouting.route(ProjectionService.ready)
     if (channel != CaptureChannel.NEED_CONSENT) return channel
     val id = ProjectionConsentBridge.newRequest()
     try {
@@ -471,16 +467,9 @@ fun projectionRecordingActive(): Boolean = projectionRecordings.active() != null
 
 /** Status JSON for the settings card (R28). */
 @Suppress("UNUSED_PARAMETER")
-fun projectionStatusJson(context: Context, shizuku: ShizukuShell?): String = buildJsonObject {
+fun projectionStatusJson(context: Context): String = buildJsonObject {
     val ready = ProjectionService.ready
-    put(
-        "channel",
-        when {
-            ready -> "projection"
-            shizuku?.isGranted() == true -> "shizuku"
-            else -> "none"
-        },
-    )
+    put("channel", if (ready) "projection" else "none")
     put("ready", ready)
     put("recording", projectionRecordingActive())
     put("androidSdk", Build.VERSION.SDK_INT)
@@ -497,9 +486,9 @@ private val mainHandler = Handler(Looper.getMainLooper())
 private var autoStopRunnable: Runnable? = null
 
 /**
- * Start an MP4 recording via MediaRecorder + VirtualDisplay. Mirrors the
- * shizuku screen_record protocol: returns "started" JSON immediately;
- * screen_record_stop (or the duration timer) stops it.
+ * Start an MP4 recording via MediaRecorder + VirtualDisplay. Returns
+ * "started" JSON immediately; screen_record_stop (or the duration timer)
+ * stops it.
  */
 suspend fun projectionStartRecording(context: Context, durationS: Int, bitRate: Int): String =
     withContext(Dispatchers.IO) {
@@ -523,7 +512,7 @@ suspend fun projectionStartRecording(context: Context, durationS: Int, bitRate: 
             android.view.Surface.ROTATION_270 -> 90
             else -> 0
         }
-        // Encoders want even dimensions; cap the long edge like scrcpy max_size.
+        // Encoders want even dimensions; cap the long edge at 1280.
         var w = real.x
         var h = real.y
         if (maxOf(w, h) > 1280) {
@@ -625,9 +614,8 @@ private fun releaseRecorder() {
 }
 
 /**
- * Stop the projection recording; returns the shizuku screen_record_stop
- * compatible result string (empty-active case returns null so the tool can
- * fall through to the shizuku pkill path).
+ * Stop the projection recording; returns a screen_record_stop compatible
+ * result string (null when nothing is active).
  */
 fun projectionStopRecording(context: Context): String? {
     val active = projectionRecordings.stop() ?: return null

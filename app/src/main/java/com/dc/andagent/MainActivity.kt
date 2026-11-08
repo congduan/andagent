@@ -51,7 +51,6 @@ import com.dc.andagent.bridge.PermissionBroker
 import com.dc.andagent.bridge.UiCommands
 import com.dc.andagent.shell.devtoolsStatusJson
 import com.dc.andagent.shell.setDevToolsDebugging
-import com.dc.andagent.shell.ShizukuShell
 import com.dc.andagent.shell.TermuxEnv
 import com.dc.andagent.script.QuickJsEngine
 import com.dc.andagent.live.LiveLoopRunner
@@ -90,12 +89,10 @@ import com.dc.andagent.tools.ProjectionConsentBridge
 import com.dc.andagent.tools.ProjectionService
 import com.dc.andagent.tools.projectionStatusJson
 import com.dc.andagent.tools.ScreenRecordH264Tool
-import com.dc.andagent.tools.InputTool
 import com.dc.andagent.tools.BtScanTool
 import com.dc.andagent.tools.BtPairedListTool
 import com.dc.andagent.tools.BtConnectTool
 import com.dc.andagent.tools.WifiConnectTool
-import com.dc.andagent.tools.ShellConnectivityTool
 import com.dc.andagent.tools.AlarmSetTool
 import com.dc.andagent.tools.AlbumStatsTool
 import com.dc.andagent.tools.AppListTool
@@ -214,7 +211,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var bridge: AgentBridge
     private lateinit var skillRegistry: com.dc.andagent.tools.SkillRegistry
     private lateinit var permissionBroker: PermissionBroker
-    private lateinit var shizuku: ShizukuShell
+
     private lateinit var quickJsEngine: QuickJsEngine
     private lateinit var liveQuickJsEngine: QuickJsEngine
     private lateinit var liveLoopRunner: LiveLoopRunner
@@ -356,9 +353,8 @@ class MainActivity : ComponentActivity() {
         externalState = externalStateStore
         externalStateStore.autoSync(force = true)
         permissionBroker = PermissionBroker(this, permissionLauncher)
-        shizuku = ShizukuShell(appContext).also { it.init() }
 
-        val termuxEnv = TermuxEnv(appContext, shizuku)
+        val termuxEnv = TermuxEnv(appContext)
         val btConnect = BtConnectTool(appContext, permissionBroker)
         nfcSession = NfcSession(this) { message ->
             if (::bridge.isInitialized) bridge.emitNotice(message)
@@ -428,12 +424,6 @@ class MainActivity : ComponentActivity() {
             "bt_paired_list" to BtPairedListTool(appContext, permissionBroker),
             "bt_connect" to btConnect,
             "wifi_connect" to WifiConnectTool(appContext),
-            "wifi_toggle" to ShellConnectivityTool(shizuku, "wifi_toggle"),
-            "bt_toggle" to ShellConnectivityTool(shizuku, "bt_toggle"),
-            "wifi_connect_strong" to ShellConnectivityTool(shizuku, "wifi_connect_strong"),
-            "wifi_saved_list" to ShellConnectivityTool(shizuku, "wifi_saved_list"),
-            "wifi_forget" to ShellConnectivityTool(shizuku, "wifi_forget"),
-            "bt_connect_direct" to ShellConnectivityTool(shizuku, "bt_connect_direct", btConnect),
             "clipboard_write" to ClipboardWriteTool(appContext),
             "clipboard_read" to ClipboardReadTool(appContext),
             // R39: 富剪贴板（HTML/URI/图片/清空）。
@@ -442,15 +432,12 @@ class MainActivity : ComponentActivity() {
             "clipboard_clear" to ClipboardClearTool(appContext),
             "notify_send" to NotifySendTool(appContext, permissionBroker),
             "app_list" to AppListTool(appContext),
-            // R3a: Shizuku-backed screen recording
-            "screen_capture" to ScreenCaptureTool(appContext, shizuku),
-            "screen_record_h264" to ScreenRecordH264Tool(appContext, shizuku),
-            "input_tap" to InputTool(shizuku, "input_tap"),
-            "input_swipe" to InputTool(shizuku, "input_swipe"),
-            "input_text" to InputTool(shizuku, "input_text"),
-            "screen_record" to ScreenRecordTool(appContext, shizuku),
-            "screen_record_stop" to ScreenRecordStopTool(appContext, shizuku),
-            "screen_record_list" to ScreenRecordListTool(appContext, shizuku, permissionBroker),
+            // R28: MediaProjection-backed screen capture / recording
+            "screen_capture" to ScreenCaptureTool(appContext),
+            "screen_record_h264" to ScreenRecordH264Tool(appContext),
+            "screen_record" to ScreenRecordTool(appContext),
+            "screen_record_stop" to ScreenRecordStopTool(appContext),
+            "screen_record_list" to ScreenRecordListTool(appContext, permissionBroker),
             // R3a: files
             "file_download" to FileDownloadTool(appContext, permissionBroker),
             "tts_to_file" to TtsFileTool(appContext),
@@ -525,7 +512,7 @@ class MainActivity : ComponentActivity() {
         tools.putAll(SHORTCUT_TOOLS.associateWith { ShortcutTool(appContext, it) })
         // R77: quick-settings tile config tools.
         tools.putAll(TILE_TOOLS.associateWith { TileTool(appContext, it) })
-        // R71: accessibility-service control automation (no Shizuku needed).
+        // R71: accessibility-service control automation (no extra privilege needed).
         tools.putAll(
             listOf(
                 "a11y_status",
@@ -541,13 +528,13 @@ class MainActivity : ComponentActivity() {
         tools.putAll(com.dc.andagent.events.EVENT_TOOLS.associateWith { com.dc.andagent.events.EventTool(appContext, it) })
         tools.putAll(com.dc.andagent.pods.PODS_TOOLS.associateWith { com.dc.andagent.pods.PodsTool(appContext, permissionBroker, it) })
         // R12/R13 system APIs + R14 automation.
-        tools.putAll(SYSTEM_API_TOOLS.associateWith { SystemApiTool(appContext, permissionBroker, shizuku, it) })
-        tools.putAll(AUTOMATION_TOOLS.associateWith { AutomationTool(appContext, permissionBroker, shizuku, it) })
+        tools.putAll(SYSTEM_API_TOOLS.associateWith { SystemApiTool(appContext, permissionBroker, it) })
+        tools.putAll(AUTOMATION_TOOLS.associateWith { AutomationTool(appContext, permissionBroker, it) })
         tools.putAll(EXTERNAL_DATA_TOOLS.associateWith { ExternalDataTool(appContext, permissionBroker, it) })
         tools.putAll(FILE_OPS_TOOLS.associateWith { FileOpsTool(appContext, it) })
         tools.putAll(ZIP_TOOLS.associateWith { ZipTool(it) })
         tools.putAll(EMAIL_TOOLS.associateWith { EmailTool(appContext, it) })
-        tools.putAll(STORE_TOOLS.associateWith { StoreTool(shizuku, it) })
+        tools.putAll(STORE_TOOLS.associateWith { StoreTool(appContext, it) })
         tools.putAll(DEVTOOLS_TOOLS.associateWith { DevToolsTool(appContext, it) })
         tools.putAll(INTENT_TOOLS.associateWith { IntentTool(appContext, it) })
         // R96: 复用 R51 起就在的 KV 底座实例（共享 andagent_kv prefs），供 web_search 读自定义引擎配置。
@@ -564,7 +551,7 @@ class MainActivity : ComponentActivity() {
         // R100 ②: ADB 真实对接（连接/设备/断开/shell/截图/pull/push，共享 AdbSessionHub 状态）。
         tools.putAll(ADB_TOOLS.associateWith { AdbTool(appContext, it) })
         // R35: 联系人新建/通话记录/应用卸载/APK 提取/二维码/传感器录制/文件加密。
-        tools.putAll(R35_TOOLS.associateWith { R35Tool(appContext, permissionBroker, shizuku, it) })
+        tools.putAll(R35_TOOLS.associateWith { R35Tool(appContext, permissionBroker, it) })
         // R84: 传感器与机身状态（高频/批量采样、心率、运动触发、热状态、电池电气量、波形触感、参数化录音、音频路由）。
         tools.putAll(HARDWARE_STATUS_TOOLS.associateWith { HardwareStatusTool(appContext, permissionBroker, it) })
         // R86: 蓝牙扩展刀（BLE 外设广播、A2DP 媒体路由、标准 GATT 电量、USB 拓扑、USB MIDI）。
@@ -590,8 +577,6 @@ class MainActivity : ComponentActivity() {
             skillRegistry = skillRegistry,
             permissions = permissionBroker,
             appVersion = BuildConfig.VERSION_NAME,
-            shizukuStatus = { shizuku.statusJson() },
-            shizukuRequest = { shizuku.requestPermission() },
             healthPermissionRequest = { requestHealthPermission() },
             termuxStatus = { termuxEnv.status() },
             termuxTerminalExec = { command -> termuxEnv.terminalExec(command) },
@@ -599,7 +584,7 @@ class MainActivity : ComponentActivity() {
             termuxTerminalPoll = { termuxEnv.terminalPoll() },
             devtoolsStatusJson = { devtoolsStatusJson(appContext) },
             devtoolsSetDebugging = { enable -> setDevToolsDebugging(appContext, enable) },
-            projectionStatusJson = { projectionStatusJson(appContext, shizuku) },
+            projectionStatusJson = { projectionStatusJson(appContext) },
             projectionRequest = { requestProjectionConsent() },
             projectionStop = {
                 val stopped = com.dc.andagent.tools.projectionStopRecording(appContext)
@@ -667,13 +652,13 @@ class MainActivity : ComponentActivity() {
             themeChange = { dark -> runOnUiThread { applyUiTheme(dark) } },
             systemThemeProvider = { if (systemPrefersDark()) "dark" else "light" },
             termuxGrant = {
-                if (!shizuku.isGranted()) "ERROR: 请先启动 Shizuku 并在设置页授权 AndAgent"
-                else {
-                    val result = shizuku.run("pm grant com.dc.andagent com.termux.permission.RUN_COMMAND")
-                    if (!result.ok) "ERROR: pm grant 失败：${result.stderr.ifBlank { result.stdout.ifBlank { "exit=${result.exitCode}" } }}"
-                    else if (appContext.checkSelfPermission("com.termux.permission.RUN_COMMAND") != android.content.pm.PackageManager.PERMISSION_GRANTED)
-                        "ERROR: pm grant 已返回成功，但权限状态仍未生效；请检查 Termux 安装及签名"
-                    else "Termux RUN_COMMAND 已授权；${termuxEnv.status()}"
+                if (appContext.checkSelfPermission("com.termux.permission.RUN_COMMAND") ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    "Termux RUN_COMMAND 已授权；${termuxEnv.status()}"
+                } else {
+                    "ERROR: 应用内无法自行授予该权限；请在电脑执行：" +
+                        "adb shell pm grant com.dc.andagent com.termux.permission.RUN_COMMAND"
                 }
             },
         )
@@ -1199,7 +1184,6 @@ class MainActivity : ComponentActivity() {
         externalState?.autoSync(force = true)
         externalState?.shutdown()
         scriptToolExecutor.shutdownNow()
-        if (::shizuku.isInitialized) shizuku.shutdown()
         runCatching { safeTopScript?.remove() }
         safeTopScript = null
         webView.destroy()

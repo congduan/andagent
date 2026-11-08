@@ -23,7 +23,6 @@ import android.provider.MediaStore
 import android.provider.Settings
 import android.telephony.TelephonyManager
 import com.dc.andagent.bridge.PermissionBroker
-import com.dc.andagent.shell.ShizukuShell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -47,7 +46,6 @@ val SYSTEM_API_TOOLS = listOf(
 class SystemApiTool(
     private val context: Context,
     private val permissions: PermissionBroker,
-    private val shizuku: ShizukuShell,
     override val name: String,
 ) : Tool {
     override val description: String = when (name) {
@@ -56,12 +54,12 @@ class SystemApiTool(
         "audio_state" -> "读取音频状态：铃声模式、各音量流当前值与最大值、是否正在播放音乐。"
         "audio_set_volume" -> "设置指定音量流的音量（music/ring/alarm/notification/system/voice）。"
         "media_library" -> "查询 MediaStore 媒体集合：audio（音乐）、video（影片）、files（全部文件）。"
-        "ringtone_set" -> "列出系统铃声或设置来电铃声（需要 WRITE_SETTINGS 或 Shizuku）。"
+        "ringtone_set" -> "列出系统铃声或设置来电铃声（需要 WRITE_SETTINGS）。"
         "wallpaper_set" -> "把本地图片或 content:// 图片设为桌面壁纸。"
         "vibrate" -> "让设备振动，可指定时长或波形。"
         "torch" -> "开启或关闭手电筒。"
-        "screen_state" -> "读取屏幕状态（亮屏/熄屏、亮度、休眠超时）；可通过 Shizuku 唤醒屏幕。"
-        "brightness_set" -> "设置屏幕亮度 0-255（需要 WRITE_SETTINGS 或 Shizuku）。"
+        "screen_state" -> "读取屏幕状态（亮屏/熄屏、亮度、休眠超时）。"
+        "brightness_set" -> "设置屏幕亮度 0-255（需要 WRITE_SETTINGS）。"
         "volume_dnd" -> "设置勿扰模式：all/priority/alarms/silent（需要勿扰权限）。"
         "installed_app_details" -> "查询单个已安装应用的详细信息：版本、目标 SDK、权限、安装时间、APK 体积。"
         "usage_stats" -> "查询近 N 天应用前台使用时长（需要「使用情况访问」权限）。"
@@ -90,7 +88,7 @@ class SystemApiTool(
             "repeat" to intParam("波形重复起始索引，-1 不重复，默认 -1"),
         )
         "torch" -> schemaOf("on" to boolParam("true 开启，false 关闭"), required = listOf("on"))
-        "screen_state" -> schemaOf("wake" to boolParam("true 时经 Shizuku 唤醒屏幕"))
+        "screen_state" -> schemaOf()
         "brightness_set" -> schemaOf("value" to intParam("亮度 0-255"), required = listOf("value"))
         "volume_dnd" -> schemaOf("mode" to strParam("all|priority|alarms|silent"), required = listOf("mode"))
         "installed_app_details" -> schemaOf("package" to strParam("应用包名"), required = listOf("package"))
@@ -294,10 +292,7 @@ class SystemApiTool(
             RingtoneManager.setActualDefaultRingtoneUri(context, type, uri)
             return "WRITTEN: 铃声已设置为 $target"
         }
-        if (!shizuku.isGranted()) return "ERROR: 需要 WRITE_SETTINGS 授权或 Shizuku；请先在系统设置中授予「修改系统设置」"
-        val key = when (type) { RingtoneManager.TYPE_ALARM -> "alarm_alert"; RingtoneManager.TYPE_NOTIFICATION -> "notification_sound"; else -> "ringtone" }
-        val result = shizuku.run("settings put system $key ${quoteArg(target)}")
-        return if (result.ok) "WRITTEN: 已通过 Shizuku 设置铃声 $target" else "ERROR: 设置铃声失败：${result.asToolResult()}"
+        return "ERROR: 需要 WRITE_SETTINGS 授权；请先在系统设置中授予「修改系统设置」"
     }
 
     private fun wallpaperSet(args: JsonObject): String {
@@ -350,19 +345,10 @@ class SystemApiTool(
         val cr = context.contentResolver
         val brightness = runCatching { Settings.System.getInt(cr, Settings.System.SCREEN_BRIGHTNESS) }.getOrDefault(-1)
         val timeout = runCatching { Settings.System.getInt(cr, Settings.System.SCREEN_OFF_TIMEOUT) }.getOrDefault(-1)
-        var wakeResult = ""
-        if (args.boolArg("wake") == true && !pm.isInteractive) {
-            wakeResult = if (!shizuku.isGranted()) "（唤醒需要 Shizuku）"
-            else {
-                val r = shizuku.run("input keyevent 224")
-                if (r.ok) "（已发送唤醒键）" else "（唤醒失败：${r.stderr.ifBlank { r.stdout }}）"
-            }
-        }
         return buildJsonObject {
             put("interactive", pm.isInteractive)
             put("brightness", brightness)
             put("screenOffTimeoutMs", timeout)
-            put("wakeNote", wakeResult)
         }.toString()
     }
 
@@ -373,9 +359,7 @@ class SystemApiTool(
             Settings.System.putInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, value)
             return "WRITTEN: 屏幕亮度已设为 $value"
         }
-        if (!shizuku.isGranted()) return "ERROR: 需要 WRITE_SETTINGS 授权或 Shizuku；请先在系统设置中授予「修改系统设置」"
-        val result = shizuku.run("settings put system screen_brightness $value")
-        return if (result.ok) "WRITTEN: 已通过 Shizuku 设置亮度 $value" else "ERROR: 设置亮度失败：${result.asToolResult()}"
+        return "ERROR: 需要 WRITE_SETTINGS 授权；请先在系统设置中授予「修改系统设置」"
     }
 
     private fun volumeDnd(args: JsonObject): String {

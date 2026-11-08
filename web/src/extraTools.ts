@@ -63,13 +63,13 @@ export const EXTRA_TOOL_DEFS = [
   { name: "audio_state", description: "读取铃声模式、各音量流当前值与最大值、是否播放音乐。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "audio_set_volume", description: "设置音量流（music/ring/alarm/notification/system/voice）的绝对 level 或百分比 percent。", parameters: { type: "object", properties: { stream: { type: "string" }, level: { type: "integer" }, percent: { type: "integer" } }, required: [] } },
   { name: "media_library", description: "查询 MediaStore 集合 audio/video/files，返回名称、大小、时长与 content URI。", parameters: { type: "object", properties: { kind: { type: "string" }, limit: { type: "integer" } }, required: [] } },
-  { name: "ringtone_set", description: "列出系统铃声；传 uri 可设置来电/通知/闹钟铃声（需 WRITE_SETTINGS 或 Shizuku），type=ringtone|notification|alarm。", parameters: { type: "object", properties: { uri: { type: "string" }, type: { type: "string" } }, required: [] } },
+  { name: "ringtone_set", description: "列出系统铃声；传 uri 可设置来电/通知/闹钟铃声（需 WRITE_SETTINGS），type=ringtone|notification|alarm。", parameters: { type: "object", properties: { uri: { type: "string" }, type: { type: "string" } }, required: [] } },
   { name: "wallpaper_set", description: "把本地图片路径或 content:// 图片设为桌面壁纸。", parameters: { type: "object", properties: { source: { type: "string" } }, required: ["source"] } },
   { name: "vibrate", description: "让设备振动；duration_ms 指定时长，pattern 为逗号分隔波形毫秒序列，repeat 为重复起始索引。", parameters: { type: "object", properties: { duration_ms: { type: "integer" }, pattern: { type: "string" }, repeat: { type: "integer" } }, required: [] } },
 
   { name: "torch", description: "开启或关闭手电筒，on=true 开启。", parameters: { type: "object", properties: { on: { type: "boolean" } }, required: ["on"] } },
-  { name: "screen_state", description: "读取屏幕亮灭状态、亮度、休眠超时；wake=true 时经 Shizuku 唤醒。", parameters: { type: "object", properties: { wake: { type: "boolean" } }, required: [] } },
-  { name: "brightness_set", description: "设置屏幕亮度 0-255，需 WRITE_SETTINGS 或 Shizuku。", parameters: { type: "object", properties: { value: { type: "integer" } }, required: ["value"] } },
+  { name: "screen_state", description: "读取屏幕亮灭状态、亮度、休眠超时。", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "brightness_set", description: "设置屏幕亮度 0-255，需 WRITE_SETTINGS。", parameters: { type: "object", properties: { value: { type: "integer" } }, required: ["value"] } },
   { name: "volume_dnd", description: "设置勿扰模式 mode=all|priority|alarms|silent，需勿扰访问权限。", parameters: { type: "object", properties: { mode: { type: "string" } }, required: ["mode"] } },
   { name: "installed_app_details", description: "查询指定包名应用的版本、目标 SDK、权限、安装时间与 APK 体积。", parameters: { type: "object", properties: { package: { type: "string" } }, required: ["package"] } },
   { name: "usage_stats", description: "查询近 days 天应用前台使用时长，需系统「使用情况访问」权限。", parameters: { type: "object", properties: { days: { type: "integer" }, limit: { type: "integer" } }, required: [] } },
@@ -78,8 +78,8 @@ export const EXTRA_TOOL_DEFS = [
   { name: "alarm_wait", description: "读取系统下一个闹钟的时间与剩余毫秒数。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "countdown", description: "进程内倒计时：action=start（需 seconds）|list|cancel（需 id）；到点发本地通知。", parameters: { type: "object", properties: { action: { type: "string" }, seconds: { type: "integer" }, label: { type: "string" }, id: { type: "string" } }, required: [] } },
   { name: "calendar_reminder_check", description: "查询未来 days 天带提醒的日历事件及提前分钟数。", parameters: { type: "object", properties: { days: { type: "integer" }, limit: { type: "integer" } }, required: [] } },
-  { name: "hotspot", description: "action=status 查询热点状态，open_settings 打开热点设置，toggle 经 Shizuku 尝试开关（需 on）。", parameters: { type: "object", properties: { action: { type: "string" }, on: { type: "boolean" } }, required: [] } },
-  { name: "airplane", description: "action=status 读取飞行模式，on/off 经 Shizuku 切换。", parameters: { type: "object", properties: { action: { type: "string" } }, required: [] } },
+  { name: "hotspot", description: "action=status 查看说明，open_settings 打开系统热点设置页（普通应用无法直接开关）。", parameters: { type: "object", properties: { action: { type: "string" } }, required: [] } },
+  { name: "airplane", description: "action=status 读取飞行模式；on/off 打开系统设置页由用户切换。", parameters: { type: "object", properties: { action: { type: "string" } }, required: [] } },
   { name: "tts", description: "用系统 TTS 朗读文本；language 为 BCP-47 标签，rate 为 0.5..2.0。", parameters: { type: "object", properties: { text: { type: "string" }, language: { type: "string" }, rate: { type: "string" } }, required: ["text"] } },
   { name: "screenshot_quick", description: "快速截取当前屏幕，返回缩略图与保存路径（等同 screen_capture）。", parameters: { type: "object", properties: {}, required: [] } },
 
@@ -112,7 +112,7 @@ export const EXTRA_TOOL_DEFS = [
 
   { name: "fdroid_search", description: "在 F-Droid 官方仓库索引中按关键词搜索开源应用，返回包名、名称、简介、最新版本。", parameters: { type: "object", properties: { keyword: { type: "string" }, limit: { type: "integer" } }, required: ["keyword"] } },
   { name: "fdroid_download", description: "下载指定 F-Droid 包名的最新 APK 到 Downloads/AndAgent，并校验 SHA-256。", parameters: { type: "object", properties: { package: { type: "string" } }, required: ["package"] } },
-  { name: "app_install", description: "经 Shizuku 静默安装 APK：path 与 confirm=true 必填。", parameters: { type: "object", properties: { path: { type: "string" }, confirm: { type: "boolean" } }, required: ["path", "confirm"] } },
+  { name: "app_install", description: "打开系统安装器安装 APK：path 与 confirm=true 必填。", parameters: { type: "object", properties: { path: { type: "string" }, confirm: { type: "boolean" } }, required: ["path", "confirm"] } },
 
   { name: "devtools_status", description: "查询 WebView 远程调试开关状态与可调试页面列表（序号/标题/URL）。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "devtools_debugging", description: "运行时开关 WebView 远程调试（release 包同样生效，持久化到设置）。开启后 devtools_* 工具与 USB chrome://inspect 均可用。", parameters: { type: "object", properties: { enable: { type: "boolean" } }, required: ["enable"] } },
@@ -128,7 +128,7 @@ export const EXTRA_TOOL_DEFS = [
 
   { name: "contacts_add", description: "新建联系人（姓名必填，可带电话/邮箱/备注）。优先用 WRITE_CONTACTS 静默写入；未授权时降级为打开系统联系人编辑页并预填信息，由用户手动保存。", parameters: { type: "object", properties: { name: { type: "string", description: "联系人姓名（必填）" }, phone: { type: "string", description: "电话号码" }, email: { type: "string", description: "邮箱" }, note: { type: "string", description: "备注" } }, required: ["name"] } },
   { name: "call_log_read", description: "只读查询通话记录：按号码/类型/天数过滤，返回号码、类型、时间、时长；需 READ_CALL_LOG，隐私敏感，仅查询不修改。", parameters: { type: "object", properties: { number: { type: "string", description: "按号码过滤（模糊匹配）" }, type: { type: "string", description: "通话类型：incoming/outgoing/missed/blocked/rejected" }, days: { type: "integer", description: "仅查最近 N 天，默认 7，上限 90" }, limit: { type: "integer", description: "返回条数，默认 20，上限 100" } }, required: [] } },
-  { name: "app_uninstall", description: "经 Shizuku 卸载/禁用/启用已安装应用（pm uninstall / pm disable-user / pm enable）。破坏性：必须 confirm=true；系统组件与 AndAgent 自身在保护名单内。", parameters: { type: "object", properties: { package: { type: "string", description: "应用包名" }, action: { type: "string", description: "uninstall（默认）|disable|enable" }, confirm: { type: "boolean", description: "必须设为 true 才会执行" } }, required: ["package", "confirm"] } },
+  { name: "app_uninstall", description: "卸载已安装应用：打开系统卸载确认页由用户确认。破坏性：必须 confirm=true；系统组件与 AndAgent 自身在保护名单内。", parameters: { type: "object", properties: { package: { type: "string", description: "应用包名" }, action: { type: "string", description: "uninstall（默认）" }, confirm: { type: "boolean", description: "必须设为 true 才会执行" } }, required: ["package", "confirm"] } },
   { name: "apk_extract", description: "提取已安装应用的 APK 到 Downloads/AndAgent，可选 share=true 打开系统分享面板。App Bundle 拆包应用仅能导出 base.apk。", parameters: { type: "object", properties: { package: { type: "string", description: "应用包名" }, share: { type: "boolean", description: "true 时打开系统分享面板" }, confirm: { type: "boolean", description: "目标已存在时须为 true 才覆盖" } }, required: ["package"] } },
   { name: "qr_generate", description: "把文本生成二维码 PNG（纯离线 ZXing，零权限），保存到 Pictures/AndAgent 并在工具卡片中展示缩略图。", parameters: { type: "object", properties: { text: { type: "string", description: "二维码内容（文本/链接）" }, size: { type: "integer", description: "像素尺寸，默认 512，范围 64..2048" }, ec: { type: "string", description: "纠错等级 L/M/Q/H，默认 M" } }, required: ["text"] } },
   { name: "qr_scan", description: "识别图片中的二维码/条码（纯离线 ZXing），source 支持本地路径、content:// URI、相册 id 或 base64。", parameters: { type: "object", properties: { source: { type: "string", description: "本地图片路径 / content:// URI / 相册 id / base64" } }, required: ["source"] } },

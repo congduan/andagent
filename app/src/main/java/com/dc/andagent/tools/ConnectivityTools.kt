@@ -18,7 +18,6 @@ import android.os.Looper
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.dc.andagent.bridge.PermissionBroker
-import com.dc.andagent.shell.ShizukuShell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -29,7 +28,6 @@ import kotlinx.serialization.json.put
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 private const val BT_CONNECT = "android.permission.BLUETOOTH_CONNECT"
 private const val BT_SCAN = "android.permission.BLUETOOTH_SCAN"
 private fun adapter(context: Context) = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
@@ -130,72 +128,6 @@ class WifiConnectTool(private val context: Context) : Tool {
                 context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 "已打开 Wi-Fi 面板，请在面板中选择 $ssid 并完成连接"
             }.getOrElse { "ERROR: 无法打开 Wi-Fi 设置：${it.message}" }
-        }
-    }
-}
-
-class ShellConnectivityTool(private val shizuku: ShizukuShell, override val name: String, private val fallback: BtConnectTool? = null) : Tool {
-    override val description = when (name) {
-        "wifi_toggle" -> "经 Shizuku 开启或关闭 Wi-Fi。"
-        "bt_toggle" -> "经 Shizuku 开启或关闭蓝牙。"
-        "wifi_connect_strong" -> "经 Shizuku 连接 Wi-Fi 并检查连接状态；设备命令支持情况因系统而异。"
-        "wifi_saved_list" -> "经 Shizuku 列出系统保存的 Wi-Fi 网络。"
-        "wifi_forget" -> "经 Shizuku 删除指定 SSID 的已保存网络。"
-        else -> "经 Shizuku 尝试直接连接已配对蓝牙设备；命令缺失时尝试 GATT。"
-    }
-    override val destructive = name in setOf("wifi_toggle", "bt_toggle", "wifi_connect_strong", "wifi_forget", "bt_connect_direct")
-    override val parameters = when (name) {
-        "wifi_toggle", "bt_toggle" -> schemaOf("on" to boolParam("true 开启，false 关闭"), required = listOf("on"))
-        "wifi_connect_strong" -> schemaOf("ssid" to strParam("网络 SSID"), "password" to strParam("密码；开放网络省略"), "security" to strParam("open|wpa2|wpa3"), required = listOf("ssid", "security"))
-        "wifi_forget" -> schemaOf("ssid" to strParam("要删除的网络 SSID"), required = listOf("ssid"))
-        "bt_connect_direct" -> schemaOf("mac" to strParam("已配对设备 MAC"), required = listOf("mac"))
-        else -> schemaOf()
-    }
-    override suspend fun execute(args: JsonObject): String {
-        if (!shizuku.isGranted()) return "ERROR: ${ShizukuShell.SHIZUKU_REQUIRED}"
-        return when (name) {
-            "wifi_toggle", "bt_toggle" -> {
-                val on = args.strArg("on")?.toBooleanStrictOrNull() ?: return "ERROR: on 须为 true 或 false"
-                val kind = if (name == "wifi_toggle") "wifi" else "bluetooth"
-                val result = shizuku.run("svc $kind ${if (on) "enable" else "disable"}")
-                if (result.ok) "TOGGLED: $kind ${if (on) "on" else "off"}" else "ERROR: 切换失败：${result.asToolResult()}"
-            }
-            "wifi_connect_strong" -> {
-                val ssid = args.strArg("ssid") ?: return "ERROR: 缺少 ssid"
-                val security = args.strArg("security") ?: return "ERROR: 缺少 security"
-                val password = args.strArg("password")
-                if (security !in setOf("open", "wpa2", "wpa3")) return "ERROR: security 须为 open|wpa2|wpa3"
-                if (security != "open" && password.isNullOrBlank()) return "ERROR: 加密网络需要 password"
-                val cmd = "cmd wifi connect-network ${shellQuote(ssid)} $security" + (password?.let { " ${shellQuote(it)}" } ?: "")
-                val r = shizuku.run(cmd)
-                if (!r.ok) return "ERROR: Wi-Fi 连接命令失败：${r.asToolResult()}"
-                delay(2000)
-                val status = shizuku.run("cmd wifi status")
-                val connected = Regex("""(?i)connected to\s*"?${Regex.escape(ssid)}"?(?:\s|$)""").containsMatchIn(status.stdout)
-                if (status.ok && connected) "WRITTEN: 已连接 $ssid\n${status.stdout.take(1000)}" else "ERROR: 命令已提交，但未验证连接到 $ssid；${status.asToolResult()}"
-            }
-            "wifi_saved_list" -> shizuku.run("cmd wifi list-networks").let { if (it.ok) it.asToolResult() else "ERROR: 无法列出网络：${it.asToolResult()}" }
-            "wifi_forget" -> {
-                val ssid = args.strArg("ssid") ?: return "ERROR: 缺少 ssid"
-                val listing = shizuku.run("cmd wifi list-networks")
-                if (!listing.ok) return "ERROR: 无法查询已保存网络：${listing.asToolResult()}"
-                val parsed = listing.stdout.lines().mapNotNull { line ->
-                    Regex("^\\s*(\\d+)\\s*(?:\\|\\s*|\\s{2,})(.+?)(?:\\s*\\||\\s{2,}|$)").find(line)
-                        ?.let { it.groupValues[1].toIntOrNull() to it.groupValues[2].trim() }
-                }.firstOrNull { it.second == ssid }
-                    ?: return "ERROR: 未找到可精确匹配的保存网络 $ssid；未执行删除"
-                val id = parsed.first ?: return "ERROR: 无法解析网络 ID；未执行删除"
-                val result = shizuku.run("cmd wifi forget-network $id")
-                if (result.ok) "WRITTEN: 已请求遗忘 $ssid (id=$id)" else "ERROR: 遗忘失败：${result.asToolResult()}"
-            }
-            else -> {
-                val mac = args.strArg("mac") ?: return "ERROR: 缺少 mac"
-                if (!BluetoothAdapter.checkBluetoothAddress(mac)) return "ERROR: MAC 地址格式无效"
-                val help = shizuku.run("cmd bluetooth help")
-                if (!help.ok || !Regex("\\bconnect\\b", RegexOption.IGNORE_CASE).containsMatchIn(help.stdout)) return "系统不支持 cmd bluetooth connect，降级 GATT：${fallback?.execute(args) ?: "不可用"}"
-                val r = shizuku.run("cmd bluetooth connect ${shellQuote(mac)}")
-                if (r.ok) "WRITTEN: 蓝牙连接命令已提交，实际设备配置请在系统蓝牙页核对\n${r.stdout.take(500)}" else if ((r.stdout + r.stderr).contains("Unknown command", true)) "系统不支持 cmd bluetooth connect，降级 GATT：${fallback?.execute(args) ?: "不可用"}" else "ERROR: 蓝牙直接连接失败：${r.asToolResult()}"
-            }
         }
     }
 }

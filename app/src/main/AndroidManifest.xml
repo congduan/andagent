@@ -72,9 +72,6 @@
 
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
-    <!-- Shizuku: the manager grants this signature permission to the app -->
-    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
-
     <!-- Health Connect step data (runtime grant via Health Connect UI) -->
     <uses-permission android:name="android.permission.health.READ_STEPS" />
 
@@ -96,8 +93,6 @@
 
     <queries>
         <package android:name="com.termux" />
-        <!-- Shizuku manager visibility (status card / install check) -->
-        <package android:name="moe.shizuku.privileged.api" />
         <!-- Health Connect provider app on Android 13 and below -->
         <package android:name="com.google.android.apps.healthdata" />
         <intent>
@@ -199,15 +194,6 @@
                 <action android:name="com.dc.andagent.TERMUX_RESULT" />
             </intent-filter>
         </receiver>
-
-        <!-- Shizuku API 13: runtime binder bridge (must be declared by the app) -->
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:multiprocess="false"
-            android:enabled="true"
-            android:exported="true"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <!-- #10c: share app-private files with other apps via content:// URIs. -->
         <provider

@@ -1,7 +1,10 @@
 package com.dc.andagent.tools
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Environment
-import com.dc.andagent.shell.ShizukuShell
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -21,7 +24,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
-/** #12: F-Droid index search + APK download + Shizuku-based install. */
+/** #12: F-Droid index search + APK download + system-installer install. */
 val STORE_TOOLS = listOf("fdroid_search", "fdroid_download", "app_install")
 
 private const val FDROID_INDEX = "https://f-droid.org/repo/index-v1.json"
@@ -70,11 +73,11 @@ private object FdroidIndex {
         index["packages"]?.jsonObject?.get(pkg)?.jsonArray ?: JsonArray(emptyList())
 }
 
-class StoreTool(private val shizuku: ShizukuShell, override val name: String) : Tool {
+class StoreTool(private val context: Context, override val name: String) : Tool {
     override val description: String = when (name) {
         "fdroid_search" -> "在 F-Droid 官方仓库索引中按关键词搜索开源应用（包名、名称、简介、最新版本）。"
         "fdroid_download" -> "从 F-Droid 仓库下载指定应用的最新 APK 到公共下载目录并校验 SHA-256。"
-        "app_install" -> "经 Shizuku 以 shell 权限静默安装已下载的 APK（pm install -r）。"
+        "app_install" -> "打开系统安装器安装指定 APK，由用户在系统弹窗中确认。"
         else -> "应用商店工具"
     }
 
@@ -173,10 +176,15 @@ class StoreTool(private val shizuku: ShizukuShell, override val name: String) : 
         val apk = runCatching { File(path).canonicalFile }.getOrNull()
             ?: return "ERROR: 路径无效"
         if (!apk.isFile || !apk.name.endsWith(".apk", true)) return "ERROR: 不是有效的 APK 文件：$path"
-        if (!shizuku.isGranted()) return "ERROR: 静默安装需要 Shizuku 授权"
-        val result = shizuku.run("pm install -r -g '${apk.path.replace("'", "'\\''")}'", 120_000)
-        return if (result.ok && result.stdout.contains("Success", true))
-            "WRITTEN: 已安装 ${apk.name}\n${result.stdout.take(500)}"
-        else "ERROR: 安装失败：${result.asToolResult()}"
+        return runCatching {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+            )
+            "OPENED: 已打开系统安装器，请手动确认安装 ${apk.name}"
+        }.getOrElse { "ERROR: 无法打开安装器：${it.message}" }
     }
 }

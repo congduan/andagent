@@ -6,12 +6,11 @@ import java.io.IOException
 /**
  * R100 ③：ADB 通道 scrcpy 协议助手（纯 JVM/Kotlin，供 JVM 单测直接调用）。
  *
- * 协议与 tools/ScrcpyTools.kt（Shizuku 通道）保持一致：
+ * 协议（scrcpy v2.7）：
  *  - 视频头 76 字节 = 64B 设备名(NUL 截断) + BE int codec(0x68323634 "h264") + BE int w + BE int h；
  *  - 帧头 12 字节 = BE long flags + BE int size，随后 size 字节 payload；
- *  - flags 位含义照抄 ScrcpySession.next()：pts=flags&0x3fff...、config=flags<0(bit63)、
- *    keyFrame=flags&(1<<62)!=0(bit62)。
- * 大端字节序来自 ScrcpyTools 的 DataInputStream.readInt/readLong（Java server 写头默认大端）。
+ *  - flags 位含义：pts=flags&0x3fff...、config=flags<0(bit63)、keyFrame=flags&(1<<62)!=0(bit62)。
+ * 大端字节序与 Java server 写头默认一致。
  */
 object AdbScrcpy {
     const val SERVER_ASSET = "vendor/scrcpy-server-v2.7.jar"
@@ -30,7 +29,7 @@ object AdbScrcpy {
 
     data class Header(val name: String, val codec: Int, val width: Int, val height: Int)
 
-    /** 数据结构对齐 ScrcpySession.Packet：pts / config / keyFrame / bytes。 */
+    /** 视频包结构：pts / config / keyFrame / bytes。 */
     data class Packet(val pts: Long, val config: Boolean, val keyFrame: Boolean, val bytes: ByteArray)
 
     /** 解析 76B 视频头；字节不足 / codec 非 h264 / 尺寸不在 1..4096 → null。 */
@@ -68,7 +67,7 @@ object AdbScrcpy {
         )
     }
 
-    /** scid 格式化为 8 位小写 hex（照抄 ScrcpySession.open 的 "%08x"）。 */
+    /** scid 格式化为 8 位小写 hex（"%08x"）。 */
     fun formatScid(value: Int): String = "%08x".format(value and 0x7fffffff)
 
     fun newScid(): String = formatScid(java.util.Random().nextInt(Int.MAX_VALUE))
@@ -162,7 +161,7 @@ class AdbScrcpySession(
 
     /**
      * 目标机版本检测 → 推送 server → 后台启动 → 轮询 openDuplex → 读视频头。
-     * 成功返回 null（对齐 ScrcpySession.open），失败返回中文错误。
+     * 成功返回 null，失败返回中文错误。
      */
     fun start(maxSize: Int, bitRate: Int, fps: Int? = null): String? {
         // 目标机系统版本门槛（scrcpy 2.7 server 需 Android 5.0 / API 21+）。

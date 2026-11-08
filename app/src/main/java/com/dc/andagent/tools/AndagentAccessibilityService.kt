@@ -9,7 +9,7 @@ import android.view.accessibility.AccessibilityEvent
 import java.lang.ref.WeakReference
 
 /**
- * R71: control-level automation without Shizuku.
+ * R71: control-level automation without external privilege backends.
  *
  * The service keeps a weak reference for tools and records only the latest
  * window identity. It never persists events or the node tree; a11y_screen

@@ -6,7 +6,7 @@
  *   cron_create / shortcut_create / countdown / docx_create / xlsx_create /
  *   pptx_create / web_read / clipboard_write / web_search / script_save /
  *   mermaid / chart / devtools_errors / http_request / memory_add /
- *   calendar_reminder_check / wifi_saved_list / lan_scan / data_usage /
+ *   calendar_reminder_check / wifi_connect / lan_scan / data_usage /
  *   bt_scan / hotspot / airpods_status / heart_rate / brightness_set /
  *   audio_set_volume / wallpaper_set / vibrate / notif_events_read）。
  *  首页每次进入只随机展示其中一部分，见 pickTemplateGroups。 */

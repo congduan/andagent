@@ -154,12 +154,6 @@ const TOOL_DEFS = [
   { name: "bt_paired_list", description: "列出已配对蓝牙设备的名称、MAC 与类型。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "bt_connect", description: "对已配对 BLE 设备尝试 GATT 连接；未配对设备发起系统配对。", parameters: { type: "object", properties: { mac: { type: "string", description: "设备 MAC" } }, required: ["mac"] } },
   { name: "wifi_connect", description: "打开系统 Wi-Fi 面板，用户手动选择 SSID。", parameters: { type: "object", properties: { ssid: { type: "string", description: "网络名称" } }, required: ["ssid"] } },
-  { name: "wifi_toggle", description: "经 Shizuku 开关 Wi-Fi。", parameters: { type: "object", properties: { on: { type: "boolean", description: "true 开启" } }, required: ["on"] } },
-  { name: "bt_toggle", description: "经 Shizuku 开关蓝牙。", parameters: { type: "object", properties: { on: { type: "boolean", description: "true 开启" } }, required: ["on"] } },
-  { name: "wifi_connect_strong", description: "经 Shizuku 连接 Wi-Fi 并验证状态。", parameters: { type: "object", properties: { ssid: { type: "string", description: "网络名" }, password: { type: "string", description: "密码" }, security: { type: "string", description: "open|wpa2|wpa3" } }, required: ["ssid", "security"] } },
-  { name: "wifi_saved_list", description: "经 Shizuku 列出已保存 Wi-Fi 网络。", parameters: { type: "object", properties: {}, required: [] } },
-  { name: "wifi_forget", description: "经 Shizuku 删除指定 SSID 的已保存网络。", parameters: { type: "object", properties: { ssid: { type: "string", description: "网络名" } }, required: ["ssid"] } },
-  { name: "bt_connect_direct", description: "经 Shizuku 尝试直接连接蓝牙设备，若设备命令不支持则降级 GATT。", parameters: { type: "object", properties: { mac: { type: "string", description: "设备 MAC" } }, required: ["mac"] } },
   { name: "termux_setup", description: "安装并校验 Termux 用户空间；失败时检查 Termux App 回退。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "shell_exec", description: "在 Termux 用户空间执行 shell 命令。", parameters: { type: "object", properties: { cmd: { type: "string", description: "命令" }, timeout_s: { type: "integer", description: "超时秒数，默认 60" } }, required: ["cmd"] } },
   { name: "pkg_install", description: "安装 Termux 包；白名单外须 confirm=true。", parameters: { type: "object", properties: { pkg: { type: "string", description: "包名" }, confirm: { type: "boolean", description: "确认白名单外安装" } }, required: ["pkg"] } },
@@ -188,10 +182,7 @@ const TOOL_DEFS = [
   { name: "nfc_write_uri", description: "覆盖 NFC 卡片的 NDEF 内容为 URI；调用前说明写入 URI 并提示贴卡。", parameters: { type: "object", properties: { uri: { type: "string", description: "写入 URI" } }, required: ["uri"] } },
   { name: "web_embed", description: "在对话中展示内嵌浏览器：支持 HTTPS 网站，以及本地 HTML 文件（file:///、content:// 或 /sdcard/... 绝对路径）。本地 HTML 会在原生内嵌 WebView 打开，可用 devtools_console / devtools_errors 查加载期报错、devtools_eval 验证 DOM（需 DevTools 调试开启；见网页开发工作流）。", parameters: { type: "object", properties: { uri: { type: "string", description: "HTTPS 网站地址，或本地 HTML 的 file:///、content:// URI / 绝对路径" } }, required: ["uri"] } },
   { name: "screen_capture", description: "经 scrcpy-server 取一帧屏幕并返回 JPEG 缩略图。", parameters: { type: "object", properties: {}, required: [] } },
-  { name: "screen_record_h264", description: "用 scrcpy H.264 录屏到 Movies，可设置时长、码率和最大边长。", parameters: { type: "object", properties: { duration_s: { type: "integer", description: "秒数，默认 30" }, bit_rate: { type: "integer", description: "码率 bps" }, max_size: { type: "integer", description: "最大边长" } }, required: [] } },
-  { name: "input_tap", description: "经 Shizuku 模拟屏幕点击。", parameters: { type: "object", properties: { x: { type: "integer", description: "横坐标" }, y: { type: "integer", description: "纵坐标" } }, required: ["x", "y"] } },
-  { name: "input_swipe", description: "经 Shizuku 模拟屏幕滑动。", parameters: { type: "object", properties: { x1: { type: "integer", description: "起点 X" }, y1: { type: "integer", description: "起点 Y" }, x2: { type: "integer", description: "终点 X" }, y2: { type: "integer", description: "终点 Y" }, ms: { type: "integer", description: "时长毫秒" } }, required: ["x1", "y1", "x2", "y2"] } },
-  { name: "input_text", description: "经 Shizuku 向当前焦点输入框输入文本。", parameters: { type: "object", properties: { s: { type: "string", description: "输入内容" } }, required: ["s"] } },
+  { name: "screen_record_h264", description: "用 MediaProjection 录制 H.264 MP4 到 Movies，可设置时长与码率。", parameters: { type: "object", properties: { duration_s: { type: "integer", description: "秒数，默认 30" }, bit_rate: { type: "integer", description: "码率 bps" } }, required: [] } },
   { name: "a11y_status", description: "查询无障碍服务状态：是否已启用/已连接、当前前台包名与窗口、可用能力；未启用时返回开启路径。只读。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "a11y_screen", description: "读取当前前台窗口的无障碍节点树（viewId/text/contentDescription/class/bounds/可点击性），默认最多 80 节点、单条文本 200 字符；密码框内容不输出。只读；使用前先把目标应用切到前台。", parameters: { type: "object", properties: { max_nodes: { type: "integer", description: "最多返回节点数，默认 80，范围 1-400" } }, required: [] } },
   { name: "a11y_click", description: "按 view_id/text/content_description 查找控件并点击（匹配到不可点击节点时自动向上找可点击父节点）；找不到时返回候选控件。", parameters: { type: "object", properties: { view_id: { type: "string", description: "资源 id，如 com.app:id/login，或只写 login / :id/login 后缀匹配" }, text: { type: "string", description: "控件文本" }, content_description: { type: "string", description: "控件内容描述" }, match: { type: "string", enum: ["contains", "exact"], description: "text/content_description 匹配方式，默认 contains" }, index: { type: "integer", description: "同一选择器匹配到多个控件时的序号，从 0 开始，默认 0" } }, required: [] } },
@@ -236,7 +227,7 @@ const TOOL_DEFS = [
   {
     name: "screen_record",
     description:
-      "开始录屏（Shizuku 提权，无系统录屏授权弹窗）。duration 秒，默认 30，最大 300；立即返回保存路径，可调用 screen_record_stop 提前停止。需要先激活 Shizuku。",
+      "开始录屏（MediaProjection，首次会弹出一次系统授权弹窗）。duration 秒，默认 30，最大 300；立即返回保存路径，可调用 screen_record_stop 提前停止。",
     parameters: {
       type: "object",
       properties: {
@@ -782,14 +773,14 @@ const NETWORK_GUIDE_EN = [
 ].join("\n");
 
 const A11Y_GUIDE = [
-  "无障碍控件自动化（无需 Shizuku）：先用 a11y_status 查看服务是否启用；未启用时引导用户到 系统设置 → 无障碍 → AndAgent 开启（Android 13+ 若提示受限设置，先在应用信息页允许受限设置），也可调用 open_settings(panel=accessibility) 跳转。",
+  "无障碍控件自动化：先用 a11y_status 查看服务是否启用；未启用时引导用户到 系统设置 → 无障碍 → AndAgent 开启（Android 13+ 若提示受限设置，先在应用信息页允许受限设置），也可调用 open_settings(panel=accessibility) 跳转。",
   "操作目标应用前先把它切到前台，再调用 a11y_screen 读取控件树（默认 80 节点，含 viewId/text/contentDescription/class/bounds）。a11y_screen 只读，密码框内容不会返回；页面太大时用 max_nodes 限制，不要反复全量读屏。",
   "优先用控件选择器而不是坐标：a11y_click / a11y_long_click 支持 view_id（完整名或 :id/xxx 后缀）、text、content_description，match=contains（默认）/exact；匹配到不可点击节点会自动向上找可点击父节点，找不到会列出候选控件。",
   "滚动用 a11y_scroll（direction=forward/backward，可用选择器指定列表容器）；输入文本用 a11y_text（先 focus 再 setText，省略选择器则写当前焦点输入框）；返回/桌面/最近任务用 a11y_action。点击、长按、输入、全局动作会走现有确认闸。",
 ].join("\n");
 
 const A11Y_GUIDE_EN = [
-  "Accessibility control automation (no Shizuku): check a11y_status first. When disabled, guide the user to Settings → Accessibility → AndAgent (on Android 13+, if restricted settings are mentioned, allow them from the app info page first), or call open_settings with panel=accessibility.",
+  "Accessibility control automation: check a11y_status first. When disabled, guide the user to Settings → Accessibility → AndAgent (on Android 13+, if restricted settings are mentioned, allow them from the app info page first), or call open_settings with panel=accessibility.",
   "Bring the target app to the foreground before a11y_screen, which returns the control tree (80 nodes by default with viewId/text/contentDescription/class/bounds). a11y_screen is read-only and never returns password fields; bound large screens with max_nodes and do not repeatedly dump the whole screen.",
   "Prefer selectors over coordinates: a11y_click / a11y_long_click accept view_id (full name or :id/xxx suffix), text and content_description, with match=contains (default)/exact. If the matched node is not clickable, the clickable ancestor is used; when nothing matches, candidates are listed.",
   "Use a11y_scroll for scrolling (direction=forward/backward, optional selector for the list container), a11y_text to type (focus then setText; focused editor when no selector), and a11y_action for back/home/recents. Click, long-click, text and global actions go through the normal confirmation gate.",

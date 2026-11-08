@@ -136,11 +136,6 @@ AndAgent is licensed under Apache-2.0 (see [LICENSE](LICENSE)). The entries belo
 - Source: https://github.com/Kotlin/kotlinx.coroutines
 - Copyright: Copyright JetBrains s.r.o. and contributors
 
-### Shizuku API and Provider 13.1.5
-- License: Apache-2.0
-- Source: https://github.com/RikkaApps/Shizuku-API
-- Copyright: Copyright RikkaApps contributors
-
 ### QuickJS wrapper Android and Java 3.2.0
 - License: Apache-2.0 (publisher POM)
 - Source: https://repo.maven.apache.org/maven2/wang/harlon/quickjs/wrapper-android/3.2.0/wrapper-android-3.2.0.pom

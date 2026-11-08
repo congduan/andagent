@@ -27,7 +27,7 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
 /**
- * R103 B：ADB 通道 scrcpy 工具层（重建，参照 tools/ScrcpyTools.kt 的 Shizuku 版结构）。
+ * R103 B：ADB 通道 scrcpy 工具层（协议结构见 AdbScrcpy.kt）。
  *
  * 协议助手 AdbScrcpy.kt（76B 视频头 / 12B 帧头 / server 推送 / app_process 拉起）
  * 完整保留、直接复用；本文件只做工具注册 + 会话编排 + 帧消费：
@@ -343,7 +343,7 @@ object AdbScrcpyToolSpec {
         }
     }
 
-    /** YUV_420_888 → NV21 → JPEG（ScrcpyTools.kt 私有实现的等价副本，不改 Shizuku 通道）。 */
+    /** YUV_420_888 → NV21 → JPEG。 */
     private fun imageJpeg(image: Image): ByteArray {
         val w = image.width
         val h = image.height

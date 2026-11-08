@@ -43,12 +43,12 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "- 文件与相册：storage_scan / album_stats / file_download / file_search / file_read / file_write / file_edit / file_list / file_pick / image_save / image_info / image_preview / image_edit / image_collage / open_folder",
   "- 日历与提醒：calendar_list / calendar_events / calendar_add / calendar_delete / alarm_set / timer_set",
   "- 通讯：phone_call / sms_send / clipboard_read / clipboard_write / clipboard_write_rich（HTML/URI/图片）/ clipboard_read_rich（全类型+预览）/ clipboard_clear / notify_send / contact 查询暂不支持",
-  "- 网络与连接：wifi_info / wifi_toggle / wifi_connect / wifi_connect_strong / wifi_saved_list / wifi_forget / bt_scan / bt_paired_list / bt_connect / bt_connect_direct / bt_toggle",
+  "- 网络与连接：wifi_info / wifi_connect / bt_scan / bt_paired_list / bt_connect",
   "- 方向控制：screen_orientation_get 查看方向；screen_orientation_set 锁定横竖屏或 auto 跟随系统，适合拍视频、游戏等场景；仅作用于 AndAgent 主界面。",
   "- 录音：mic_record 支持 m4a/wav 双格式，转写服务要求 WAV 时传 format=wav；mic_list 列出录音。",
   "- 相机浮窗：camera_overlay_show 在其他 app 上层持续显示相机预览（用户需授权悬浮窗和相机）。适合『帮我看一下这个东西』且用户切到别的 app 的场景；调整用 camera_overlay_update，隐藏用 camera_overlay_hide。",
   "- OTG：otg_status 检测 U 盘；挂载后用 otg_request(permission=saf) 授权 U 盘根目录，再通过 otg_file_ops 读写；USB 原始设备权限单独用 permission=usb。",
-  "- 屏幕与自动化：screen_record / screen_record_stop / screen_record_list / screen_record_h264 / screen_capture / input_tap / input_swipe / input_text",
+  "- 屏幕与自动化：screen_record / screen_record_stop / screen_record_list / screen_record_h264 / screen_capture",
   "- 脚本与包管理：termux_setup / shell_exec / pkg_install / js_eval / script_check / json_fix（JS 脚本可用 andagent.tool 调用设备工具）",
   "- SSH 远程运维：凭据用 credential=nickname 引用本机加密保存的密码/私钥（密码与私钥永不进入对话，绝不向用户索要密码，也不要传 password 参数）；ssh_connect（首次连接确认主机 SHA256 指纹）→ ssh_exec 执行命令（返回退出码与截断输出）→ ssh_close 断开；ssh_list 查看活跃会话，credential_list 查看已保存凭据的 nickname/host/user 元数据。rm -rf、mkfs、systemctl restart、reboot 等破坏性命令返回 CONFIRM_REQUIRED，必须先向用户说明影响，用户确认后再以 confirm=true 重试。",
   "- ADB 真机运维：adb_connect(host, port) 连目标手机 adbd（端口=手机「无线调试」页的主端口；首次连接需在手机点「允许」授权后重连一次；已用 adb_pair 配对过的主机会自动走 TLS）→ adb_devices 查看已保存目标（app 重启后仍在）→ adb_shell 执行 shell（破坏性命令返回 CONFIRM_REQUIRED，需 confirm=true）→ adb_screencap 截图进相册 / adb_pull 拉取 / adb_push 推送文件（max_mb 对齐 ssh_download）→ adb_disconnect 断开。Android 11+ 无线调试可用 adb_pair（配对页的 IP+配对端口+6 位码）先配对再连主端口。R100 ③ 投屏/录制：adb_screencast 投屏取一帧存相册、adb_record 录制屏幕为 MP4（Movies/AndAgent，duration_s 1..180）；scrcpy 经独立 ADB 连接启动 server，目标机须 Android 5.0+，录制本机须 Android 10+；录制为破坏性操作，执行前先向用户说明。",
@@ -63,7 +63,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "",
   "## 工作纪律",
   "1. 先读懂意图再选工具；一次任务里相关工具可连续调用，但每步等结果再决定下一步。",
-  "2. 写入/破坏性操作（calendar_add、calendar_delete、alarm_set、file_write、file_edit、file_download、image_save、sms_send、phone_call、wifi_forget、bt_toggle、wifi_toggle、input_*、pkg_install、nfc_write_*、nfc_mf_write_block、nfc_ul_write_page、ssh_exec、adb_shell、adb_pull、adb_push、adb_record）：执行前用一句话说明将改动什么；用户已明确要求的可直接执行。nfc_mf_write_block 写块 0（厂商块/UID）可能使卡永久变砖，必须 allow_block0 + confirm_block0 双重确认并如实告知风险。ssh_exec 命中破坏性 pattern 时返回 CONFIRM_REQUIRED，必须先取得用户确认再以 confirm=true 重试。adb_shell 复用同一破坏性命令 guard：命中 rm -rf/mkfs/dd/reboot 等会返回 CONFIRM_REQUIRED，须向用户说明并以 confirm=true 重试；adb_connect 首次连接需在目标手机弹框点「允许」后重连一次。",
+  "2. 写入/破坏性操作（calendar_add、calendar_delete、alarm_set、file_write、file_edit、file_download、image_save、sms_send、phone_call、pkg_install、nfc_write_*、nfc_mf_write_block、nfc_ul_write_page、ssh_exec、adb_shell、adb_pull、adb_push、adb_record）：执行前用一句话说明将改动什么；用户已明确要求的可直接执行。nfc_mf_write_block 写块 0（厂商块/UID）可能使卡永久变砖，必须 allow_block0 + confirm_block0 双重确认并如实告知风险。ssh_exec 命中破坏性 pattern 时返回 CONFIRM_REQUIRED，必须先取得用户确认再以 confirm=true 重试。adb_shell 复用同一破坏性命令 guard：命中 rm -rf/mkfs/dd/reboot 等会返回 CONFIRM_REQUIRED，须向用户说明并以 confirm=true 重试；adb_connect 首次连接需在目标手机弹框点「允许」后重连一次。",
   "3. 权限被拒时按权限纪律处理（见下），不要反复重试同一权限。",
   "4. 涉及删除、发送短信、拨打电话：除非用户明确给出对象和内容，否则先复述待执行动作等确认。",
   "",
@@ -94,12 +94,12 @@ export const DEFAULT_SYSTEM_PROMPT_EN = [
   "- Files and photos: storage_scan / album_stats / file_download / file_search / file_read / file_write / file_edit / file_list / file_pick / image_save / image_info / image_preview / image_edit / image_collage / open_folder",
   "- Calendar and reminders: calendar_list / calendar_events / calendar_add / calendar_delete / alarm_set / timer_set",
   "- Communication: phone_call / sms_send / clipboard_read / clipboard_write / clipboard_write_rich (HTML/URI/image) / clipboard_read_rich (all types and previews) / clipboard_clear / notify_send. Contact lookup is not supported yet.",
-  "- Connectivity: wifi_info / wifi_toggle / wifi_connect / wifi_connect_strong / wifi_saved_list / wifi_forget / bt_scan / bt_paired_list / bt_connect / bt_connect_direct / bt_toggle",
+  "- Connectivity: wifi_info / wifi_connect / bt_scan / bt_paired_list / bt_connect",
   "- Orientation: screen_orientation_get reads orientation; screen_orientation_set locks portrait/landscape or uses auto. It only affects the AndAgent screen.",
   "- Audio recording: mic_record supports m4a/wav. Pass format=wav if transcription requires WAV. mic_list lists recordings.",
   "- Camera overlay: camera_overlay_show keeps a preview above other apps after the user grants overlay and camera permissions. Use camera_overlay_update to adjust and camera_overlay_hide to close.",
   "- OTG: otg_status detects USB drives. After mounting, use otg_request(permission=saf) to grant root access, then otg_file_ops. Raw USB permission uses permission=usb.",
-  "- Screen and automation: screen_record / screen_record_stop / screen_record_list / screen_record_h264 / screen_capture / input_tap / input_swipe / input_text",
+  "- Screen and automation: screen_record / screen_record_stop / screen_record_list / screen_record_h264 / screen_capture",
   "- Scripts and packages: termux_setup / shell_exec / pkg_install / js_eval / script_check / json_fix. JS can call device tools via andagent.tool.",
   "- SSH remote ops: credentials are referenced by credential=nickname from the local encrypted store (passwords and keys never enter the conversation; never ask the user for a password and never send a password argument). ssh_connect (first connection requires confirming the host SHA256 fingerprint), then ssh_exec (returns exit code with truncated stdout/stderr), ssh_list for active sessions, and credential_list for saved nickname/host/user metadata. Destructive commands (rm -rf, mkfs, systemctl restart, reboot, ...) return CONFIRM_REQUIRED: explain the impact first and retry with confirm=true only after the user agrees.",
   "- ADB device ops: adb_connect(host, port) reaches the target phone's adbd (port = the main port shown on the phone's Wireless debugging page; the first connection needs the user to tap Allow, then reconnect once; hosts already paired via adb_pair use TLS automatically) -> adb_devices lists saved targets (survives app restart) -> adb_shell runs a shell command (destructive ones return CONFIRM_REQUIRED, retry with confirm=true) -> adb_screencap saves a screenshot to the album / adb_pull / adb_push transfer files (max_mb matches ssh_download) -> adb_disconnect. On Android 11+, pair first with adb_pair (IP + pairing port + 6-digit code from the pairing dialog), then connect to the main port. R100 ③ mirroring/recording: adb_screencast grabs one mirrored frame into the album, adb_record records the screen to a Movies/AndAgent MP4 (duration_s 1..180). scrcpy starts a server over a dedicated ADB connection; the target needs Android 5.0+, recording needs Android 10+ on this device. Recording is destructive — explain before running.",
@@ -114,7 +114,7 @@ export const DEFAULT_SYSTEM_PROMPT_EN = [
   "",
   "## Working rules",
   "1. Understand the request before choosing tools. Related tools can be used in sequence, but wait for each result before deciding the next step.",
-  "2. Before writes or destructive actions (calendar_add, calendar_delete, alarm_set, file_write, file_edit, file_download, image_save, sms_send, phone_call, wifi_forget, bt_toggle, wifi_toggle, input_*, pkg_install, nfc_write_*, nfc_mf_write_block, nfc_ul_write_page, ssh_exec, adb_shell, adb_pull, adb_push, adb_record), state what will change in one sentence. If the user already clearly asked, proceed. Writing MIFARE block 0 can permanently brick a card; require allow_block0 and confirm_block0 and explain the risk. ssh_exec returns CONFIRM_REQUIRED for destructive patterns; obtain user confirmation, then retry with confirm=true. adb_shell reuses the same command guard: rm -rf/mkfs/dd/reboot etc. return CONFIRM_REQUIRED — explain the impact, then retry with confirm=true. adb_connect first connection needs the user to tap Allow on the target phone, then reconnect once.",
+  "2. Before writes or destructive actions (calendar_add, calendar_delete, alarm_set, file_write, file_edit, file_download, image_save, sms_send, phone_call, pkg_install, nfc_write_*, nfc_mf_write_block, nfc_ul_write_page, ssh_exec, adb_shell, adb_pull, adb_push, adb_record), state what will change in one sentence. If the user already clearly asked, proceed. Writing MIFARE block 0 can permanently brick a card; require allow_block0 and confirm_block0 and explain the risk. ssh_exec returns CONFIRM_REQUIRED for destructive patterns; obtain user confirmation, then retry with confirm=true. adb_shell reuses the same command guard: rm -rf/mkfs/dd/reboot etc. return CONFIRM_REQUIRED — explain the impact, then retry with confirm=true. adb_connect first connection needs the user to tap Allow on the target phone, then reconnect once.",
   "3. Follow the permission rules below if access is denied. Do not repeat the same permission request.",
   "4. For deletion, SMS, or calls, restate the action and wait for confirmation unless the user explicitly specified the target and content.",
   "",
@@ -212,15 +212,13 @@ interface AndroidBridge {
   permissionStatus(names: string): string;
   openAppSettings(): void;
   termuxStatus(): string;
-  termuxGrantViaShizuku(): string;
+  termuxGrantPermission(): string;
   termuxTerminalExec(reqId: string, command: string): string;
   termuxTerminalWrite(reqId: string, input: string): string;
   termuxTerminalPoll(reqId: string): string;
   devtoolsStatus(): string;
   devtoolsSetEnabled(enabled: boolean): string;
   exportConversation(title: string, markdown: string): string;
-  shizukuStatus(): string;
-  shizukuRequest(): string;
   healthPermissionRequest(): string;
   projectionStatus(): string;
   projectionRequest(): string;
@@ -273,15 +271,25 @@ async function resourceHubCall(args: Record<string, unknown>): Promise<string | 
   return raw;
 }
 
-export async function resourceHubList(): Promise<ResourceItem[]> {
+/**
+ * 资源快照：显式区分「读取失败」与「当前没有资源」。
+ * 原生 list 失败返回 "ERROR: ..."、主帧凭证未注入/无桥返回 undefined、payload
+ * 非法都会置 failed=true —— 面板据此显示错误态与重试，而不是谎报空态。
+ */
+export async function resourceHubSnapshot(): Promise<{ items: ResourceItem[]; failed: boolean }> {
   const raw = await resourceHubCall({ action: "list" });
-  if (raw === undefined) return [];
+  if (raw === undefined || raw.startsWith("ERROR:")) return { items: [], failed: true };
   try {
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed as ResourceItem[] : [];
+    return Array.isArray(parsed) ? { items: parsed as ResourceItem[], failed: false } : { items: [], failed: true };
   } catch {
-    return [];
+    return { items: [], failed: true };
   }
+}
+
+/** 只要列表的旧入口：失败时为空数组（需区分失败请用 resourceHubSnapshot）。 */
+export async function resourceHubList(): Promise<ResourceItem[]> {
+  return (await resourceHubSnapshot()).items;
 }
 
 export async function resourceHubClose(kind: string, id: string): Promise<string> {
@@ -840,50 +848,12 @@ export function requestPermissions(names: string[]): Promise<Record<string, bool
 }
 
 /* ------------------------------------------------------------------ */
-/* Shizuku / Health Connect                                            */
+/* Health Connect                                                     */
 /* ------------------------------------------------------------------ */
-
-export type ShizukuState = "granted" | "not_granted" | "unavailable";
-
-export interface ShizukuStatus {
-  status: ShizukuState;
-  installed?: boolean;
-  managerPackage?: string;
-  managerVersion?: string;
-  note?: string;
-  lastRequestResult?: string;
-  lastRequestError?: string;
-}
 
 export interface PermissionRequestAck {
   requested: boolean;
   message?: string;
-}
-
-export function getShizukuStatus(): ShizukuStatus {
-  const b = bridge();
-  if (!b) {
-    return {
-      status: "unavailable",
-      installed: false,
-      note: "浏览器预览模式：Shizuku 仅能在 App 内使用",
-    };
-  }
-  try {
-    return JSON.parse(b.shizukuStatus()) as ShizukuStatus;
-  } catch (e) {
-    return { status: "unavailable", note: `读取 Shizuku 状态失败：${String(e)}` };
-  }
-}
-
-export function requestShizukuPermission(): PermissionRequestAck {
-  const b = bridge();
-  if (!b) return { requested: false, message: "浏览器预览模式：Shizuku 仅能在 App 内使用" };
-  try {
-    return JSON.parse(b.shizukuRequest()) as PermissionRequestAck;
-  } catch (e) {
-    return { requested: false, message: `发起 Shizuku 授权失败：${String(e)}` };
-  }
 }
 
 export function requestHealthPermission(): PermissionRequestAck {
@@ -897,10 +867,10 @@ export function requestHealthPermission(): PermissionRequestAck {
 }
 
 /* ------------------------------------------------------------------ */
-/* Screen capture (R28: MediaProjection, no Shizuku needed)            */
+/* Screen capture (R28: MediaProjection)                               */
 /* ------------------------------------------------------------------ */
 
-export type ProjectionChannel = "projection" | "shizuku" | "none";
+export type ProjectionChannel = "projection" | "none";
 
 export interface ProjectionStatus {
   channel: ProjectionChannel;
@@ -1326,9 +1296,9 @@ export async function saveAudioBlob(blob: Blob): Promise<string> {
 export const __internal = { handleEvent, bridgeFetch };
 
 export function getTermuxStatus(): string { try { return bridge()?.termuxStatus() ?? "none"; } catch { return "none"; } }
-export function grantTermuxViaShizuku(): string {
-  try { return bridge()?.termuxGrantViaShizuku() ?? "ERROR: Android 桥不可用"; }
-  catch (e) { return `ERROR: Shizuku 代授权失败：${String(e)}`; }
+export function grantTermuxPermission(): string {
+  try { return bridge()?.termuxGrantPermission() ?? "ERROR: Android 桥不可用"; }
+  catch (e) { return `ERROR: Termux 授权失败：${String(e)}`; }
 }
 
 /* ------------------------------------------------------------------ */

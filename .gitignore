@@ -19,3 +19,6 @@ web/public/pi-bundle.js
 /app/src/main/assets/dbgui/index.html
 /app/src/main/assets/dbgui/assets/
 /app/src/main/assets/dbgui/sql-wasm.wasm
+
+# local vite build-check output — build artifact, never committed.
+.vite-check/

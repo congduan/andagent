@@ -444,7 +444,8 @@ class SshTool(
         val ref = args.strArg("session_id") ?: return "ERROR: 缺少 session_id"
         val info = SshSessionPool.registry.resolve(ref)
             ?: return "ERROR: 会话不存在：$ref"
-        SshSessionPool.remove(info.id)?.session?.disconnect()
+        // close() 先摘登记再断开：不会因为在该会话上跑着大文件传输而阻塞其它工具。
+        SshSessionPool.close(info.id)
         return "已断开 SSH 会话 ${info.id}（${info.user}@${info.host}:${info.port}）"
     }
 
@@ -619,28 +620,54 @@ object SshSessionPool {
 
     @Synchronized fun put(id: String, session: Live, context: Context) {
         appContext = context.applicationContext
-        if (presence.put(id)) {
-            try { SshKeepAliveService.ensureStarted(context.applicationContext) }
-            catch (e: Exception) { presence.remove(id); throw e }
+        val first = presence.put(id)
+        try {
+            // 幂等：服务已在跑时只是再走一次 onStartCommand（锁已持有则不再 acquire）。
+            // 旧实现只在“从空到非空”调一次，服务一旦被系统停掉就再也拉不起来，保活静默失效。
+            SshKeepAliveService.ensureStarted(context.applicationContext)
+        } catch (e: Exception) {
+            if (first) { presence.remove(id); throw e }
+            // 已有其它活跃会话：保活重启失败不该连带拒掉这条新连接。
         }
         live[id] = session
     }
 
+    /**
+     * 只摘除登记（registry / live / presence），不做断链与通道清理。
+     * 必须与 [close] 分离：清理要拿会话锁，而 SFTP 传输会长时间持有它，
+     * 放在池锁内会堵住所有其它 ssh_* 调用。
+     */
     @Synchronized fun remove(id: String): Live? {
         registry.remove(id)
         val removed = live.remove(id)
-        removed?.let {
-            synchronized(it.session) {
-                runCatching { it.sftpChannel?.close() }
-                it.sftpChannel = null
-                SshTransferTool.forgetHome(it.session)
-            }
-        }
         if (presence.remove(id)) appContext?.let(SshKeepAliveService::stop)
         return removed
     }
 
-    @Synchronized fun removeByRef(ref: String): Live? = registry.resolve(ref)?.let { remove(it.id) }
+    /**
+     * 关闭会话：先摘登记，再在池锁外 [teardown]。
+     * 旧实现把 `synchronized(session)` 套在 `remove()`（池锁）里，而一次大文件
+     * SFTP 传输会持续持锁数分钟——「断开」于是要排队等传输跑完，且期间
+     * ssh_exec / ssh_list / 资源中心快照全部堵在池锁上（资源中心是同步 JS 桥
+     * 调用，会直接卡死页面）。
+     */
+    fun close(id: String): Live? = remove(id)?.also(::teardown)
+
+    /** 关闭会话，ref 支持 session_id 与 nickname（与 ssh_exec / ssh_close 语义一致）。 */
+    fun closeByRef(ref: String): Live? = registry.resolve(ref)?.let { close(it.id) }
+
+    /** 断开连接并清理随会话存活的通道；调用方不得持有池锁。 */
+    private fun teardown(entry: Live) {
+        // 先 disconnect：立刻打断在途 ssh_exec / SFTP 传输，让它们尽快从会话锁里退出。
+        runCatching { entry.session.disconnect() }
+        synchronized(entry.session) {
+            runCatching { entry.sftpChannel?.close() }
+            entry.sftpChannel = null
+            SshTransferTool.forgetHome(entry.session)
+        }
+    }
+
+    fun removeByRef(ref: String): Live? = closeByRef(ref)
 
     @Synchronized fun resolve(ref: String): Live? {
         val info = registry.resolve(ref) ?: return null
@@ -673,11 +700,11 @@ object SshSessionPool {
         pending.remove(keyId)
     }
 
-    /** 剔除 sshj 已判定断开的会话，返回剩余数量。 */
-    @Synchronized fun pruneDisconnected(): Int {
-        val dead = live.filterValues { !it.session.isConnected }.keys.toList()
-        dead.forEach { id -> remove(id)?.session?.disconnect() }
-        return registry.size()
+    /** 剔除 sshj 已判定断开的会话，返回剩余数量。锁只用于取快照，断开在锁外做。 */
+    fun pruneDisconnected(): Int {
+        val dead = synchronized(this) { live.filterValues { !it.session.isConnected }.keys.toList() }
+        dead.forEach { close(it) }
+        return size()
     }
 }
 

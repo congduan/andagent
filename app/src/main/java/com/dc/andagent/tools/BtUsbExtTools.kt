@@ -504,7 +504,7 @@ class BtUsbExtTool(
 
     private fun requireEnabled(): String? {
         val adapter = btAdapter ?: return "ERROR: 蓝牙不可用（无蓝牙硬件）"
-        if (!adapter.isEnabled) return "ERROR: 蓝牙未开启，请先开启蓝牙（bt_toggle 或系统开关）"
+        if (!adapter.isEnabled) return "ERROR: 蓝牙未开启，请先在系统设置中开启蓝牙"
         return null
     }
 

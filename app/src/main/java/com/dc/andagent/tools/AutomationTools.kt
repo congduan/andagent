@@ -15,7 +15,6 @@ import android.speech.tts.TextToSpeech
 import androidx.core.app.NotificationCompat
 import com.dc.andagent.R
 import com.dc.andagent.bridge.PermissionBroker
-import com.dc.andagent.shell.ShizukuShell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -38,15 +37,14 @@ val AUTOMATION_TOOLS = listOf(
 class AutomationTool(
     private val context: Context,
     private val permissions: PermissionBroker,
-    private val shizuku: ShizukuShell,
     override val name: String,
 ) : Tool {
     override val description: String = when (name) {
         "alarm_wait" -> "读取系统下一个闹钟的时间与剩余毫秒数，便于安排后续动作。"
         "countdown" -> "进程内倒计时：到点发本地通知。action=start|list|cancel。"
         "calendar_reminder_check" -> "查询未来 N 天带提醒的日历事件（事件标题、时间、提前分钟数）。"
-        "hotspot" -> "查询便携热点状态或打开系统热点设置页（开关需系统权限，经 Shizuku 尝试）。"
-        "airplane" -> "读取或切换飞行模式（切换需要 Shizuku）。"
+        "hotspot" -> "查询便携热点状态或打开系统热点设置页（普通应用无法直接开关热点，需在系统设置中操作）。"
+        "airplane" -> "读取飞行模式状态；切换会跳转系统设置页由用户操作。"
         "tts" -> "用系统 TTS 朗读一段文本。"
         "screenshot_quick" -> "快速截取当前屏幕（等同 screen_capture，返回缩略图与保存路径）。"
         else -> "自动化工具"
@@ -63,7 +61,7 @@ class AutomationTool(
             "days" to intParam("查询未来天数，默认 3，上限 30"),
             "limit" to intParam("返回条数，默认 20"),
         )
-        "hotspot" -> schemaOf("action" to strParam("status|open_settings|toggle"), "on" to boolParam("toggle 时 true 开启"))
+        "hotspot" -> schemaOf("action" to strParam("status|open_settings|toggle，默认 status"))
         "airplane" -> schemaOf("action" to strParam("status|on|off，默认 status"))
         "tts" -> schemaOf(
             "text" to strParam("要朗读的文本"),
@@ -85,7 +83,7 @@ class AutomationTool(
                 "hotspot" -> hotspot(args)
                 "airplane" -> airplane(args)
                 "tts" -> tts(args)
-                "screenshot_quick" -> ScreenCaptureTool(context, shizuku).execute(args)
+                "screenshot_quick" -> ScreenCaptureTool(context).execute(args)
                 else -> "ERROR: 未知自动化工具 $name"
             }
         }.getOrElse { "ERROR: $name 执行失败：${it.message ?: it.javaClass.simpleName}" }
@@ -196,21 +194,21 @@ class AutomationTool(
 
     private suspend fun hotspot(args: JsonObject): String {
         val action = args.strArg("action") ?: "status"
-        if (action == "open_settings" || action == "toggle") {
-            if (!shizuku.isGranted()) return "ERROR: 热点开关需要 Shizuku；可用 open_settings 打开热点设置页"
-            val cmd = if (action == "toggle") {
-                val on = args.boolArg("on") ?: return "ERROR: toggle 需要 on"
-                "cmd wifi start-softap ${if (on) "" else "--stop"}"
-            } else "am start -a android.settings.TETHER_SETTINGS"
-            val r = shizuku.run(cmd)
-            return if (r.ok) "WRITTEN: 热点命令已提交\n${r.stdout.take(400)}" else "ERROR: 热点命令失败：${r.asToolResult()}"
+        if (action !in setOf("status", "open_settings", "toggle")) {
+            return "ERROR: action 仅支持 status|open_settings|toggle"
         }
-        if (action != "status") return "ERROR: action 仅支持 status|open_settings|toggle"
-        if (!shizuku.isGranted()) return "ERROR: 查询热点状态需要 Shizuku"
-        val dump = shizuku.run("dumpsys wifi")
-        val lines = dump.stdout.lines().filter { Regex("softap|tether|ap ?state", RegexOption.IGNORE_CASE).containsMatchIn(it) }.take(12)
-        return if (dump.ok) buildJsonObject { put("supported", true); putJsonArray("statusLines") { lines.forEach { add(it.trim()) } } }.toString()
-        else "ERROR: 无法读取热点状态：${dump.asToolResult()}"
+        if (action != "status") {
+            return runCatching {
+                context.startActivity(
+                    Intent("android.settings.TETHER_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                "OPENED: 已打开系统热点设置页，请手动开关热点"
+            }.getOrElse { "ERROR: 无法打开热点设置页：${it.message}" }
+        }
+        return buildJsonObject {
+            put("supported", false)
+            put("hint", "普通应用无法读取热点状态；可调用 open_settings 打开系统热点设置页")
+        }.toString()
     }
 
     private suspend fun airplane(args: JsonObject): String {
@@ -218,13 +216,12 @@ class AutomationTool(
         val current = runCatching { Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) }.getOrDefault(0)
         if (action == "status") return buildJsonObject { put("airplaneModeOn", current == 1); put("raw", current) }.toString()
         if (action !in setOf("on", "off")) return "ERROR: action 仅支持 status|on|off"
-        if (!shizuku.isGranted()) return "ERROR: 切换飞行模式需要 Shizuku 授权"
-        val on = action == "on"
-        val flag = if (on) 1 else 0
-        val r1 = shizuku.run("settings put global airplane_mode_on $flag")
-        val r2 = shizuku.run("am broadcast -a android.intent.action.AIRPLANE_MODE --ez state $on")
-        return if (r1.ok) "TOGGLED: 飞行模式已${if (on) "开启" else "关闭"}（广播 exit=${r2.exitCode}）"
-        else "ERROR: 切换失败：${r1.asToolResult()}"
+        return runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            "OPENED: 已打开系统飞行模式设置页，请手动切换（应用无系统级开关权限）"
+        }.getOrElse { "ERROR: 无法打开飞行模式设置页：${it.message}" }
     }
 
     private suspend fun tts(args: JsonObject): String {

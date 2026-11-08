@@ -17,7 +17,6 @@ import android.provider.CallLog
 import android.provider.ContactsContract
 import androidx.core.content.FileProvider
 import com.dc.andagent.bridge.PermissionBroker
-import com.dc.andagent.shell.ShizukuShell
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
@@ -54,7 +53,7 @@ import javax.crypto.spec.SecretKeySpec
  * GMS, no Play Services model download, no accessibility service, no root.
  *
  *  - contacts_add / call_log_read : ContactsContract + CallLog (runtime perms)
- *  - app_uninstall / apk_extract  : PackageManager + Shizuku shell / FileProvider
+ *  - app_uninstall / apk_extract  : PackageManager + system installer / FileProvider
  *  - qr_generate / qr_scan        : vendored ZXing core (pure Java, zero perms)
  *  - sensor_record                : SensorManager continuous sampling -> CSV
  *  - file_encrypt                 : AES-256-GCM + PBKDF2 (javax.crypto, zero perms)
@@ -74,7 +73,7 @@ object AppGuard {
         "com.android.systemui", "com.android.settings", "com.android.phone",
         "com.android.vending", "com.google.android.gms",
         "com.google.android.gsf", "com.google.android.permissioncontroller",
-        "moe.shizuku.privileged.api", "com.termux",
+        "com.termux",
         "com.android.launcher3", "com.android.inputmethod.latin",
     )
     private val PROTECTED_PREFIXES = listOf("android.", "com.android.server.", "com.android.providers.")
@@ -196,13 +195,12 @@ object FileCrypto {
 class R35Tool(
     private val context: Context,
     private val permissions: PermissionBroker,
-    private val shizuku: ShizukuShell,
     override val name: String,
 ) : Tool {
     override val description: String = when (name) {
         "contacts_add" -> "新建联系人（姓名必填，可带电话/邮箱/备注）。优先用 WRITE_CONTACTS 静默写入；未授权时降级为打开系统联系人编辑页并预填信息，由用户手动保存。"
         "call_log_read" -> "只读查询通话记录：按号码/类型/天数过滤，返回号码、类型、时间、时长；需 READ_CALL_LOG，隐私敏感，仅查询不修改。"
-        "app_uninstall" -> "经 Shizuku 卸载/禁用/启用已安装应用（pm uninstall / pm disable-user / pm enable）。破坏性：必须 confirm=true；系统组件与 AndAgent 自身在保护名单内。"
+        "app_uninstall" -> "卸载已安装应用：打开系统卸载确认页由用户确认（普通应用无静默卸载权限）。破坏性：必须 confirm=true；系统组件与 AndAgent 自身在保护名单内。"
         "apk_extract" -> "提取已安装应用的 APK 到 Downloads/AndAgent，可选 share=true 打开系统分享面板。App Bundle 拆包应用仅能导出 base.apk。"
         "qr_generate" -> "把文本生成二维码 PNG（纯离线 ZXing，零权限），保存到 Pictures/AndAgent 并在工具卡片中展示缩略图。"
         "qr_scan" -> "识别图片中的二维码/条码（纯离线 ZXing），source 支持本地路径、content:// URI、相册 id 或 base64。"
@@ -438,20 +436,20 @@ class R35Tool(
             return "ERROR: $pkg 在保护名单内（系统组件 / AndAgent 自身 / 工具链），拒绝执行 $action"
         runCatching { context.packageManager.getApplicationInfo(pkg, 0) }
             .getOrElse { return "ERROR: 未找到已安装应用：$pkg" }
-        if (!shizuku.isGranted())
-            return "ERROR: ${ShizukuShell.SHIZUKU_REQUIRED}（应用卸载/禁用需要 Shizuku）"
-        val cmd = when (action) {
-            "uninstall" -> "pm uninstall $pkg"
-            "disable" -> "pm disable-user $pkg"
-            else -> "pm enable $pkg"
+        if (action != "uninstall") {
+            return "ERROR: 普通应用无法 disable/enable 其他应用；请在系统设置 → 应用 中操作"
         }
-        val r = shizuku.run(cmd, 30_000)
-        if (!r.ok) return "ERROR: $action $pkg 失败：${r.stderr.ifBlank { r.stdout.ifBlank { "exit=${r.exitCode}" } }}"
-        return buildJsonObject {
-            put("action", action)
-            put("package", pkg)
-            put("output", r.stdout.trim())
-        }.toString()
+        return runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_DELETE, android.net.Uri.parse("package:$pkg"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            buildJsonObject {
+                put("action", action)
+                put("package", pkg)
+                put("message", "已打开系统卸载确认页，请手动确认")
+            }.toString()
+        }.getOrElse { "ERROR: 无法打开卸载确认页：${it.message}" }
     }
 
     /* --------------------------- apk_extract ----------------------------- */

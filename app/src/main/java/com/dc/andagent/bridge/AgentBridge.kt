@@ -72,11 +72,9 @@ class AgentBridge(
     private val permissions: PermissionBroker,
     private val appContext: Context? = null,
     private val appVersion: String = "",
-    private val shizukuStatus: () -> String = { "{\"status\":\"unavailable\"}" },
-    private val shizukuRequest: () -> String = { "{\"requested\":false}" },
     private val healthPermissionRequest: () -> String = { "{\"requested\":false}" },
     private val termuxStatus: () -> String = { "none" },
-    private val termuxGrant: suspend () -> String = { "ERROR: Shizuku 不可用" },
+    private val termuxGrant: suspend () -> String = { "ERROR: 未获 Termux RUN_COMMAND 权限" },
     // R27: 对话流内嵌终端——与 shell_exec 共享同一条长驻 bash 会话。
     private val termuxTerminalExec: (String) -> String = { "ERROR: 终端通道不可用" },
     private val termuxTerminalWrite: (String) -> String = { "ERROR: 终端通道不可用" },
@@ -238,16 +236,17 @@ class AgentBridge(
         ResourceHub.snapshot(groups.map { group -> group.map { item ->
             item.copy(aliveSince = item.aliveSince ?: resourceObservedAt.computeIfAbsent("${item.kind}:${item.id}") { System.currentTimeMillis() })
         } })
-    }.getOrDefault("[]")
+    }.getOrElse {
+        // 失败必须与“没有资源”区分：此前返回 "[]"，面板会把读取失败显示成空态。
+        "ERROR: 资源中心读取失败：${it.message ?: it.javaClass.simpleName}"
+    }
 
     private fun hubClose(kind: String, id: String): String = runCatching {
         val context = requireNotNull(appContext)
         ResourceHub.close(kind, id, mapOf(
             "ssh" to { ref ->
-                val live = SshSessionPool.remove(ref)
-                if (live == null) "ERROR: SSH 会话不存在" else {
-                    live.session.disconnect(); "OK"
-                }
+                // closeByRef：先摘登记再断开，ref 同时支持 session_id 与 nickname。
+                if (SshSessionPool.closeByRef(ref) == null) "ERROR: SSH 会话不存在" else "OK"
             },
             "adb" to { host -> AdbSessionHub.disconnect(host) },
             "saf" to { uri ->
@@ -577,24 +576,6 @@ class AgentBridge(
 
     /* ------------------------- privilege / health ----------------------- */
 
-    /** {"status":"granted"|"not_granted"|"unavailable", ...} for Settings.tsx. */
-    @JavascriptInterface
-    fun shizukuStatus(): String = runCatching { shizukuStatus() }.getOrElse {
-        buildJsonObject {
-            put("status", "unavailable")
-            put("note", it.message ?: "Shizuku 状态读取失败")
-        }.toString()
-    }
-
-    /** Main-thread posted by MainActivity; returns an immediate ack JSON. */
-    @JavascriptInterface
-    fun shizukuRequest(): String = runCatching { shizukuRequest() }.getOrElse {
-        buildJsonObject {
-            put("requested", false)
-            put("message", it.message ?: "Shizuku 授权请求失败")
-        }.toString()
-    }
-
     /** Activity Result API is only touched on the main thread in MainActivity. */
     @JavascriptInterface
     fun healthPermissionRequest(): String = runCatching { healthPermissionRequest() }.getOrElse {
@@ -646,7 +627,7 @@ class AgentBridge(
     fun devtoolsSetEnabled(enabled: Boolean): String = runCatching { devtoolsSetDebugging(enabled) }
         .getOrElse { "ERROR: 切换 DevTools 失败：${it.message ?: it.javaClass.simpleName}" }
 
-    /** R28: 屏幕捕获通道状态 {"channel":"projection"|"shizuku"|"none","ready":bool,"recording":bool}。 */
+    /** R28: 屏幕捕获通道状态 {"channel":"projection"|"none","ready":bool,"recording":bool}。 */
     @JavascriptInterface
     fun projectionStatus(): String = runCatching { projectionStatusJson() }
         .getOrElse { "{\"channel\":\"none\",\"ready\":false,\"error\":\"${it.message ?: it.javaClass.simpleName}\"}" }
@@ -665,7 +646,7 @@ class AgentBridge(
         .getOrElse { "ERROR: 停止屏幕捕获失败：${it.message ?: it.javaClass.simpleName}" }
 
     @JavascriptInterface
-    fun termuxGrantViaShizuku(): String = runCatching { runBlocking { termuxGrant() } }
+    fun termuxGrantPermission(): String = runCatching { runBlocking { termuxGrant() } }
         .getOrElse { "ERROR: Termux 授权失败：${it.message ?: it.javaClass.simpleName}" }
 
     /** R27: 终端执行一行命令（写入共享 bash stdin，带 tty 弱 marker）。同步返回状态。 */

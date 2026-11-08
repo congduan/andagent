@@ -30,7 +30,7 @@ An on-device AI assistant for Android. It calls device capabilities directly fro
 User ⇄ WebView (React + assistant-ui + pi-ai)
        │  AndroidBridge  (JS ⇄ Kotlin)
        ├─ llmFetchStart/llmCancel → OkHttp → OpenAI-compatible endpoint (SSE stream back)
-       └─ toolExec(name, argsJson) → Kotlin tool registry → system APIs / Shizuku / Termux / QuickJS
+       └─ toolExec(name, argsJson) → Kotlin tool registry → system APIs / ADB / Termux / QuickJS
 ```
 
 The WebView loads `https://appassets.androidplatform.net/assets/web/index.html` through `WebViewAssetLoader`: `/assets/**` maps to APK assets and `/local/**` is a read-only mapping to the app's external files directory (media playback, with Range/206 support and path-traversal protection). All JS/CSS/wasm is local — no CDN — but LLM requests and map cards still require network access.
@@ -47,7 +47,7 @@ The WebView loads `https://appassets.androidplatform.net/assets/web/index.html` 
 | Calls / location / recording / contacts / SMS | 8 | `phone_call`, `sms_send/read`, `location_get`, `mic_record`, `contacts_search`, `provider_query` |
 | Bluetooth / Wi-Fi | 11 | `bt_scan/connect/toggle`, `wifi_connect/saved_list/forget/toggle`, `wifi_info` |
 | Sensors / health | 4 | `sensor_list/read`, `steps_today/history` |
-| Screen / input (Shizuku) | 9 | `screen_capture`, `screen_record*`, `screenshot_quick`, `input_tap/swipe/text` |
+| Screen capture / recording (MediaProjection) | 6 | `screen_capture`, `screen_record`, `screen_record_stop`, `screen_record_list`, `screen_record_h264`, `screenshot_quick` |
 | Termux / shell | 4 | `termux_setup`, `shell_exec`, `pkg_install`, `apt_status` |
 | QuickJS scripting | 8 | `js_eval`, `script_save/run/list/...`, `json_fix` |
 | SQLite | 8 | `db_create/exec/query/...`, `db_gui` |
@@ -111,11 +111,11 @@ To work on the frontend separately:
 ```bash
 cd web
 npm ci
-npm run dev       # Vite dev server, UI preview only
+npm run dev       # Vite dev server with a fake AndroidBridge
 npm run build     # esbuild bundles pi-ai + tsc --noEmit + Vite + dbgui + copy sql-wasm.wasm
 ```
 
-Browser preview mode has no native bridge: tool execution and the LLM proxy are unavailable, and settings fall back to `localStorage`. Debuggable APKs can be inspected with `chrome://inspect`.
+`npm run dev` loads `web/src/devMockBridge.ts` (dev only; stripped from production builds) so the chat flow works on a PC: tools return placeholder JSON that you can override in `localStorage["andagent.dev.mock.tools"]`, and LLM requests go straight from the browser to the configured endpoint (CORS must allow the dev origin). Native-only surfaces (secure KV, widgets, Termux, screen capture, SSH credentials) report "App only" instead of pretending to work. Set `VITE_ANDAGENT_MOCK_BRIDGE=0` to preview without a bridge — then tool execution and the LLM proxy are unavailable and settings fall back to `localStorage`. Debuggable APKs can be inspected with `chrome://inspect`.
 
 ### First-run configuration
 
@@ -181,10 +181,11 @@ The manifest declares many permissions, but **most are requested on demand via `
 | Capability | Prerequisite |
 |---|---|
 | Regular tools | The corresponding runtime permission (calendar, location, microphone, notifications, media, phone/SMS, etc.) |
-| Screenshots / recording, input injection, advanced Wi-Fi/Bluetooth control | Install and authorize [Shizuku](https://github.com/RikkaApps/Shizuku) (`moe.shizuku.privileged.api`); some operations need `WRITE_SECURE_SETTINGS` |
+| Screenshots / recording | Grant the system MediaProjection prompt once (Settings → Screen capture) |
+| Wi-Fi / Bluetooth advanced control | Toggle from the system settings pages (no silent toggling) |
 | Step history | Health Connect and its permission grant |
 | NFC read / write | NFC-capable device; foreground dispatch, confirmation before writing |
-| External Termux `RUN_COMMAND` | Termux installed and authorized; may also be granted via Shizuku `pm grant` |
+| External Termux `RUN_COMMAND` | Termux installed and authorized; grant via `adb shell pm grant com.dc.andagent com.termux.permission.RUN_COMMAND` |
 | Embedded Termux userland | `arm64-v8a` device; see below |
 
 Caveats: `targetSdk = 28` retains the legacy storage/permission model and is not suitable for Play Store distribution. The Release workflow produces an installable debug-signed APK; it has no production signing key or minification. CI runs web and Android builds and tests.
@@ -199,7 +200,7 @@ app/
     bridge/                        # AgentBridge / DbGuiBridge / PermissionBroker
     tools/                         # Tool implementations (30+ files)
     script/                        # QuickJS engine, JS API, js_eval
-    shell/                         # Termux env/installer, ShizukuShell, memfd exec
+    shell/                         # Termux env/installer, memfd exec
     widget/                        # Widget spec, renderer, data sources, refresh scheduling
     docs/                          # Hand-written OOXML generators
     ui/SettingsStore.kt            # SharedPreferences settings
@@ -240,7 +241,7 @@ Original official archive SHA-256: `5a1429b6c68ee3bdc17b5fd6e47ba42933ec924cd728
 Installation validates dash and bash as the ready gate; `pkg list-installed` is a
 soft probe reported in the backend status, so a broken apt/dpkg no longer disables
 the shell backend. `shell_exec` tries the persistent bash session, direct exec,
-memfd and Shizuku in order, then falls back to the Termux App bridge; each failure
+memfd in order, then falls back to the Termux App bridge; each failure
 carries the underlying stderr. ELF files still contain the official compile-time
 paths, so `TermuxEnv` writes an `APT_CONFIG` file that redirects every apt
 directory to the embedded prefix (including `Acquire::https::CaInfo` → the bundled
