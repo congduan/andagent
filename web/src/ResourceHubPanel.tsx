@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { resourceHubClose, resourceHubList, type ResourceItem } from "./bridge";
 import { appConfirm } from "./ConfirmDialog";
 import { useI18n } from "./i18n";
@@ -11,7 +12,7 @@ const labels = {
   scrcpy: "resourceScrcpy", cron: "resourceCron",
 } as const;
 
-export function ResourceHubPanel({ onClose }: { onClose: () => void }) {
+export function ResourceHubPanel({ onClose, anchor }: { onClose: () => void; anchor: { x: number; y: number } | null }) {
   const { t } = useI18n();
   // R110-review 必修项①：resourceHubList/Close 改为 async（取主帧凭证后再调桥）。
   // 初次渲染先用空态，加载完成后再填充；alive 标志防卸载后 setState。
@@ -52,11 +53,18 @@ export function ResourceHubPanel({ onClose }: { onClose: () => void }) {
     showResult(await resourceHubClose("embedded", "browser:hide"));
     await refresh();
   };
-  return <section className={`resource-hub ${small ? "resource-hub-small" : ""}`} aria-label={t("resourceHub")}>
+  return createPortal(
+    <>
+      <div className="copy-backdrop" onPointerDown={onClose} />
+      <section
+        className="resource-hub resource-hub-popover"
+        aria-label={t("resourceHub")}
+        style={{ left: Math.max(8, anchor?.x ?? 8), top: anchor?.y ?? 8 }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
     <header className="resource-hub-head">
       <strong>🧩 {t("resourceHub")}</strong>
       <div>
-        <button type="button" onClick={() => setSmall(!small)} aria-label={small ? t("resourceFull") : t("resourceSmall")}>{small ? "▢" : "↘"}</button>
         <button type="button" onClick={onClose} aria-label={t("close")}>✕</button>
       </div>
     </header>
@@ -77,5 +85,8 @@ export function ResourceHubPanel({ onClose }: { onClose: () => void }) {
         </section>;
       })}
     </div>
-  </section>;
+      </section>
+    </>,
+    document.body,
+  );
 }

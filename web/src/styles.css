@@ -3936,3 +3936,13 @@ button:disabled {
   cursor:pointer;transition:filter .15s ease,transform .1s ease;
 }
 .resource-hub-item button:active{transform:scale(.96)}
+
+/* ============ R110 popover 模式（按钮下方弹出，替代全屏） ============ */
+.resource-hub-popover{
+  position:fixed;inset:auto;z-index:80;display:flex;flex-direction:column;
+  width:min(92vw,480px);max-height:min(70vh,640px);
+  background:var(--panel,#1c1f2b);color:var(--text,#f5f5f5);
+  border:1px solid var(--border,#2a2f3d);border-radius:16px;
+  box-shadow:0 16px 48px rgba(0,0,0,.5);overflow:hidden;
+}
+.resource-hub-popover .resource-hub-body{max-height:none}

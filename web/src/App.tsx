@@ -485,7 +485,7 @@ function TemplateGrid() {
   );
 }
 
-function Composer({ hasKey, onResourceHub }: { hasKey: boolean; onResourceHub: () => void }) {
+function Composer({ hasKey }: { hasKey: boolean }) {
   const { t } = useI18n();
   const aui = useAui();
   const running = useAuiState((state) => state.thread.isRunning);
@@ -586,15 +586,6 @@ function Composer({ hasKey, onResourceHub }: { hasKey: boolean; onResourceHub: (
     <div className="composer-dock">
       <ComposerPrimitive.Root className="composer">
         <div className="composer-row">
-          <button
-            type="button"
-            className="icon-btn"
-            title={t("resourceHub")}
-            aria-label={t("resourceHub")}
-            onClick={onResourceHub}
-          >
-            🧩
-          </button>
           {hasKey && (
             <button
               type="button"
@@ -690,7 +681,9 @@ export default function App() {
   // 不退场期间改 onboarding 标记：标题在滑出过程中不能变；下次打开由 openModelSetup 重置。
   const closeModelSetup = useCallback(() => { dismissModelSetup(); setShowModelSetup(false); }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [resourceHubOpen, setResourceHubOpen] = useState(false);
+  const [resourceHubAnchor, setResourceHubAnchor] = useState<{ x: number; y: number } | null>(null);
+  const resourceHubOpen = resourceHubAnchor !== null;
+  const setResourceHubOpen = (open: boolean) => setResourceHubAnchor(open ? { x: 0, y: 0 } : null);
   // 顶栏「更多」菜单的位置（点按钮时按按钮矩形定位，点空白处收起）。
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
   // 设置内部的子页也由 App 记账：子页多占一条 history 记录，返回时先回设置列表。
@@ -953,13 +946,30 @@ export default function App() {
               </div>
             </div>
             <div className="head-actions">
+              {/* 模型入口改 icon（模型名过长挤压 AndAgent 品牌区）；模型名看 title。 */}
               <button
                 type="button"
-                className="model-chip"
-                title={t("modelSettings")}
+                className="head-chip"
+                title={settings.model || t("connectModel")}
+                aria-label={settings.model || t("connectModel")}
                 onClick={openModelSetup}
               >
-                {settings.model || t("connectModel")}
+                ⚙️
+              </button>
+              <button
+                type="button"
+                className="head-chip"
+                title={t("resourceHub")}
+                aria-label={t("resourceHub")}
+                aria-haspopup="menu"
+                aria-expanded={resourceHubOpen}
+                onClick={(event) => {
+                  if (resourceHubOpen) { setResourceHubOpen(false); return; }
+                  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+                  setResourceHubAnchor({ x: rect.right - 150, y: rect.bottom + 6 });
+                }}
+              >
+                🧩
               </button>
               {/* 会话切换时用 key 重置：面板收起，列表重新按新会话计算。 */}
               <MessageNav key={snapshot.sessionId} items={userInputs} />
@@ -991,7 +1001,7 @@ export default function App() {
               </button>
             </div>
           </header>
-          {resourceHubOpen && <ResourceHubPanel onClose={() => setResourceHubOpen(false)} />}
+          {resourceHubOpen && <ResourceHubPanel anchor={resourceHubAnchor} onClose={() => setResourceHubAnchor(null)} />}
 
           {moreMenu && (
             <CopyMenu
@@ -1035,7 +1045,7 @@ export default function App() {
           </ThreadPrimitive.Root>
 
           <SshTransferHost />
-          <Composer hasKey={isModelConfigured(settings)} onResourceHub={() => setResourceHubOpen(true)} />
+          <Composer hasKey={isModelConfigured(settings)} />
 
           {settingsPresence.rendered && (
             <SettingsPanel

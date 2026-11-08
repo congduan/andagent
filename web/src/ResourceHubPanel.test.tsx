@@ -18,7 +18,7 @@ afterEach(() => cleanup());
 
 it("renders an empty state", async () => {
   list.mockResolvedValue([]);
-  render(<ResourceHubPanel onClose={() => {}} />);
+  render(<ResourceHubPanel anchor={null} onClose={() => {}} />);
   expect(await screen.findByText(/当前无存活的连接与任务|No live connections or tasks/)).toBeTruthy();
 });
 
@@ -26,7 +26,7 @@ it("renders an empty state", async () => {
 it("resourceHubList 空面板先渲染空态", () => {
   // 挂起的 Promise：模拟主帧凭证轮询 / 桥调用尚未返回。
   list.mockReturnValue(new Promise(() => {}));
-  render(<ResourceHubPanel onClose={() => {}} />);
+  render(<ResourceHubPanel anchor={null} onClose={() => {}} />);
   // 初始 useState([]) 立即渲染空态，不阻塞、不抛错。
   expect(screen.getByText(/当前无存活的连接与任务|No live connections or tasks/)).toBeTruthy();
 });
@@ -38,7 +38,7 @@ it("groups resources and closes only actionable rows after confirmation", async 
     { kind: "saf", id: "tree", title: "readonly", subtitle: "tree", canClose: false },
   ]);
   close.mockResolvedValue("OK");
-  render(<ResourceHubPanel onClose={() => {}} />);
+  render(<ResourceHubPanel anchor={null} onClose={() => {}} />);
   expect(await screen.findByText("server")).toBeTruthy();
   expect(screen.getByText("backup")).toBeTruthy();
   expect(screen.getByText(/暂停|Pause/)).toBeTruthy();
