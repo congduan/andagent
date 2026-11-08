@@ -69,6 +69,7 @@ class AgentBridge(
     private val tools: Map<String, Tool>,
     private val memoryStore: com.dc.andagent.memory.MemoryStore,
     private val skillRegistry: com.dc.andagent.tools.SkillRegistry? = null,
+    private val mcpRegistry: com.dc.andagent.tools.McpRegistry? = null,
     private val permissions: PermissionBroker,
     private val appContext: Context? = null,
     private val appVersion: String = "",
@@ -283,12 +284,33 @@ class AgentBridge(
         val prompt = (uri.getQueryParameter("prompt") ?: uri.getQueryParameter("text"))
             ?.trim()?.take(2000)?.takeIf { it.isNotEmpty() } ?: return
         val auto = uri.getQueryParameter("auto") in setOf("1", "true", "yes")
+        enqueueDeeplink(buildJsonObject {
+            put("uri", uri.toString())
+            put("prompt", prompt)
+            put("auto", auto)
+        })
+    }
+
+    /**
+     * R111: 系统分享（ACTION_SEND）走同一条队列——浏览器分享的文字/链接填进输入框
+     * （auto=false，让用户补一句再发），相册分享的图片带上落盘路径 [imagePath]，
+     * 由 R88 图片输入链路按路径读取附件。
+     */
+    fun queueShare(text: String, imagePath: String?) {
+        val prompt = text.trim().take(4000)
+        if (prompt.isEmpty() && imagePath == null) return
+        enqueueDeeplink(buildJsonObject {
+            put("uri", "share://intent")
+            put("prompt", prompt)
+            put("auto", false)
+            put("source", "share")
+            imagePath?.let { put("image", it) }
+        })
+    }
+
+    private fun enqueueDeeplink(payload: JsonObject) {
         synchronized(deeplinkQueue) {
-            deeplinkQueue.addLast(buildJsonObject {
-                put("uri", uri.toString())
-                put("prompt", prompt)
-                put("auto", auto)
-            })
+            deeplinkQueue.addLast(payload)
             // Bound memory if the app is opened repeatedly without a WebView.
             while (deeplinkQueue.size > 20) deeplinkQueue.removeFirst()
         }
@@ -834,7 +856,7 @@ class AgentBridge(
     }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
 
     @JavascriptInterface
-    fun extensionTools(): String = kotlinx.serialization.json.JsonArray(tools.values.filter { it.name.startsWith("skill_") }.map { tool ->
+    fun extensionTools(): String = kotlinx.serialization.json.JsonArray(tools.values.filter { it.name.startsWith("skill_") || it.name.startsWith("mcp_") }.map { tool ->
         buildJsonObject { put("name", tool.name); put("description", tool.description); put("parameters", tool.parameters) }
     }).toString()
 
@@ -852,6 +874,53 @@ class AgentBridge(
             "install" -> registry.install(value)
             "search" -> registry.search(value)
             "index" -> { registry.setIndex(value); "OK" }
+            "rate" -> registry.rate(name, value.toIntOrNull() ?: error("评分需为 0-5"))
+            "share" -> shareSkill(registry.share(name))
+            "update" -> registry.update(name)
+            else -> "ERROR: 未知操作"
+        }
+    }.getOrElse { "ERROR: ${it.message}" }
+
+    /** 一键分享：有 ZIP 就带附件，同时始终附带深链文本。 */
+    private fun shareSkill(payload: String): String {
+        val context = appContext ?: return "ERROR: 上下文不可用"
+        val obj = runCatching { Json.parseToJsonElement(payload).jsonObject }.getOrNull()
+            ?: return "ERROR: 分享数据无效"
+        val text = obj["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        val file = obj["file"]?.jsonPrimitive?.contentOrNull?.let { java.io.File(it) }?.takeIf { it.isFile }
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = if (file != null) "application/zip" else "text/plain"
+            putExtra(android.content.Intent.EXTRA_TEXT, text)
+            if (file != null) {
+                val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "分享技能").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        return text
+    }
+
+    @JavascriptInterface
+    fun mcpManage(action: String, name: String, value: String): String = runCatching {
+        val registry = requireNotNull(mcpRegistry)
+        when (action) {
+            "list" -> registry.listServers()
+            "add" -> registry.addFromJson(name, value)
+            "remove" -> registry.remove(name, value == "true")
+            "enable" -> registry.enable(name, value == "true")
+            "tools" -> registry.toolsOf(name)
+            "reload" -> registry.reload()
+            "serverStart" -> {
+                val obj = runCatching { Json.parseToJsonElement(value).jsonObject }.getOrNull()
+                registry.startServer(
+                    port = (obj?.get("port")?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 8765),
+                    exposeAll = obj?.get("all")?.jsonPrimitive?.contentOrNull == "true",
+                )
+            }
+            "serverStop" -> registry.stopServer()
+            "serverStatus" -> registry.serverStatus()
             else -> "ERROR: 未知操作"
         }
     }.getOrElse { "ERROR: ${it.message}" }

@@ -141,6 +141,12 @@ AndAgent is licensed under Apache-2.0 (see [LICENSE](LICENSE)). The entries belo
 - Source: https://github.com/zxing/zxing
 - Copyright: Copyright ZXing authors and contributors; see app/libs/README.md for vendored JAR hash
 
+### ML Kit Text Recognition (Chinese, bundled) 16.0.1
+- License: ML Kit Terms of Service
+- Source: https://developers.google.com/ml-kit/vision/text-recognition/v2/android
+- Terms: https://developers.google.com/ml-kit/terms
+- Copyright: Copyright Google LLC. Bundled model assets are redistributed inside the APK under the ML Kit Terms of Service.
+
 ### scrcpy server 2.7
 - License: Apache-2.0
 - Source: https://github.com/Genymobile/scrcpy

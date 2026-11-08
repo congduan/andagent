@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "updated": "2026-11-08",
+  "description": "andagent 官方技能索引。source 可直接交给 skill_install；rating / ratingCount 由社区统计回填，缺省 0 表示暂无评分。",
+  "skills": [
+    {
+      "name": "code-review",
+      "description": "结构化代码审查：先给结论，再按严重级别列出问题与修复建议。",
+      "source": "https://github.com/congduan/andagent/tree/main/skills/code-review",
+      "version": "1.0.0",
+      "author": "andagent",
+      "tags": ["dev", "review", "quality"],
+      "rating": 0,
+      "ratingCount": 0
+    },
+    {
+      "name": "commit-message",
+      "description": "根据改动生成 Conventional Commits 风格的提交信息，可直接复制使用。",
+      "source": "https://github.com/congduan/andagent/tree/main/skills/commit-message",
+      "version": "1.0.0",
+      "author": "andagent",
+      "tags": ["dev", "git"],
+      "rating": 0,
+      "ratingCount": 0
+    },
+    {
+      "name": "api-debug",
+      "description": "排查 HTTP 接口问题：按状态码、响应体与网络路径逐层定位并给出下一步验证命令。",
+      "source": "https://github.com/congduan/andagent/tree/main/skills/api-debug",
+      "version": "1.0.0",
+      "author": "andagent",
+      "tags": ["dev", "http", "debug"],
+      "rating": 0,
+      "ratingCount": 0
+    }
+  ]
+}

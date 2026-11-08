@@ -106,6 +106,8 @@ export const TOOL_META: Record<string, ToolMeta> = {
   image_preview: { label: "图片预览", labelEn: "Preview image", icon: "image" },
   image_info: { label: "图片信息", labelEn: "Image info", icon: "info" },
   image_collage: { label: "图片拼图", labelEn: "Image collage", icon: "puzzle" },
+  // OCR：ML Kit 中文 bundled 模型（离线、零权限）
+  ocr_text: { label: "图片文字识别", labelEn: "OCR text", icon: "scan-text" },
   screen_record_h264: { label: "H.264 录屏", labelEn: "H.264 screen recording", icon: "video" },
   open_settings: { label: "打开系统设置", labelEn: "Open system settings", icon: "settings" },
   open_uri: { label: "跳转应用", labelEn: "Open app link", icon: "link" },

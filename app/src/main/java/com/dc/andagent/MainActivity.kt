@@ -52,6 +52,7 @@ import com.dc.andagent.bridge.UiCommands
 import com.dc.andagent.shell.devtoolsStatusJson
 import com.dc.andagent.shell.setDevToolsDebugging
 import com.dc.andagent.shell.TermuxEnv
+import com.dc.andagent.share.ShareIntake
 import com.dc.andagent.script.QuickJsEngine
 import com.dc.andagent.live.LiveLoopRunner
 import com.dc.andagent.live.LiveOverlayHost
@@ -131,6 +132,7 @@ import com.dc.andagent.tools.CameraInfoTool
 import com.dc.andagent.tools.CameraCaptureTool
 import com.dc.andagent.tools.CameraRecordTool
 import com.dc.andagent.tools.CameraScanTool
+import com.dc.andagent.tools.OcrTextTool
 import com.dc.andagent.tools.SensorInfoTool
 import com.dc.andagent.tools.CameraOverlayTool
 import com.dc.andagent.tools.LocationGetTool
@@ -210,6 +212,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var localMedia: LocalMediaHandler
     private lateinit var bridge: AgentBridge
     private lateinit var skillRegistry: com.dc.andagent.tools.SkillRegistry
+    private lateinit var mcpRegistry: com.dc.andagent.tools.McpRegistry
     private lateinit var permissionBroker: PermissionBroker
 
     private lateinit var quickJsEngine: QuickJsEngine
@@ -463,6 +466,8 @@ class MainActivity : ComponentActivity() {
             "camera_capture" to CameraCaptureTool(appContext, permissionBroker),
             "camera_record" to CameraRecordTool(appContext, permissionBroker),
             "camera_scan" to CameraScanTool(appContext, permissionBroker),
+            // OCR：ML Kit 中文 bundled 模型（随 APK 出厂，离线推理，零权限）。
+            "ocr_text" to OcrTextTool(appContext),
             "mic_list" to MicListTool(appContext),
             "screen_orientation_get" to OrientationTool({ this }, "screen_orientation_get"),
             "screen_orientation_set" to OrientationTool({ this }, "screen_orientation_set"),
@@ -562,9 +567,16 @@ class MainActivity : ComponentActivity() {
         ApiToolFactory.register(appContext, tools)
 
         skillRegistry = com.dc.andagent.tools.SkillRegistry(appContext, tools, quickJsEngine)
-        val skillNames = listOf("skill_install", "skill_list", "skill_reload", "skill_enable", "skill_delete", "skill_search", "skill_index_set", "skill_info")
+        val skillNames = listOf(
+            "skill_install", "skill_list", "skill_reload", "skill_enable", "skill_delete",
+            "skill_search", "skill_index_set", "skill_info", "skill_rate", "skill_share", "skill_update",
+        )
         skillNames.forEach { tools[it] = com.dc.andagent.tools.SkillTool(skillRegistry, it) }
         skillRegistry.reload()
+
+        // MCP 客户端 + 反向 server：管理工具立即注册，远端工具在后台拉取，避免阻塞首帧。
+        mcpRegistry = com.dc.andagent.tools.McpRegistry(appContext, tools)
+        Thread({ runCatching { mcpRegistry.reload() } }, "mcp-bootstrap").apply { isDaemon = true }.start()
 
         WidgetToolRuntime.attach(tools, quickJsEngine)
 
@@ -575,6 +587,7 @@ class MainActivity : ComponentActivity() {
             tools = tools,
             memoryStore = memoryStore,
             skillRegistry = skillRegistry,
+            mcpRegistry = mcpRegistry,
             permissions = permissionBroker,
             appVersion = BuildConfig.VERSION_NAME,
             healthPermissionRequest = { requestHealthPermission() },
@@ -790,6 +803,7 @@ class MainActivity : ComponentActivity() {
         webView.loadUrl("https://appassets.androidplatform.net/assets/web/index.html")
         requestMediaPermissions()
         handleDeeplink(intent)
+        handleShareIntent(intent)
     }
 
     override fun onResume() {
@@ -949,6 +963,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         if (::nfcSession.isInitialized) nfcSession.onNewIntent(intent)
         handleDeeplink(intent)
+        handleShareIntent(intent)
     }
 
     /** andagent://send?prompt=...&auto=1, plus widget refresh / credentials / session links (#14, R91.5, R97). */
@@ -972,6 +987,23 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
+        // 技能生态: andagent://skill?source=... 一键安装（分享链接的落地页）。
+        if (data.host.equals("skill", true)) {
+            val source = data.getQueryParameter("source")?.takeIf { it.isNotBlank() } ?: return
+            android.app.AlertDialog.Builder(this)
+                .setTitle("安装技能")
+                .setMessage(source)
+                .setPositiveButton("安装") { _, _ ->
+                    Thread({
+                        val result = runCatching { skillRegistry.install(source) }
+                            .getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+                        runOnUiThread { android.widget.Toast.makeText(this, result, android.widget.Toast.LENGTH_LONG).show() }
+                    }, "skill-install").apply { isDaemon = true }.start()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+            return
+        }
         // R105: cron a2ui 降级通知的「点开填写」动作。表单已在 durable 队列里，
         // 此处只触发一次 flush，由 onResume/mount drain 幂等消费，避免重复注入。
         if (data.host.equals("a2ui", true)) {
@@ -984,6 +1016,42 @@ class MainActivity : ComponentActivity() {
             val record = runCatching { WidgetStore(this).read().records.find { it.id == id } }.getOrNull() ?: return
             WidgetDataScheduler.requestNow(this, record.id, record.spec)
         }
+    }
+
+    /**
+     * R111: 系统分享（浏览器 / 相册 / 其它 App 的 ACTION_SEND）。文本与链接直接入
+     * deeplink 队列；图片先复制到 filesDir/shared_images（content:// 的临时读权限
+     * 只在本进程有效，落盘后 R88 图片输入链路才能按路径读），再入队。
+     * 解析在主线程只读 Intent 字段，图片复制走后台线程，避免大图卡首帧。
+     */
+    private fun handleShareIntent(intent: Intent?) {
+        val payload = runCatching { ShareIntake.parse(intent) }.getOrNull() ?: return
+        val imageUri = payload.imageUri
+        if (imageUri == null) {
+            if (::bridge.isInitialized) bridge.queueShare(payload.text, null)
+            return
+        }
+        val context = applicationContext
+        val text = payload.text
+        val mime = payload.mime
+        Thread({
+            val path = runCatching { ShareIntake.persistImage(context, imageUri, mime) }.getOrNull()
+            if (path == null) {
+                // 失败（超大/流打不开）时不能静默吞掉用户分享的内容。
+                mainHandler.post {
+                    runCatching {
+                        android.widget.Toast.makeText(
+                            this,
+                            com.dc.andagent.i18n.tr("分享的图片读取失败", "Could not read the shared image"),
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            }
+            if (path != null || text.isNotEmpty()) {
+                if (::bridge.isInitialized) bridge.queueShare(text, path)
+            }
+        }, "share-intake").apply { isDaemon = true }.start()
     }
 
     // R109 用户方案：embedded WebView 单例常驻「页面内悬浮层」（主窗口 overlay，

@@ -289,6 +289,7 @@ function install(): void {
     extensionTools: () => "[]",
     skillPrompt: () => "",
     skillManage: () => unavailable("技能管理"),
+    mcpManage: () => unavailable("MCP 管理"),
 
     /* 小组件 / 定时任务：列表为空，操作报错 */
     widgetList: () => "[]",

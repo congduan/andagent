@@ -80,6 +80,7 @@ const ICON_PATHS = {
   ruler: '<path d="M15.5 3.5 20.5 8.5 8.5 20.5 3.5 15.5z"/><path d="m8 11 2 2M11 8l2 2M5 14l2 2"/>',
   notebook: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 3v18"/><path d="M12.5 8h3M12.5 12h3"/>',
   'bar-chart': '<path d="M5 20v-7M11 20V5M17 20v-9"/><path d="M3.5 21h17"/>',
+  'scan-text': '<path d="M4 8.5V6a2 2 0 0 1 2-2h2.5"/><path d="M15.5 4H18a2 2 0 0 1 2 2v2.5"/><path d="M20 15.5V18a2 2 0 0 1-2 2h-2.5"/><path d="M8.5 20H6a2 2 0 0 1-2-2v-2.5"/><path d="M8.5 11.5h7"/><path d="M8.5 15h4.5"/>',
   'chevron-right': '<path d="m9 5 7 7-7 7"/>',
 } as const;
 

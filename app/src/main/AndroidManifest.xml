@@ -219,9 +219,12 @@
                 android:resource="@xml/hce_aid_list" />
         </service>
 
+        <!-- singleTop：分享/深链在已有实例上走 onNewIntent，避免每次分享都新开一个
+             WebView 实例（旧实例的引擎状态会变成孤儿）。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode">
             <intent-filter>
@@ -248,6 +251,18 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="andagent" android:host="credentials" />
+            </intent-filter>
+            <!-- R111: 系统分享入口（浏览器/别的 App 分享文本或链接）→ deeplink 队列 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- R111: 相册/文件管理分享图片；图片落盘后交给 R88 图片输入链路 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
 

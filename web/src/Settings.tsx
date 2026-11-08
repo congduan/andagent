@@ -5,7 +5,7 @@ import {
   getTermuxStatus, grantTermuxPermission, hasBridge,
   hasKvBridge, kvCall,
   memoryCall, persistSettings, requestHealthPermission, requestProjectionConsent,
-  setDevToolsEnabled, skillManage, stopProjection,
+  setDevToolsEnabled, skillManage, mcpManage, stopProjection,
   sshCredentialDelete, sshCredentialEdit, sshCredentialsList, sshCredentialsOpen,
   externalStateStatus, externalStateSync, externalStateRestore,
   externalStateSetEnabled, externalStateWriteConfig, requestPermissions,
@@ -42,15 +42,28 @@ type Props = {
 
 export type SettingsPage =
   | "home" | "model" | "prompt" | "appearance" | "memory" | "automation"
-  | "ssh" | "skills" | "extensions" | "search" | "storage" | "data" | "about" | "notices";
+  | "ssh" | "skills" | "mcp" | "extensions" | "search" | "storage" | "data" | "about" | "notices";
 
 type ProjectionStatus = ReturnType<typeof getProjectionStatus>;
 type DevToolsStatus = ReturnType<typeof getDevToolsStatus> | null;
 type CronTask = ReturnType<typeof cronList>[number];
 type MemoryEntry = { id: string; content: string; category: string; core: boolean };
-type SkillEntry = { name: string; description: string; enabled: boolean; toolCount: number; source: string };
+type SkillEntry = {
+  name: string; description: string; enabled: boolean; toolCount: number; source: string;
+  version?: string; author?: string; userRating?: number; rating?: number; ratingCount?: number;
+  latestVersion?: string; updateAvailable?: boolean;
+};
 /** 搜索结果项：source 可直接交给 skillManage("install") 安装。 */
-type SkillResult = { name?: string; description?: string; repo?: string; source: string; installed?: boolean };
+type SkillResult = {
+  name?: string; description?: string; repo?: string; source: string; installed?: boolean;
+  version?: string | null; rating?: number; ratingCount?: number; author?: string | null;
+};
+type McpServerEntry = {
+  name: string; url: string; enabled: boolean; trust: boolean; toolCount: number; lastError?: string | null;
+};
+type McpServerStatus = {
+  running: boolean; port: number; url: string; token: string; all: boolean; toolCount: number; hint?: string;
+};
 
 const THEME_OPTIONS: ThemeMode[] = ["system", "light", "dark"];
 const CONFIRM_OPTIONS: ConfirmMode[] = ["off", "destructive", "all"];
@@ -136,6 +149,11 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
   const [skillSearching, setSkillSearching] = useState(false);
   const [skillInstalling, setSkillInstalling] = useState("");
   const [skillIndex, setSkillIndex] = useState("");
+  const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([]);
+  const [mcpLoaded, setMcpLoaded] = useState(false);
+  const [mcpDraft, setMcpDraft] = useState({ name: "", url: "", headers: "", trust: false });
+  const [mcpBusy, setMcpBusy] = useState("");
+  const [mcpStatus, setMcpStatus] = useState<McpServerStatus | null>(null);
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
   const [memoriesLoaded, setMemoriesLoaded] = useState(false);
   const [memoryEdits, setMemoryEdits] = useState<Record<string, string>>({});
@@ -166,6 +184,11 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     let cancelled = false;
     if (page === "automation") { setCronTasks(cronList()); setExactAllowed(cronExactAllowed()); setCronLoaded(true); }
     if (page === "skills") { try { setSkills(JSON.parse(skillManage("list"))); } catch { setSkills([]); } setSkillsLoaded(true); }
+    if (page === "mcp") {
+      try { setMcpServers(JSON.parse(mcpManage("list"))); } catch { setMcpServers([]); }
+      try { setMcpStatus(JSON.parse(mcpManage("serverStatus"))); } catch { setMcpStatus(null); }
+      setMcpLoaded(true);
+    }
     if (page === "ssh") { setCreds(sshCredentialsList()); setCredsLoaded(true); }
     if (page === "memory") {
       // 浏览器预览没有记忆桥：直接显示空列表，不弹「桥不可用」。
@@ -308,6 +331,82 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
       onSuccess?.();
     }, 0);
   };
+  const rateSkill = (name: string, stars: number) => {
+    const raw = skillManage("rate", name, String(stars));
+    if (raw.startsWith("ERROR:")) showError(raw); else refreshSkills();
+  };
+  const shareSkill = (name: string) => {
+    const raw = skillManage("share", name);
+    if (raw.startsWith("ERROR:")) showError(raw); else showSuccess(t("skillShared"));
+  };
+  const updateSkill = (name: string) => {
+    setSkillInstalling(`update:${name}`);
+    window.setTimeout(() => {
+      const raw = skillManage("update", name);
+      setSkillInstalling("");
+      showResult(raw);
+      if (!raw.startsWith("ERROR:")) refreshSkills();
+    }, 0);
+  };
+
+  // ===== MCP 客户端 / 反向 server =====
+  const refreshMcp = () => {
+    try { setMcpServers(JSON.parse(mcpManage("list"))); } catch { setMcpServers([]); }
+    try { setMcpStatus(JSON.parse(mcpManage("serverStatus"))); } catch { setMcpStatus(null); }
+  };
+  const addMcp = () => {
+    const name = mcpDraft.name.trim();
+    const url = mcpDraft.url.trim();
+    if (!name || !url) { showError(t("mcpNeedNameUrl")); return; }
+    let headers: Record<string, string> | undefined;
+    if (mcpDraft.headers.trim()) {
+      try {
+        const parsed = JSON.parse(mcpDraft.headers);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("object");
+        headers = parsed as Record<string, string>;
+      } catch { showError(t("mcpBadHeaders")); return; }
+    }
+    setMcpBusy("add");
+    window.setTimeout(() => {
+      const raw = mcpManage("add", name, JSON.stringify({ url, headers, trust: mcpDraft.trust }));
+      setMcpBusy("");
+      if (raw.startsWith("ERROR:")) showError(raw);
+      else { setMcpDraft({ name: "", url: "", headers: "", trust: false }); refreshMcp(); showSuccess(t("mcpAdded")); }
+    }, 0);
+  };
+  const toggleMcp = (name: string, enabled: boolean) => {
+    const raw = mcpManage("enable", name, String(enabled));
+    if (raw.startsWith("ERROR:")) showError(raw); else refreshMcp();
+  };
+  const removeMcp = async (name: string) => {
+    if (!(await appConfirm(t("mcpRemoveConfirm", { name })))) return;
+    const raw = mcpManage("remove", name, "true");
+    if (raw.startsWith("ERROR:")) showError(raw); else refreshMcp();
+  };
+  const reloadMcp = () => {
+    setMcpBusy("reload");
+    window.setTimeout(() => {
+      const raw = mcpManage("reload");
+      setMcpBusy("");
+      try {
+        const summary = JSON.parse(raw) as { toolCount?: number; failed?: string[] };
+        if (summary.failed?.length) showError(summary.failed.join("；"));
+        else showSuccess(t("mcpReloaded", { count: String(summary.toolCount ?? 0) }));
+      } catch { showError(raw); }
+      refreshMcp();
+    }, 0);
+  };
+  const startMcpServer = () => {
+    const port = mcpStatus?.port ?? 8765;
+    const raw = mcpManage("serverStart", "", JSON.stringify({ port, all: false }));
+    try { setMcpStatus(JSON.parse(raw) as McpServerStatus); showSuccess(t("mcpServerStarted")); }
+    catch { showError(raw); }
+  };
+  const stopMcpServer = () => {
+    const raw = mcpManage("serverStop");
+    try { setMcpStatus(JSON.parse(raw) as McpServerStatus); showSuccess(t("mcpServerStopped")); }
+    catch { showError(raw); }
+  };
   const refreshMemories = () => {
     try { setMemories(memoryCall<MemoryEntry[]>("memory_get_all")); }
     catch (e) { showError(String(e)); }
@@ -370,6 +469,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
     { key: "memory", icon: "brain", tint: "#a855f7", title: t("memory"), sub: t("memoryNote"), badge: memoriesLoaded ? `${memories.length}` : undefined, badgeTone: "count" },
     { key: "automation", icon: "timer", tint: "#f59e0b", title: t("cron"), sub: t("cronNote"), badge: cronLoaded ? `${cronTasks.length}` : undefined, badgeTone: "count" },
     { key: "skills", icon: "puzzle", tint: "#10b981", title: t("skills"), sub: `${t("install")} · ${t("enabled")} · ${t("search")}`, badge: skillsLoaded ? `${skills.length}` : undefined, badgeTone: "count" },
+    { key: "mcp", icon: "plug", tint: "#0ea5e9", title: t("mcpTitle"), sub: t("mcpHomeSub"), badge: mcpLoaded ? `${mcpServers.length}` : undefined, badgeTone: "count" },
     { key: "ssh", icon: "key", tint: "#f43f5e", title: t("sshCredentials"), sub: t("sshCredentialsGroupSub"), badge: credsLoaded ? `${creds.length}` : undefined, badgeTone: "count" },
     { key: "search", icon: "search", tint: "#f97316", title: t("searchEngines"), sub: t("searchEnginesSub") },
     { key: "storage", icon: "hard-drive", tint: "#14b8a6", title: t("storageGroup"), sub: external.degraded ? t("storageModeDegraded") : t("storageModePublic"), badge: external.hasSnapshot ? "ok" : undefined, badgeTone: external.hasSnapshot ? "ok" : "warn" },
@@ -559,6 +659,11 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
             <div key={skill.name} className={`skill-row${skill.enabled ? "" : " skill-row-off"}`}>
               <div className="skill-row-main">
                 <span className="skill-name">{skill.name}</span>
+                {skill.version && <span className="skill-version">v{skill.version}</span>}
+                {skill.updateAvailable && (
+                  <button type="button" className="skill-update" disabled={skillInstalling === `update:${skill.name}`}
+                    title={skill.latestVersion} onClick={() => updateSkill(skill.name)}>{t("skillUpdate")}</button>
+                )}
                 <label className="settings-switch">
                   <input type="checkbox" checked={skill.enabled}
                     onChange={(e) => { showResult(skillManage("enable", skill.name, String(e.target.checked))); refreshSkills(); }} />
@@ -567,8 +672,18 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
               </div>
               {skill.description && <p className="skill-desc">{skill.description}</p>}
               <div className="skill-row-foot">
+                <span className="skill-stars" title={t("skillRateHint")}>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button key={n} type="button" className={`skill-star${(skill.userRating ?? 0) >= n ? " on" : ""}`}
+                      onClick={() => rateSkill(skill.name, n)} aria-label={t("skillRateN", { n: String(n) })}>★</button>
+                  ))}
+                </span>
+                {(skill.ratingCount ?? 0) > 0 && (
+                  <span className="skill-badge">{(skill.rating ?? 0).toFixed(1)} · {skill.ratingCount}</span>
+                )}
                 <span className="skill-badge">{skill.toolCount} {t("toolsCount")}</span>
                 <span className="skill-source" title={skill.source}>{skill.source}</span>
+                <button type="button" className="skill-share" onClick={() => shareSkill(skill.name)}>{t("share")}</button>
                 <button type="button" className="skill-remove" onClick={async () => {
                   if (!(await appConfirm(t("deleteSkillConfirm", { name: skill.name })))) return;
                   showResult(skillManage("delete", skill.name, "true"));
@@ -605,6 +720,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
               <div key={item.source} className="skill-row">
                 <div className="skill-row-main">
                   <span className="skill-name">{item.name || item.repo || item.source}</span>
+                  {item.version && <span className="skill-version">v{item.version}</span>}
                   <button type="button" className="btn-primary skill-install" disabled={item.installed || busy}
                     onClick={() => installSkill(item.source)}>
                     {item.installed ? t("skillInstalled") : busy ? t("installing") : t("install")}
@@ -612,6 +728,9 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
                 </div>
                 {item.description && <p className="skill-desc">{item.description}</p>}
                 <div className="skill-row-foot">
+                  {(item.ratingCount ?? 0) > 0 && (
+                    <span className="skill-badge">{(item.rating ?? 0).toFixed(1)} · {item.ratingCount}</span>
+                  )}
                   <span className="skill-source" title={item.source}>{item.repo || item.source}</span>
                 </div>
               </div>
@@ -624,6 +743,81 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
           <button type="button" className="btn-ghost" onClick={() => showResult(skillManage("index", "", skillIndex))}>{t("saveIndex")}</button>
         </div>
       </details>
+    </>)}
+  </>);
+
+  // ===== MCP：外部工具生态客户端 + 反向 server =====
+  const mcpPage = sub(t("mcpTitle"), <>
+    <p className="settings-page-note">{t("mcpNote")}</p>
+    {section(`${t("mcpServers")} · ${mcpServers.length}`, <>
+      <div className="settings-card-actions">
+        <button type="button" className="btn-ghost" onClick={refreshMcp}>{t("refreshStatus")}</button>
+        <button type="button" className="btn-primary" disabled={mcpBusy === "reload"} onClick={reloadMcp}>
+          {mcpBusy === "reload" ? t("mcpReloading") : t("mcpReload")}
+        </button>
+      </div>
+      {!mcpLoaded
+        ? null
+        : mcpServers.length === 0
+          ? <p className="settings-empty">{t("mcpEmpty")}</p>
+          : <div className="skill-list">{mcpServers.map((server) => (
+              <div key={server.name} className={`skill-row${server.enabled ? "" : " skill-row-off"}`}>
+                <div className="skill-row-main">
+                  <span className="skill-name">{server.name}</span>
+                  <span className="skill-badge">{server.toolCount} {t("toolsCount")}</span>
+                  <label className="settings-switch">
+                    <input type="checkbox" checked={server.enabled}
+                      onChange={(e) => toggleMcp(server.name, e.target.checked)} />
+                    <span>{t("enabled")}</span>
+                  </label>
+                </div>
+                <div className="skill-row-foot">
+                  <span className="skill-source" title={server.url}>{server.url}</span>
+                  <button type="button" className="skill-remove" onClick={() => void removeMcp(server.name)}>{t("delete")}</button>
+                </div>
+                {server.lastError && <p className="skill-desc mcp-error">{server.lastError}</p>}
+              </div>
+            ))}</div>}
+    </>)}
+    {section(t("mcpAddTitle"), <>
+      <label className="field"><span>{t("mcpName")}</span>
+        <input value={mcpDraft.name} onChange={(e) => setMcpDraft({ ...mcpDraft, name: e.target.value })}
+          autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+      </label>
+      <label className="field"><span>{t("mcpUrl")}</span>
+        <input value={mcpDraft.url} onChange={(e) => setMcpDraft({ ...mcpDraft, url: e.target.value })}
+          placeholder="https://example.com/mcp" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+      </label>
+      <label className="field"><span>{t("mcpHeaders")}</span>
+        <textarea rows={3} value={mcpDraft.headers} onChange={(e) => setMcpDraft({ ...mcpDraft, headers: e.target.value })}
+          placeholder={t("mcpHeadersPlaceholder")} spellCheck={false} />
+      </label>
+      <label className="settings-switch">
+        <input type="checkbox" checked={mcpDraft.trust} onChange={(e) => setMcpDraft({ ...mcpDraft, trust: e.target.checked })} />
+        <span>{t("mcpTrust")}</span>
+      </label>
+      <div className="settings-card-actions">
+        <button type="button" className="btn-primary" disabled={mcpBusy === "add"} onClick={addMcp}>
+          {mcpBusy === "add" ? t("mcpAdding") : t("mcpAdd")}
+        </button>
+      </div>
+      <p className="settings-card-note">{t("mcpTrustNote")}</p>
+    </>)}
+    {section(t("mcpServerTitle"), <>
+      <p className="settings-card-note">{t("mcpServerNote")}</p>
+      <div className="settings-card-actions">
+        <button type="button" className="btn-primary" disabled={!!mcpStatus?.running} onClick={startMcpServer}>{t("mcpServerStart")}</button>
+        <button type="button" className="btn-ghost" disabled={!mcpStatus?.running} onClick={stopMcpServer}>{t("mcpServerStop")}</button>
+        <button type="button" className="btn-ghost" onClick={refreshMcp}>{t("refreshStatus")}</button>
+      </div>
+      {mcpStatus && <>
+        <p className="settings-card-note">
+          <b>{mcpStatus.running ? t("mcpRunning") : t("mcpStopped")}</b> · {mcpStatus.toolCount} {t("toolsCount")}
+        </p>
+        <label className="field"><span>{t("mcpEndpoint")}</span><input readOnly value={mcpStatus.url} /></label>
+        <label className="field"><span>{t("mcpToken")}</span><input readOnly value={mcpStatus.token} /></label>
+        <p className="settings-card-note">{mcpStatus.hint || t("mcpServerHint")}</p>
+      </>}
     </>)}
   </>);
 
@@ -908,7 +1102,7 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
 
   const subPages: Record<SettingsPage, React.ReactNode> = {
     home: null, model: modelPage, prompt: promptPage, appearance: appearancePage, memory: memoryPage,
-    automation: automationPage, skills: skillsPage, ssh: sshPage, extensions: extensionsPage,
+    automation: automationPage, skills: skillsPage, mcp: mcpPage, ssh: sshPage, extensions: extensionsPage,
     search: searchPage, storage: storagePage, data: dataPage, about: aboutPage, notices: noticesPage,
   };
 

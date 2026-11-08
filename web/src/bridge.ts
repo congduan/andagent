@@ -156,6 +156,10 @@ export interface DeeplinkDetail {
   uri: string;
   prompt: string;
   auto: boolean;
+  /** R111: 系统分享的图片在应用私有目录里的绝对路径（ACTION_SEND 才有）。 */
+  image?: string;
+  /** R111: "share" 表示来自系统分享；`andagent://` 深链没有该字段。 */
+  source?: string;
 }
 
 interface AndroidBridge {
@@ -206,6 +210,7 @@ interface AndroidBridge {
   extensionTools?(): string;
   skillPrompt?(): string;
   skillManage?(action: string, name: string, value: string): string;
+  mcpManage?(action: string, name: string, value: string): string;
   transcribeAudio(id: string, filePath: string, language: string): void;
   saveAudioBase64(id: string, base64: string): string;
   requestPermissions(namesJson: string): void;
@@ -316,6 +321,10 @@ export function extensionTools(): Array<{ name: string; description: string; par
 export function skillPrompt(): string { return bridge()?.skillPrompt?.() ?? ""; }
 export function skillManage(action: string, name = "", value = ""): string {
   try { return bridge()?.skillManage?.(action, name, value) ?? "ERROR: 技能管理桥不可用"; }
+  catch (e) { return `ERROR: ${String(e)}`; }
+}
+export function mcpManage(action: string, name = "", value = ""): string {
+  try { return bridge()?.mcpManage?.(action, name, value) ?? "ERROR: MCP 管理桥不可用"; }
   catch (e) { return `ERROR: ${String(e)}`; }
 }
 

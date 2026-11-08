@@ -761,7 +761,16 @@ export default function App() {
   // Deep links: andagent://send?prompt=...&auto=1 (external apps / widgets).
   useEffect(() => {
     const handle = (detail: DeeplinkDetail | null) => {
-      if (!detail?.prompt) return;
+      if (!detail || (!detail.prompt && !detail.image)) return;
+      // R111: 系统分享的图片已由原生落盘（detail.image 是绝对路径），图片进对话
+      // 依赖 R88 图片输入链路；链路落地前如实提示，不静默丢弃分享内容。
+      if (detail.image) {
+        showInfo(t("sharedImagePending"));
+        if (detail.prompt) {
+          window.dispatchEvent(new CustomEvent("andagent:composer-fill", { detail: detail.prompt }));
+        }
+        return;
+      }
       if (detail.auto) void engine.send(detail.prompt);
       else window.dispatchEvent(new CustomEvent("andagent:composer-fill", { detail: detail.prompt }));
     };
@@ -809,7 +818,7 @@ export default function App() {
       window.removeEventListener("andagent:session-switch", switchByEvent);
       window.removeEventListener("andagent:tool-cancel", cancelToolCard);
     };
-  }, [engine]);
+  }, [engine, t]);
 
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages: snapshot.messages,

@@ -138,6 +138,12 @@ android {
             excludes += "META-INF/versions/*/OSGI-INF/MANIFEST.MF"
         }
     }
+
+    androidResources {
+        // ML Kit bundled 模型以 mmap / AssetManager.openFd 方式从 assets 读取，
+        // 被 AAPT 压缩后会抛出 "This file can not be opened as a file descriptor"。
+        noCompress += "tflite"
+    }
 }
 
 dependencies {
@@ -175,4 +181,10 @@ dependencies {
     // Chosen over ML Kit barcode scanning: no GMS, no Play Services model
     // download, zero permissions, fully offline. See app/libs/README.md.
     implementation(files("libs/zxing-core-3.5.3.jar"))
+
+    // OCR: ML Kit 中文文字识别的 **bundled** 变体 —— 模型随 APK 一起打包，
+    // 完全离线，不需要 Google Play 服务运行时（该变体只依赖 play-services-base
+    // /basement 的纯客户端库，不会去连 GMS）。代价是 APK 增大约 40MB，
+    // 换来首次识别不需要下载模型。play-services 变体（模型靠 GMS 下发）刻意不用。
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
 }

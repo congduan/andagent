@@ -2334,6 +2334,61 @@ button:disabled {
 
 .skill-remove:hover { background: rgba(255, 80, 80, 0.15); }
 
+.skill-share {
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: var(--wash-3);
+  color: var(--accent);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.skill-share:hover { background: var(--wash-4, var(--wash-3)); }
+
+.skill-version {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.skill-update {
+  flex: none;
+  border: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.18);
+  color: #f59e0b;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.skill-update:hover { background: rgba(245, 158, 11, 0.3); }
+
+.skill-stars {
+  flex: none;
+  display: inline-flex;
+  gap: 1px;
+}
+
+.skill-star {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.skill-star.on { color: #f59e0b; }
+
+.skill-star:hover { color: #fbbf24; }
+
+.mcp-error { color: var(--danger); }
+
 .skill-search {
   display: flex;
   gap: 8px;

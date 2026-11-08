@@ -115,13 +115,15 @@ object ImageEditEngine {
         val (w, h) = effectiveDims(options.outWidth, options.outHeight, orientation)
         return SourceInfo(w, h, options.outMimeType ?: "unknown", bytes.size.toLong(), orientation)
     }
-    fun decode(context: Context, source: String): Bitmap {
+    fun decode(context: Context, source: String, maxEdge: Int = MAX_EDGE, maxPixels: Long = Long.MAX_VALUE): Bitmap {
         val bytes = open(context, source)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds) }.getOrElse { error("图片解码失败：${it.message}") }
         require(bounds.outWidth > 0 && bounds.outHeight > 0) { "文件不是有效图片或已损坏" }
         var sample = 1
-        while (max(bounds.outWidth, bounds.outHeight) / sample > MAX_EDGE) sample *= 2
+        while (max(bounds.outWidth, bounds.outHeight) / sample > maxEdge) sample *= 2
+        // OCR 等分析型消费方需要比编辑链路更高的分辨率，但仍要有像素上限护栏（ARGB_8888 常驻内存）。
+        while (sample < 32 && (bounds.outWidth.toLong() / sample) * (bounds.outHeight / sample) > maxPixels) sample *= 2
         val bitmap = runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.ARGB_8888 }) }.getOrNull()
             ?: error("图片解码失败或内存不足")
         val orientation = runCatching { ExifInterface(ByteArrayInputStream(bytes)).getAttributeInt(ExifInterface.TAG_ORIENTATION, 1) }.getOrDefault(1)
