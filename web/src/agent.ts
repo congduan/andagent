@@ -883,6 +883,19 @@ const A2UI_GUIDE = [
   "```a2ui",
   '{"title":"导出设置","submit_label":"提交","fields":[{"type":"TEXT_INPUT","key":"email","label":"接收邮箱","placeholder":"you@example.com","prefill":"me@example.com","required":true,"validate":"email"},{"type":"CHOICE","key":"format","label":"导出格式","options":["Markdown","PDF"],"prefill":"PDF"},{"type":"SWITCH","key":"include_images","label":"包含图片","default":true,"prefill":true}]}',
   "```",
+  "9. cron a2ui 模板三例（kind=\"a2ui\" 时把整段 JSON 原样作 cron_create 的 payload；prefill 随触发日填入）：",
+  "· 晨报（五组件齐全 + 多选 CHOICE 预填）：",
+  "```a2ui",
+  '{"title":"晨报确认","submit_label":"提交晨报","fields":[{"type":"DATE_PICK","key":"date","label":"日期","prefill":"2026-11-08"},{"type":"TEXT_INPUT","key":"weather","label":"天气","prefill":"晴 26℃"},{"type":"CHOICE","key":"agenda","label":"今日日程","multiple":true,"options":["站会","评审","复盘"],"prefill":["站会","复盘"]},{"type":"SWITCH","key":"todo","label":"看待办","default":false,"prefill":true},{"type":"NUMBER_SLIDER","key":"focus","label":"专注分钟","min":0,"max":60,"step":5,"default":25,"prefill":35}]}',
+  "```",
+  "· 备份范围（多选目录 + 开关）：",
+  "```a2ui",
+  '{"title":"备份范围","submit_label":"开始备份","fields":[{"type":"CHOICE","key":"folders","label":"要备份的目录","multiple":true,"options":["DCIM","Download","Documents","WhatsApp"],"prefill":["DCIM","Download"]},{"type":"SWITCH","key":"include_hidden","label":"包含隐藏文件","default":false,"prefill":false},{"type":"TEXT_INPUT","key":"note","label":"备注","prefill":"每周例行"}]}',
+  "```",
+  "· 删除确认（BUTTON_GROUP 必选 + 风险 CARD，不预填确认项）：",
+  "```a2ui",
+  '{"title":"删除确认","submit_label":"提交","fields":[{"type":"CARD","title":"高风险操作","text":"将永久删除所选数据，不可恢复。"},{"type":"BUTTON_GROUP","key":"confirm","label":"是否继续","required":true,"buttons":[{"value":"cancel","label":"取消"},{"value":"delete","label":"确认删除"}]},{"type":"TEXT_INPUT","key":"reason","label":"删除原因","prefill":"清理旧备份"}]}',
+  "```",
 ].join("\n");
 
 const A2UI_GUIDE_EN = [
@@ -897,6 +910,19 @@ const A2UI_GUIDE_EN = [
   "8. Example:",
   "```a2ui",
   '{"title":"Export settings","submit_label":"Submit","fields":[{"type":"TEXT_INPUT","key":"email","label":"Email","placeholder":"you@example.com","prefill":"me@example.com","required":true,"validate":"email"},{"type":"CHOICE","key":"format","label":"Format","options":["Markdown","PDF"],"prefill":"PDF"},{"type":"SWITCH","key":"include_images","label":"Include images","default":true,"prefill":true}]}',
+  "```",
+  "9. Three cron a2ui templates (use the JSON verbatim as cron_create's payload when kind=\"a2ui\"; fill prefill for the trigger day):",
+  "· Morning briefing (all five components + multi-select CHOICE prefill):",
+  "```a2ui",
+  '{"title":"Morning briefing","submit_label":"Submit","fields":[{"type":"DATE_PICK","key":"date","label":"Date","prefill":"2026-11-08"},{"type":"TEXT_INPUT","key":"weather","label":"Weather","prefill":"Sunny 26C"},{"type":"CHOICE","key":"agenda","label":"Agenda","multiple":true,"options":["Standup","Review","Retro"],"prefill":["Standup","Retro"]},{"type":"SWITCH","key":"todo","label":"Show todos","default":false,"prefill":true},{"type":"NUMBER_SLIDER","key":"focus","label":"Focus minutes","min":0,"max":60,"step":5,"default":25,"prefill":35}]}',
+  "```",
+  "· Backup scope (multi-select folders + switch):",
+  "```a2ui",
+  '{"title":"Backup scope","submit_label":"Start backup","fields":[{"type":"CHOICE","key":"folders","label":"Folders","multiple":true,"options":["DCIM","Download","Documents","WhatsApp"],"prefill":["DCIM","Download"]},{"type":"SWITCH","key":"include_hidden","label":"Include hidden files","default":false,"prefill":false},{"type":"TEXT_INPUT","key":"note","label":"Note","prefill":"Weekly routine"}]}',
+  "```",
+  "· Delete confirmation (required BUTTON_GROUP + risk CARD, no prefill on the confirm choice):",
+  "```a2ui",
+  '{"title":"Delete confirmation","submit_label":"Submit","fields":[{"type":"CARD","title":"High-risk action","text":"Selected data will be permanently deleted and cannot be recovered."},{"type":"BUTTON_GROUP","key":"confirm","label":"Proceed?","required":true,"buttons":[{"value":"cancel","label":"Cancel"},{"value":"delete","label":"Delete"}]},{"type":"TEXT_INPUT","key":"reason","label":"Reason","prefill":"Clean old backups"}]}',
   "```",
 ].join("\n");
 
@@ -1145,6 +1171,12 @@ export class AgentEngine {
       sessions: this.sessions,
       usage: { session: { ...this.sessionUsage }, last: null },
     };
+  }
+
+  /** R105: whether an LLM turn is in flight. App.tsx gates the durable cron
+   * a2ui inbox drain on this so a form is never consumed-and-dropped mid-turn. */
+  get isRunning(): boolean {
+    return this.running;
   }
 
   /* ------------------------- multi-session --------------------------- */

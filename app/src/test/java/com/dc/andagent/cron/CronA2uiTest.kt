@@ -46,4 +46,14 @@ class CronA2uiTest {
         val spec = """{"fields":[{"type":"TEXT_INPUT","key":"a","prefill":"s"},{"type":"DATE_PICK","key":"b","prefill":"2026-11-08"},{"type":"CHOICE","key":"c","options":["x","y"],"prefill":"x"},{"type":"CHOICE","key":"d","multiple":true,"options":["x"],"prefill":["x"]},{"type":"NUMBER_SLIDER","key":"e","prefill":5},{"type":"SWITCH","key":"f","prefill":false}]}"""
         assertNull(CronA2ui.validateSpec(spec))
     }
+
+    /** R105: A2UI_GUIDE 中三条 cron a2ui 模板必须能作 kind=a2ui 的 payload。 */
+    @Test fun guideCronTemplatesPassAuthoringValidation() {
+        val templates = listOf(
+            """{"title":"晨报确认","submit_label":"提交晨报","fields":[{"type":"DATE_PICK","key":"date","label":"日期","prefill":"2026-11-08"},{"type":"TEXT_INPUT","key":"weather","label":"天气","prefill":"晴 26℃"},{"type":"CHOICE","key":"agenda","label":"今日日程","multiple":true,"options":["站会","评审","复盘"],"prefill":["站会","复盘"]},{"type":"SWITCH","key":"todo","label":"看待办","default":false,"prefill":true},{"type":"NUMBER_SLIDER","key":"focus","label":"专注分钟","min":0,"max":60,"step":5,"default":25,"prefill":35}]}""",
+            """{"title":"备份范围","submit_label":"开始备份","fields":[{"type":"CHOICE","key":"folders","label":"要备份的目录","multiple":true,"options":["DCIM","Download","Documents","WhatsApp"],"prefill":["DCIM","Download"]},{"type":"SWITCH","key":"include_hidden","label":"包含隐藏文件","default":false,"prefill":false},{"type":"TEXT_INPUT","key":"note","label":"备注","prefill":"每周例行"}]}""",
+            """{"title":"删除确认","submit_label":"提交","fields":[{"type":"CARD","title":"高风险操作","text":"将永久删除所选数据，不可恢复。"},{"type":"BUTTON_GROUP","key":"confirm","label":"是否继续","required":true,"buttons":[{"value":"cancel","label":"取消"},{"value":"delete","label":"确认删除"}]},{"type":"TEXT_INPUT","key":"reason","label":"删除原因","prefill":"清理旧备份"}]}""",
+        )
+        templates.forEach { assertNull(CronA2ui.validateSpec(it)) }
+    }
 }

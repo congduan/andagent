@@ -193,7 +193,12 @@ class CronWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                     AgentBridge.pushA2uiForm(applicationContext, CronA2ui.toFence(task.payload),
                         flushNow = action == CronA2uiAction.RENDER_FORM)
                     if (action == CronA2uiAction.NOTIFY_FALLBACK) {
-                        CronScheduler.notifyA2ui(applicationContext, task.name, task.id.hashCode())
+                        // 通知尽力而为：SDK33+ 未授予 POST_NOTIFICATIONS 时 notify()
+                        // 抛 SecurityException，但表单已落盘，解锁/回前台仍会补渲染，
+                        // 不应把一次成功的投递计为失败（否则 3 次后任务被误禁用）。
+                        // 仍记日志便于排查「用户没收到通知」。
+                        runCatching { CronScheduler.notifyA2ui(applicationContext, task.name, task.id.hashCode()) }
+                            .onFailure { android.util.Log.w("CronA2ui", "notify fallback failed (form already persisted)", it) }
                     }
                     "a2ui 表单已投递（$action）"
                 }

@@ -15,6 +15,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.net.Uri
+import android.util.Log
 import android.view.SurfaceHolder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -23,6 +24,7 @@ import com.dc.andagent.tools.AdbSessionHub
 import java.nio.ByteBuffer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
 
 class AdbScrcpyService : Service() {
     private var window: FloatingMirrorWindow? = null
@@ -34,6 +36,7 @@ class AdbScrcpyService : Service() {
     @Volatile private var worker: Thread? = null
     private var surface: SurfaceHolder? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val controlWriter = Executors.newSingleThreadExecutor { r -> Thread(r, "adb-mirror-control") }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -74,7 +77,7 @@ class AdbScrcpyService : Service() {
             if (window == null) {
                 window = FloatingMirrorWindow(
                     this, ::onSurfaceReady, ::onSurfaceGone, ::reconnect,
-                    { stopSelf() },
+                    { stopSelf() }, ::sendControl,
                 ).also { it.show() }
             }
             synchronized(guard) { visible = true }
@@ -113,15 +116,37 @@ class AdbScrcpyService : Service() {
         worker = Thread({ stream(holder, token) }, "adb-mirror-video").also { it.start() }
     }
 
+    private fun sendControl(bytes: ByteArray) {
+        val token = generation
+        val handle = active ?: return
+        if (controlWriter.isShutdown) return
+        controlWriter.execute {
+            if (token != generation || active !== handle || !handle.session.controlAvailable) return@execute
+            if (!handle.session.injectControl(bytes)) {
+                Log.w("AdbScrcpyService", "control socket disconnected; video continues in view-only mode")
+                mainHandler.post { if (token == generation) window?.setControl(false, handle.session.width, handle.session.height) }
+            }
+        }
+    }
+
     private fun stream(holder: SurfaceHolder, token: Int) {
         var handle: AdbScrcpyToolSpec.SessionHandle? = null
         var codec: MediaCodec? = null
         try {
             AdbSessionHub.init(applicationContext)
-            handle = AdbScrcpyToolSpec.openSession(applicationContext, target, maxSize, 4_000_000, fps)
+            handle = try {
+                AdbScrcpyToolSpec.openSession(applicationContext, target, maxSize, 4_000_000, fps, control = true)
+            } catch (e: Exception) {
+                if (!e.message.orEmpty().contains("CONTROL_SOCKET_FAILED")) throw e
+                Log.w("AdbScrcpyService", "control socket unavailable; retrying view-only session", e)
+                AdbScrcpyToolSpec.openSession(applicationContext, target, maxSize, 4_000_000, fps)
+            }
             if (token != generation || !holder.surface.isValid) return
             active = handle
             val session = handle.session
+            mainHandler.post {
+                if (token == generation) window?.setControl(session.controlAvailable, session.width, session.height)
+            }
             // scrcpy sends codec config before video. Read SPS/PPS before configuring the decoder.
             var csd: Pair<ByteArray, ByteArray>? = null
             while (token == generation && csd == null) {
@@ -173,6 +198,7 @@ class AdbScrcpyService : Service() {
 
     override fun onDestroy() {
         cancelWorker()
+        controlWriter.shutdownNow()
         window?.remove()
         window = null
         getSharedPreferences("adb_mirror", MODE_PRIVATE).edit().clear().apply()

@@ -761,7 +761,22 @@ export default function App() {
     const drainLinks = () => consumeDeeplink().forEach(handle);
     // R105: cron a2ui forms are injected deterministically as an assistant
     // message (no LLM round-trip). a2ui_submit still returns via composer-fill.
-    const drainForms = () => consumeA2uiForms().forEach((fence) => engine.appendA2uiForm(fence));
+    // 本轮 LLM 进行中时**不要**消费收件箱：consumeA2uiForms 是读后即删，而
+    // appendA2uiForm 不会把消息 splice 进 running turn，边跑边 drain 会丢表单。
+    // 让 fence 继续留在 filesDir/cron_a2ui，空闲后（重试）再补渲染，兼顾持久化。
+    let a2uiRetry: number | undefined;
+    const drainForms = () => {
+      if (engine.isRunning) {
+        if (a2uiRetry === undefined) {
+          a2uiRetry = window.setTimeout(() => {
+            a2uiRetry = undefined;
+            drainForms();
+          }, 500);
+        }
+        return;
+      }
+      consumeA2uiForms().forEach((fence) => engine.appendA2uiForm(fence));
+    };
     window.addEventListener("andagent:deeplink-flush", drainLinks);
     window.addEventListener("andagent:a2ui-flush", drainForms);
     // R97 fixup: SSH 通知点击 → MainActivity 广播 andagent:session-switch → 切会话。
@@ -781,6 +796,7 @@ export default function App() {
     const timer = window.setTimeout(() => { drainLinks(); drainForms(); }, 250);
     return () => {
       window.clearTimeout(timer);
+      if (a2uiRetry !== undefined) window.clearTimeout(a2uiRetry);
       window.removeEventListener("andagent:deeplink-flush", drainLinks);
       window.removeEventListener("andagent:a2ui-flush", drainForms);
       window.removeEventListener("andagent:session-switch", switchByEvent);

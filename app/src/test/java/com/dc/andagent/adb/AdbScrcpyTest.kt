@@ -137,6 +137,7 @@ class AdbScrcpyTest {
         assertTrue(cmd.contains("log_level=info"))
         assertTrue(cmd.contains("audio=false"))
         assertTrue(cmd.contains("control=false"))
+        assertTrue(AdbScrcpy.buildServerCommand("deadbeef", 800, 4_000_000, control = true).contains("control=true"))
         assertTrue(cmd.contains("video_codec=h264"))
         assertTrue(cmd.contains("max_size=1280"))
         assertTrue(cmd.contains("video_bit_rate=4000000"))
@@ -262,6 +263,42 @@ class AdbScrcpyTest {
     @Test
     fun openDuplex_withoutConnectReturnsNull() {
         assertNull(AdbClient().openDuplex("localabstract:scrcpy_x"))
+    }
+
+    @Test
+    fun openDuplex_controlWriteHonorsOkayAndIncomingFrames() {
+        val server = ServerSocket(0).apply { soTimeout = 10_000 }
+        var serverError: Throwable? = null
+        val thread = Thread {
+            try {
+                server.accept().use { s ->
+                    val inp = s.getInputStream(); val out = s.getOutputStream()
+                    AdbProtocol.readMessage(inp)
+                    AdbProtocol.writeMessage(out, AdbMessage(A_CNXN, A_VERSION, MAX_DATA, ByteArray(0)))
+                    val open = AdbProtocol.readMessage(inp)
+                    val local = open.arg0; val remote = 2
+                    AdbProtocol.writeMessage(out, AdbMessage(A_OKAY, remote, local, ByteArray(0)))
+                    val payload = byteArrayOf(2, 0, 1)
+                    val write = AdbProtocol.readMessage(inp)
+                    assertEquals(A_WRTE, write.command)
+                    assertArrayEquals(payload, write.data)
+                    AdbProtocol.writeMessage(out, AdbMessage(A_WRTE, remote, local, byteArrayOf(9)))
+                    assertEquals(A_OKAY, AdbProtocol.readMessage(inp).command)
+                    AdbProtocol.writeMessage(out, AdbMessage(A_OKAY, remote, local, ByteArray(0)))
+                    assertEquals(A_CLSE, AdbProtocol.readMessage(inp).command)
+                }
+            } catch (e: Throwable) { serverError = e }
+        }
+        thread.start()
+        val client = AdbClient()
+        assertTrue(client.connect("127.0.0.1", server.localPort).startsWith("OK"))
+        val stream = client.openDuplex("localabstract:scrcpy_deadbeef")!!
+        stream.writeBytes(byteArrayOf(2, 0, 1))
+        stream.close()
+        thread.join(5000)
+        client.close()
+        server.close()
+        assertNull("服务端异常: $serverError", serverError)
     }
 
     @Test

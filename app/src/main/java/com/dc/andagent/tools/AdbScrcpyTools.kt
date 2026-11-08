@@ -177,7 +177,7 @@ object AdbScrcpyToolSpec {
     }
 
     /** 截图、录制和浮窗共用同一条经过验证的 server 推送与 video socket 启动链路。 */
-    fun openSession(context: Context, target: String, maxSize: Int, bitRate: Int, fps: Int? = null): SessionHandle {
+    fun openSession(context: Context, target: String, maxSize: Int, bitRate: Int, fps: Int? = null, control: Boolean = false): SessionHandle {
         val t = AdbSessionHub.target(target)
             ?: error("目标不可达：$target（先用 adb_connect 登记，adb_devices 查看）")
         val client = AdbSessionHub.newClient(target)
@@ -190,7 +190,8 @@ object AdbScrcpyToolSpec {
                 )
                 for (cmd in buildServerPushCommands(b64)) runCatching { client.openStream(cmd) }
             }
-            val session = AdbScrcpySession(context, client)
+            val controlClient = if (control) AdbSessionHub.newClient(target) else null
+            val session = AdbScrcpySession(context, client, controlClient, t.host, t.port)
             try {
                 session.start(maxSize, bitRate, fps)?.let { error(it) }
                 return SessionHandle(client, session, t.host, t.port)

@@ -241,6 +241,30 @@ class AdbClient(
         private val buffer = ByteArrayOutputStream()
         @Volatile private var closed = false
 
+        /** Send one control message and honor ADB WRTE/OKAY flow control. */
+        fun writeBytes(bytes: ByteArray) = synchronized(lock) {
+            if (closed) throw IOException("ADB 裸流已关闭")
+            var offset = 0
+            while (offset < bytes.size) {
+                val end = minOf(offset + MAX_DATA, bytes.size)
+                write(AdbMessage(A_WRTE, localId, remoteId, bytes.copyOfRange(offset, end)))
+                while (true) {
+                    val msg = read()
+                    if (msg.command == A_CLSE && (msg.arg0 == localId || msg.arg1 == localId)) {
+                        closed = true
+                        throw IOException("ADB 控制流已关闭")
+                    }
+                    if (msg.arg0 == remoteId && msg.arg1 == localId) {
+                        when (msg.command) {
+                            A_OKAY -> break
+                            A_WRTE -> write(AdbMessage(A_OKAY, localId, remoteId, ByteArray(0)))
+                        }
+                    }
+                }
+                offset = end
+            }
+        }
+
         /**
          * 阻塞读满 n 字节。专用读循环：收 WRTE 时按 remoteId 匹配、把 payload 累积进缓冲并回 OKAY；
          * 收 CLSE/EOF 且缓冲不足时抛 IOException（由会话 runCatching 收敛）；支持跨 WRTE 帧累积。

@@ -89,9 +89,9 @@ object AdbScrcpy {
      * 直接子进程——仍可作为进程组锚点（kill 掉 shell 会带走孤儿链不可靠，故仅作
      * pkill -f scid= 之外的兜底信号）。pidfile 按会话 scid 命名，避免并发互踩。
      */
-    fun buildServerCommand(scid: String, maxSize: Int, bitRate: Int, fps: Int? = null): String =
+    fun buildServerCommand(scid: String, maxSize: Int, bitRate: Int, fps: Int? = null, control: Boolean = false): String =
         "CLASSPATH=$SERVER_JAR_PATH app_process / com.genymobile.scrcpy.Server 2.7 " +
-            "scid=$scid log_level=info audio=false control=false video_codec=h264 " +
+            "scid=$scid log_level=info audio=false control=$control video_codec=h264 " +
             "max_size=${maxSize.coerceIn(256, 1920)} video_bit_rate=${bitRate.coerceIn(500_000, 20_000_000)} " +
             (fps?.let { "max_fps=${it.coerceIn(1, 60)} " } ?: "") +
             "tunnel_forward=true send_dummy_byte=false " +
@@ -124,11 +124,19 @@ object AdbScrcpy {
  * [stop] 只关流 + 发清理 shell，调用方在 finally 里最后 close() 底层 socket。
  * 会话使用独立连接，避免长读循环与共享 live 池其它工具锁步互踩（见 AdbClient.openDuplex）。
  */
-class AdbScrcpySession(private val context: Context, private val client: AdbClient) {
+class AdbScrcpySession(
+    private val context: Context,
+    private val client: AdbClient,
+    private val controlClient: AdbClient? = null,
+    private val controlHost: String = "",
+    private val controlPort: Int = 0,
+) {
     private var stream: AdbClient.AdbDuplexStream? = null
+    @Volatile private var controlStream: AdbClient.AdbDuplexStream? = null
     private var scid: String? = null
     var width = 0; private set
     var height = 0; private set
+    val controlAvailable: Boolean get() = controlStream != null
 
     /** 幂等推送 server jar：先 ls -l 探测，已存在则跳过；失败则重传。 */
     fun pushServer(): String? {
@@ -169,13 +177,24 @@ class AdbScrcpySession(private val context: Context, private val client: AdbClie
 
         val id = AdbScrcpy.newScid()
         scid = id
-        val launch = client.openStream(AdbScrcpy.buildServerCommand(id, maxSize, bitRate, fps))
+        val launch = client.openStream(AdbScrcpy.buildServerCommand(id, maxSize, bitRate, fps, controlClient != null))
         if (launch.startsWith("ERROR")) return "启动 scrcpy server 失败：$launch"
 
         val service = AdbScrcpy.buildSocketService(id)
         repeat(AdbScrcpy.CONNECT_RETRIES) {
             val s = client.openDuplex(service)
             if (s != null) {
+                // DesktopConnection.open() accepts video then control, and only then writes video metadata.
+                // Keep control on its own ADB transport so video reads cannot hold its protocol lock.
+                if (controlClient != null) {
+                    val connected = controlClient.connect(controlHost, controlPort)
+                    val control = if (connected.startsWith("OK")) controlClient.openDuplex(service) else null
+                    if (control == null) {
+                        s.close()
+                        return "CONTROL_SOCKET_FAILED: $connected service=$service"
+                    }
+                    controlStream = control
+                }
                 val head = runCatching { s.readN(AdbScrcpy.VIDEO_HEADER_SIZE) }.getOrNull()
                 val header = head?.let { AdbScrcpy.parseVideoHeader(it) }
                 if (header != null) {
@@ -185,6 +204,8 @@ class AdbScrcpySession(private val context: Context, private val client: AdbClie
                     return null
                 }
                 runCatching { s.close() } // 握上了但头无效 → 关流重试
+                runCatching { controlStream?.close() }
+                controlStream = null
             }
             Thread.sleep(AdbScrcpy.CONNECT_RETRY_DELAY_MS)
         }
@@ -202,7 +223,17 @@ class AdbScrcpySession(private val context: Context, private val client: AdbClie
             ?: throw IOException("scrcpy 视频包解析失败（payload 长度不符）")
     }
 
-    /** 第 2 轮控制通道入口：必须在 video socket 之后连接；本轮不调用。 */
+    /** Control writes run on a dedicated service worker; a broken stream disables further input. */
+    fun injectControl(bytes: ByteArray): Boolean {
+        val s = controlStream ?: return false
+        return try { s.writeBytes(bytes); true } catch (e: Exception) {
+            android.util.Log.w("AdbScrcpy", "control socket write failed", e)
+            runCatching { s.close() }
+            controlStream = null
+            false
+        }
+    }
+
     fun controlSocketService(): String? = scid?.let(AdbScrcpy::buildSocketService)
 
     /**
@@ -215,6 +246,9 @@ class AdbScrcpySession(private val context: Context, private val client: AdbClie
      * 拿不到 scid（会话未启动）则跳过远程清理，只关流。
      */
     fun stop(beforeRemoteCleanup: (() -> Unit)? = null) {
+        runCatching { controlClient?.close() }
+        runCatching { controlStream?.close() }
+        controlStream = null
         runCatching { stream?.close() }
         stream = null
         val id = scid

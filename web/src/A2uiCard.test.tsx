@@ -619,4 +619,96 @@ describe("A2uiCard", () => {
     expect(detail.a2ui_submit).toEqual({ weather: "小雨" });
     stop();
   });
+
+  // R105: the three cron a2ui templates shipped in A2UI_GUIDE — same JSON specs,
+  // verified end-to-end (prefill renders + submit emits structured values).
+
+  it("R105 cron 模板·晨报：五组件 prefill 渲染并提交结构化值", () => {
+    const { handler, stop } = captureFill();
+    const spec = {
+      title: "晨报确认",
+      submit_label: "提交晨报",
+      fields: [
+        { type: "DATE_PICK", key: "date", label: "日期", prefill: "2026-11-08" },
+        { type: "TEXT_INPUT", key: "weather", label: "天气", prefill: "晴 26℃" },
+        { type: "CHOICE", key: "agenda", label: "今日日程", multiple: true, options: ["站会", "评审", "复盘"], prefill: ["站会", "复盘"] },
+        { type: "SWITCH", key: "todo", label: "看待办", default: false, prefill: true },
+        { type: "NUMBER_SLIDER", key: "focus", label: "专注分钟", min: 0, max: 60, step: 5, default: 25, prefill: 35 },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect((screen.getByLabelText(/日期/) as HTMLInputElement).value).toBe("2026-11-08");
+    expect((screen.getByLabelText(/天气/) as HTMLInputElement).value).toBe("晴 26℃");
+    expect((screen.getByLabelText("站会") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("评审") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText("复盘") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/看待办/) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/专注分钟/) as HTMLInputElement).value).toBe("35");
+
+    fireEvent.click(screen.getByText("提交晨报"));
+    const detail = JSON.parse(handler.mock.calls[0][0].detail as string);
+    expect(detail.a2ui_title).toBe("晨报确认");
+    expect(detail.a2ui_submit).toEqual({
+      date: "2026-11-08",
+      weather: "晴 26℃",
+      agenda: ["站会", "复盘"],
+      todo: true,
+      focus: 35,
+    });
+    stop();
+  });
+
+  it("R105 cron 模板·备份范围：多选目录预填 + 开关 + 备注", () => {
+    const { handler, stop } = captureFill();
+    const spec = {
+      title: "备份范围",
+      submit_label: "开始备份",
+      fields: [
+        { type: "CHOICE", key: "folders", label: "要备份的目录", multiple: true, options: ["DCIM", "Download", "Documents", "WhatsApp"], prefill: ["DCIM", "Download"] },
+        { type: "SWITCH", key: "include_hidden", label: "包含隐藏文件", default: false, prefill: false },
+        { type: "TEXT_INPUT", key: "note", label: "备注", prefill: "每周例行" },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect((screen.getByLabelText("DCIM") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Download") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Documents") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText(/包含隐藏文件/) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText(/备注/) as HTMLInputElement).value).toBe("每周例行");
+
+    fireEvent.click(screen.getByText("开始备份"));
+    const detail = JSON.parse(handler.mock.calls[0][0].detail as string);
+    expect(detail.a2ui_submit).toEqual({
+      folders: ["DCIM", "Download"],
+      include_hidden: false,
+      note: "每周例行",
+    });
+    stop();
+  });
+
+  it("R105 cron 模板·删除确认：风险 CARD + 必选 BUTTON_GROUP 未选前拦提交，选中后带值提交", () => {
+    const { handler, stop } = captureFill();
+    const spec = {
+      title: "删除确认",
+      submit_label: "提交",
+      fields: [
+        { type: "CARD", title: "高风险操作", text: "将永久删除所选数据，不可恢复。" },
+        { type: "BUTTON_GROUP", key: "confirm", label: "是否继续", required: true, buttons: [{ value: "cancel", label: "取消" }, { value: "delete", label: "确认删除" }] },
+        { type: "TEXT_INPUT", key: "reason", label: "删除原因", prefill: "清理旧备份" },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect(screen.getByText("将永久删除所选数据，不可恢复。")).toBeTruthy();
+    // 必选 BUTTON_GROUP 未选 → 不派发 composer-fill。
+    fireEvent.click(screen.getByText("提交"));
+    expect(handler).not.toHaveBeenCalled();
+    expect(screen.getByText("此项为必填")).toBeTruthy();
+    // 选中「确认删除」后可提交，值随结构化 payload 回灌。
+    fireEvent.click(screen.getByText("确认删除"));
+    fireEvent.click(screen.getByText("提交"));
+    expect(handler).toHaveBeenCalledTimes(1);
+    const detail = JSON.parse(handler.mock.calls[0][0].detail as string);
+    expect(detail.a2ui_submit).toEqual({ confirm: "delete", reason: "清理旧备份" });
+    stop();
+  });
 });

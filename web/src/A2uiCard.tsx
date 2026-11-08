@@ -701,6 +701,7 @@ export function A2uiCard({ code }: { code: string }) {
                 </button>
               ))}
             </div>
+            {errors[key] ? <div className="a2ui-field-error">{errors[key]}</div> : null}
           </div>
         );
       }
