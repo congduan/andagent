@@ -973,7 +973,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private val embeddedKeepAlive = ArrayDeque<WebView>()
+    // R109 用户方案：embedded WebView 单例常驻「页面内悬浮层」（主窗口 overlay，
+    // 非 system overlay 免权限）。不销毁 → DevTools target 恒定存活；小窗/全屏两态。
+    private var embeddedLayer: ViewGroup? = null
+    private var embeddedBrowser: WebView? = null
+    private var embeddedHeader: ViewGroup? = null
 
     private fun openEmbeddedWebview(raw: String): String {
         val uri = Uri.parse(raw)
@@ -1001,8 +1005,9 @@ class MainActivity : ComponentActivity() {
             else -> return "ERROR: 内嵌浏览器支持 https 网页与本地 HTML 文件（file:/// 或 content://）；其他 scheme 请用 open_uri"
         }
         runOnUiThread {
-            embeddedDialog?.dismiss()
-            val browser = WebView(this).apply {
+            // R109 用户方案：单例 WebView 常驻悬浮层。首次创建，此后复用（loadUrl 换页）；
+            // 「关闭」= 隐藏悬浮层（WebView 存活，DevTools target 不消失）。
+            val browser = embeddedBrowser ?: WebView(this).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.allowFileAccess = false
@@ -1012,47 +1017,71 @@ class MainActivity : ComponentActivity() {
                     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = localMedia.intercept(request) ?: assetLoader.shouldInterceptRequest(request.url)
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = request.url.scheme != "https" && request.url.scheme != "appassets"
                 }
+            }.also { embeddedBrowser = it }
+
+            val layer = embeddedLayer ?: buildEmbeddedLayer(browser).also { embeddedLayer = it }
+            // header 标题更新（host 或本地文件名）
+            embeddedHeader?.let { h ->
+                (h.getChildAt(1) as? TextView)?.text = if (uri.scheme == "https") uri.host else uri.lastPathSegment?.substringAfterLast('/') ?: "local"
             }
-            val dialog = Dialog(this)
-            // 子页统一：左上角「← 返回」（关闭浮层 = 出栈一层，与系统返回一致）。
-            val header = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                setPadding(4, 4, 16, 4)
+            if (layer.parent == null) {
+                (findViewById(android.R.id.content) as? ViewGroup)?.addView(layer)
             }
-            header.addView(TextView(this).apply {
-                text = "←"
-                contentDescription = "返回"
-                textSize = 22f
-                gravity = android.view.Gravity.CENTER
-                isClickable = true
-                isFocusable = true
-                setPadding(28, 16, 28, 16)
-                setOnClickListener { dialog.dismiss() }
-            })
-            header.addView(TextView(this).apply { text = uri.host; textSize = 16f; setSingleLine(true) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(header); addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)) }
-            dialog.setContentView(container)
-            dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                        // R109 修复「devtools 无可调试网页」：dismiss 时**保留** WebView 实例
-            // （stopLoading 但不 destroy），页面 target 在 DevTools /json 里保持存活，
-            // AI 关闭浮层后仍可 devtools_console/eval 调试。实例复用：同 uri 重开时
-            // 复活既有 Dialog；数量上限 3 个，超限按 LRU destroy 最旧（防内存堆积）。
-            dialog.setOnDismissListener {
-                browser.stopLoading()
-                (browser.parent as? ViewGroup)?.removeView(browser)
-                embeddedKeepAlive.add(browser)
-                if (embeddedKeepAlive.size > 3) {
-                    runCatching { embeddedKeepAlive.removeFirst().destroy() }
-                }
-                if (embeddedDialog === dialog) embeddedDialog = null
-            }
-            embeddedDialog = dialog
-            dialog.show()
-            dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            layer.visibility = android.view.View.VISIBLE
             browser.loadUrl(loadUrl)
         }
         return "OPENED"
+    }
+
+    /** 悬浮层容器：标题栏（← 收起为小窗 / ✕ 隐藏）+ WebView。两态：全屏 / 小窗。 */
+    private fun buildEmbeddedLayer(browser: WebView): ViewGroup {
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setBackgroundColor(0xEE3D5AFE.toInt())
+            setPadding(8, 8, 16, 8)
+        }
+        fun headerButton(text: String, desc: String, onClick: () -> Unit) = TextView(this).apply {
+            this.text = text
+            contentDescription = desc
+            textSize = 16f
+            gravity = android.view.Gravity.CENTER
+            setPadding(24, 12, 24, 12)
+            setOnClickListener { onClick() }
+        }
+        header.addView(headerButton("⬇", "收起为小窗") { setEmbeddedSmallWindow() })
+        header.addView(TextView(this).apply { textSize = 15f; setSingleLine(true); text = "embedded" }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(headerButton("✕", "隐藏悬浮层") { embeddedLayer?.visibility = android.view.View.GONE })
+        embeddedHeader = header
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(themeBackgroundColor())
+            addView(header)
+            addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+    }
+
+    /** 小窗态：右下角 45% 宽悬浮块（仍在本窗口内，免悬浮窗权限）。 */
+    private fun setEmbeddedSmallWindow() {
+        embeddedLayer?.layoutParams = (embeddedLayer?.layoutParams ?: FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)).also {
+            val dm = resources.displayMetrics
+            val w = (dm.widthPixels * 0.62f).toInt()
+            it as FrameLayout.LayoutParams
+            it.width = w
+            it.height = (w * 16 / 9)
+            it.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+            it.setMargins(12, 12, 12, 140)
+        }
+        embeddedLayer?.requestLayout()
+    }
+
+    /** 全屏态（默认）。 */
+    private fun setEmbeddedFullscreen() {
+        embeddedLayer?.layoutParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        embeddedLayer?.requestLayout()
     }
 
     /** Copy a local HTML file into the appassets/local route (readable by the
@@ -1106,7 +1135,10 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         if (FilePickResultBridge.launcher === filePickLaunchCallback) FilePickResultBridge.launcher = null
         dbGuiDialog?.dismiss()
-        embeddedDialog?.dismiss()
+        embeddedBrowser?.destroy()
+        embeddedBrowser = null
+        embeddedLayer = null
+        embeddedHeader = null
         if (::nfcSession.isInitialized) nfcSession.close()
         bridge.shutdown()
         if (::liveLoopRunner.isInitialized) liveLoopRunner.shutdown()
