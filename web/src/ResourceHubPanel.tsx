@@ -59,7 +59,13 @@ export function ResourceHubPanel({ onClose, anchor }: { onClose: () => void; anc
       <section
         className="resource-hub resource-hub-popover"
         aria-label={t("resourceHub")}
-        style={{ left: Math.max(8, anchor?.x ?? 8), top: anchor?.y ?? 8 }}
+        style={{
+          // 右对齐锚点右缘（宽 min(92vw,480px) 在窄屏会向左伸展，永不溢出右缘）；
+          // top 钳制到「屏高 - 面板高上限 - 边距」以内防底部溢出。
+          right: Math.max(8, window.innerWidth - (anchor?.x ?? window.innerWidth - 8)),
+          top: Math.min(anchor?.y ?? 8, Math.max(8, window.innerHeight * 0.28)),
+          maxHeight: window.innerHeight - (anchor?.y ?? 8) - 24,
+        }}
         onPointerDown={(event) => event.stopPropagation()}
       >
     <header className="resource-hub-head">
