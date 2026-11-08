@@ -1,4 +1,5 @@
 import type { IconName } from "./icons";
+import { IMAGE_EDIT_OPS } from "./extraTools";
 
 export interface ToolMeta {
   label: string;
@@ -6,6 +7,8 @@ export interface ToolMeta {
   /** 图标名（见 icons.tsx），统一 SVG，不用 emoji。 */
   icon: IconName;
   destructive?: boolean;
+  /** R109: ops supported by this tool (image_edit); kept in sync with extraTools. */
+  ops?: readonly string[];
 }
 
 export const TOOL_META: Record<string, ToolMeta> = {
@@ -105,7 +108,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
   // R101: devtools_errors（只返回 error 级 console）
   devtools_errors: { label: "页面错误", labelEn: "Page errors", icon: "bug" },
   screen_capture: { label: "屏幕截图", labelEn: "Screenshot", icon: "image" },
-  image_edit: { label: "图片编辑", labelEn: "Edit image", icon: "palette" },
+  image_edit: { label: "图片编辑", labelEn: "Edit image", icon: "palette", ops: IMAGE_EDIT_OPS },
   image_preview: { label: "图片预览", labelEn: "Preview image", icon: "image" },
   image_info: { label: "图片信息", labelEn: "Image info", icon: "info" },
   image_collage: { label: "图片拼图", labelEn: "Image collage", icon: "puzzle" },

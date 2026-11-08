@@ -113,4 +113,135 @@ class ImageEditEngineTest {
         assertTrue(kotlin.math.abs(Color.blue(original) - Color.blue(edited)) <= 2)
         out.recycle()
     }
+
+    // ---------------------- R109 §B new ops ----------------------
+
+    private fun quad(): Bitmap = Bitmap.createBitmap(100, 80, Bitmap.Config.ARGB_8888).also { b ->
+        val p = IntArray(100 * 80)
+        for (y in 0 until 80) for (x in 0 until 100) {
+            p[y * 100 + x] = when {
+                x < 50 && y < 40 -> Color.RED
+                x >= 50 && y < 40 -> Color.GREEN
+                x < 50 -> Color.BLUE
+                else -> Color.YELLOW
+            }
+        }
+        b.setPixels(p, 0, 100, 0, 0, 100, 80)
+    }
+    private fun quadPixels(): IntArray = quad().let { b ->
+        val p = IntArray(100 * 80); b.getPixels(p, 0, 100, 0, 0, 100, 80); b.recycle(); p
+    }
+
+    @Test fun flipMirrorsPixels() {
+        val ref = quadPixels()
+        val h = ImageEditEngine.apply(quad(), listOf(ImageOp.Flip("h")))
+        assertEquals(ref[99], h.getPixel(0, 0))            // (0,0) <- (99,0)
+        assertEquals(ref[79 * 100 + 99], h.getPixel(0, 79))
+        h.recycle()
+        val v = ImageEditEngine.apply(quad(), listOf(ImageOp.Flip("v")))
+        assertEquals(ref[79 * 100], v.getPixel(0, 0))      // (0,0) <- (0,79)
+        v.recycle()
+        val both = ImageEditEngine.apply(quad(), listOf(ImageOp.Flip("both")))
+        assertEquals(ref[79 * 100 + 99], both.getPixel(0, 0))
+        both.recycle()
+    }
+
+    @Test fun rotateFreePixelsAndBackground() {
+        val ref = quadPixels()
+        val r180 = ImageEditEngine.apply(quad(), listOf(ImageOp.RotateFree(180f, Color.WHITE)))
+        assertEquals(100, r180.width); assertEquals(80, r180.height)
+        assertEquals(ref[79 * 100 + 99], r180.getPixel(0, 0)) // 180° swaps diagonals
+        r180.recycle()
+        val r45 = ImageEditEngine.apply(quad(), listOf(ImageOp.RotateFree(45f, Color.MAGENTA)))
+        assertTrue(r45.width > 100 && r45.height > 80)
+        assertEquals(Color.MAGENTA, r45.getPixel(0, 0))       // exposed corner = background fill
+        r45.recycle()
+    }
+
+    private fun redVariance(bmp: Bitmap, x0: Int, y0: Int, x1: Int, y1: Int): Double {
+        var sum = 0.0; var sum2 = 0.0; var n = 0
+        for (y in y0 until y1) for (x in x0 until x1) {
+            val v = Color.red(bmp.getPixel(x, y)).toDouble()
+            sum += v; sum2 += v * v; n++
+        }
+        val m = sum / n
+        return sum2 / n - m * m
+    }
+
+    @Test fun gaussianBlurRegionOnly() {
+        val b = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
+        val ref = IntArray(100 * 100)
+        for (y in 0 until 100) for (x in 0 until 100) {
+            val c = if (x % 2 == 0) Color.BLACK else Color.WHITE
+            b.setPixel(x, y, c); ref[y * 100 + x] = c
+        }
+        val before = redVariance(b, 20, 20, 80, 80)
+        val out = ImageEditEngine.apply(b, listOf(ImageOp.GaussianBlur(4, 20, 20, 60, 60)))
+        val after = redVariance(out, 20, 20, 80, 80)
+        assertTrue("region variance should drop (before=$before after=$after)", after < before)
+        // outside the rect the pixels must be byte-for-byte unchanged
+        assertEquals(ref[0], out.getPixel(0, 0))
+        assertEquals(ref[99 * 100 + 99], out.getPixel(99, 99))
+        out.recycle()
+    }
+
+    @Test fun vignetteDarkensCorners() {
+        val out = ImageEditEngine.apply(
+            Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888).also { it.eraseColor(Color.WHITE) },
+            listOf(ImageOp.Vignette(1f, Color.BLACK)))
+        val center = Color.red(out.getPixel(50, 50))
+        val corner = Color.red(out.getPixel(0, 0))
+        assertTrue("center should stay bright ($center)", center > 240)
+        assertTrue("corner should be dark ($corner)", corner < 30)
+        assertTrue(center > corner)
+        out.recycle()
+    }
+
+    @Test fun autoEnhanceWidensDynamicRange() {
+        val b = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
+        for (y in 0 until 100) for (x in 0 until 100) b.setPixel(x, y, Color.rgb(100 + x % 11, 100, 100))
+        val out = ImageEditEngine.apply(b, listOf(ImageOp.AutoEnhance))
+        var min = 255; var max = 0
+        for (y in 0 until 100) for (x in 0 until 100) {
+            val r = Color.red(out.getPixel(x, y)); min = minOf(min, r); max = maxOf(max, r)
+        }
+        assertTrue("contrast stretch should widen span from 10 to >100 (got ${max - min})", max - min > 100)
+        out.recycle()
+    }
+
+    @Test fun textDrawAnchorGridAndOverride() {
+        val (w, h, tw, th, m) = listOf(200f, 100f, 40f, 20f, 10f)
+        val tl = ImageEditEngine.anchorPoint("top-left", w.toInt(), h.toInt(), tw, th, m, null, null)
+        val c = ImageEditEngine.anchorPoint("center", w.toInt(), h.toInt(), tw, th, m, null, null)
+        val br = ImageEditEngine.anchorPoint("bottom-right", w.toInt(), h.toInt(), tw, th, m, null, null)
+        assertTrue(tl.first < c.first && c.first < br.first)
+        assertTrue(tl.second < br.second)
+        val ex = ImageEditEngine.anchorPoint("top-left", w.toInt(), h.toInt(), tw, th, m, 50, 60)
+        assertEquals(50f, ex.first); assertEquals(60f, ex.second)
+        val cl = ImageEditEngine.anchorPoint("top-left", w.toInt(), h.toInt(), tw, th, m, -100, -100)
+        assertEquals(0f, cl.first); assertTrue(cl.second >= th)
+    }
+
+    @Test fun textDrawWritesTextColor() {
+        val src = Bitmap.createBitmap(160, 100, Bitmap.Config.ARGB_8888).also { it.eraseColor(Color.BLACK) }
+        val out = ImageEditEngine.apply(src, listOf(ImageOp.TextDraw("IIIII", 16, Color.WHITE, 255, null, null, "center", 0f)))
+        assertEquals(160, out.width)
+        var bright = 0
+        for (y in 0 until out.height) for (x in 0 until out.width) {
+            if (Color.red(out.getPixel(x, y)) > 128) bright++
+        }
+        assertTrue("drawText produced no bright pixels (Robolectric rasterization unavailable?)", bright > 0)
+        out.recycle()
+    }
+
+    @Test fun parseOpsRecognizesR109Ops() {
+        val ops = parseOps("[{\"op\":\"flip\",\"axis\":\"v\"},{\"op\":\"rotate_free\",\"degrees\":30,\"color\":\"#ff112233\"},{\"op\":\"text_draw\",\"text\":\"hi\",\"sizePx\":24},{\"op\":\"gaussian_blur\",\"radius\":5,\"x\":1,\"y\":2,\"w\":10,\"h\":10},{\"op\":\"vignette\",\"strength\":0.7},{\"op\":\"auto_enhance\"}]")
+        assertEquals(6, ops.size)
+        assertEquals("v", (ops[0] as ImageOp.Flip).axis)
+        assertEquals(30f, (ops[1] as ImageOp.RotateFree).degrees, 0.001f)
+        assertEquals("hi", (ops[2] as ImageOp.TextDraw).text)
+        assertEquals(10, (ops[3] as ImageOp.GaussianBlur).w)
+        assertTrue(ops[4] is ImageOp.Vignette)
+        assertTrue(ops[5] is ImageOp.AutoEnhance)
+    }
 }

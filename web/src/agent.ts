@@ -16,7 +16,7 @@ import { currentLanguage } from "./i18n";
 import { isModelConfigured } from "./modelConfig";
 import { toModelMessages } from "./modelMessages";
 import { SessionStore, type SessionMeta } from "./sessions";
-import { EXTRA_TOOL_DEFS } from "./extraTools";
+import { EXTRA_TOOL_DEFS, IMAGE_EDIT_OPS } from "./extraTools";
 import { extensionTools, skillPrompt, memoryPrompt } from "./bridge";
 import apiTools from "../../app/src/main/assets/api_tools.json";
 import { addUsage, emptyUsage, sumMessageUsage, type UsageSum } from "./usage";
@@ -597,7 +597,7 @@ const TOOL_DEFS = [
   },
   { name: "image_info", description: "读取图片宽高、格式、大小和 EXIF 方向。source 可用 content:// URI、相册 id、本地路径或 base64。", parameters: { type: "object", properties: { source: { type: "string" } }, required: ["source"] } },
   { name: "image_preview", description: "不保存，仅预览图片和 ops_json 编辑效果；预览图由工具卡片自动展示，回复只需用文字说明效果。", parameters: { type: "object", properties: { source: { type: "string" }, ops_json: { type: "string", description: "JSON 操作数组" } }, required: ["source"] } },
-  { name: "image_edit", description: "按顺序编辑图片并保存。预览图由工具卡片自动展示，回复只需说明操作与 savedPath（可作为下次 source），不要输出 ```image 围栏或粘贴图片数据。ops_json 例如 [{\"op\":\"crop\",\"aspect\":\"16:9\"},{\"op\":\"brightness\",\"value\":20}]。支持 crop/rotate/flip_h/flip_v/resize/brightness/contrast/saturation/sharpness/blur/grayscale/sepia/invert/border/watermark/compose_over。", parameters: { type: "object", properties: { source: { type: "string" }, ops_json: { type: "string" } }, required: ["source", "ops_json"] } },
+  { name: "image_edit", description: "按顺序编辑图片并保存。预览图由工具卡片自动展示，回复只需说明操作与 savedPath（可作为下次 source），不要输出 ```image 围栏或粘贴图片数据。ops_json 例如 [{\\\"op\\\":\\\"crop\\\",\\\"aspect\\\":\\\"16:9\\\"},{\\\"op\\\":\\\"brightness\\\",\\\"value\\\":20}]。支持 \" + IMAGE_EDIT_OPS.join(\"/\") + \"。R109 新增 flip{axis:h|v|both} / rotate_free{degrees,color} / text_draw{text 仅 ASCII≤64字,sizePx,color,alpha,anchor 九宫格或 x/y,rotation} / gaussian_blur{radius,x,y,w,h 区域} / vignette{strength,color} / auto_enhance。", parameters: { type: "object", properties: { source: { type: "string" }, ops_json: { type: "string" } }, required: ["source", "ops_json"] } },
   { name: "image_collage", description: "拼图并保存；预览图由工具卡片自动展示，回复只需说明布局与 savedPath。ids_or_uris 是图片源 JSON 数组；free 模式用 slots_json 指定每张图的 x/y/w/h。", parameters: { type: "object", properties: { ids_or_uris: { type: "string" }, layout: { type: "string", enum: ["grid2x2", "hstack", "vstack", "free"] }, output: { type: "string", enum: ["jpeg", "png"] }, slots_json: { type: "string" }, spacing: { type: "integer" }, background: { type: "string" }, corners: { type: "integer" } }, required: ["ids_or_uris", "layout"] } },
   { name: "db_create", description: "创建持久化 SQLite 数据库。", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
   { name: "db_list", description: "列出 SQLite 数据库。", parameters: { type: "object", properties: {}, required: [] } },

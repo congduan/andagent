@@ -46,6 +46,19 @@ sealed class ImageOp {
     data class ComposeOver(val source: String, val x: Int, val y: Int, val alpha: Int) : ImageOp()
     /** R18: .cube 3D LUT (or a built-in preset) with strength blending. */
     data class Lut(val preset: String?, val cube: String?, val strength: Float) : ImageOp()
+    // ---- R109 ----
+    /** Mirror. axis: horizontal|h|x, vertical|v|y, or both. */
+    data class Flip(val axis: String) : ImageOp()
+    /** Arbitrary-angle rotation that fills the exposed corners with a solid background. */
+    data class RotateFree(val degrees: Float, val background: Int) : ImageOp()
+    /** Text with size/color/alpha, a 9-grid anchor or explicit x/y (baseline), and rotation. */
+    data class TextDraw(val text: String, val sizePx: Int, val color: Int, val alpha: Int, val x: Int?, val y: Int?, val anchor: String, val rotation: Float) : ImageOp()
+    /** Gaussian-ish separable blur restricted to a rect; a null rect component means full image. */
+    data class GaussianBlur(val radius: Int, val x: Int?, val y: Int?, val w: Int?, val h: Int?) : ImageOp()
+    /** Darken towards the corners by blending to [color]; strength 0..1. */
+    data class Vignette(val strength: Float, val color: Int) : ImageOp()
+    /** Fast per-channel percentile contrast stretch + mean-to-middle luminance correction. */
+    data object AutoEnhance : ImageOp()
 }
 
 object ImageEditEngine {
@@ -194,6 +207,12 @@ object ImageEditEngine {
             finally { overlay.recycle() }
         }
         is ImageOp.Lut -> lut(b, op)
+        is ImageOp.Flip -> flip(b, op.axis)
+        is ImageOp.RotateFree -> rotateFree(b, op.degrees, op.background)
+        is ImageOp.TextDraw -> textDraw(b, op)
+        is ImageOp.GaussianBlur -> gaussianBlur(b, op)
+        is ImageOp.Vignette -> vignette(b, op.strength, op.color)
+        ImageOp.AutoEnhance -> autoEnhance(b)
     }
 
     private data class CubeLut(val size: Int, val data: FloatArray)
@@ -293,6 +312,308 @@ object ImageEditEngine {
         }
         return Bitmap.createBitmap(pixels, w, h, Bitmap.Config.ARGB_8888)
     }
+    // ---------------------- R109 pixel kernels ----------------------
+    // Pure IntArray transforms (no Canvas/Skia rasterization) so JVM unit tests
+    // assert exact pixel results. textDraw is the one Canvas-based op.
+
+    private fun pixelsOf(b: Bitmap): IntArray {
+        val p = IntArray(b.width * b.height)
+        b.getPixels(p, 0, b.width, 0, 0, b.width, b.height)
+        return p
+    }
+    private fun bitmapOf(p: IntArray, w: Int, h: Int): Bitmap =
+        Bitmap.createBitmap(p, w, h, Bitmap.Config.ARGB_8888)
+    private fun channel(c: Int, shift: Int) = c ushr shift and 255
+    private fun pack(a: Float, r: Float, g: Float, b: Float): Int =
+        (a.roundToInt().coerceIn(0, 255) shl 24) or
+            (r.roundToInt().coerceIn(0, 255) shl 16) or
+            (g.roundToInt().coerceIn(0, 255) shl 8) or
+            b.roundToInt().coerceIn(0, 255)
+
+    private fun flip(b: Bitmap, axis: String): Bitmap {
+        val w = b.width; val h = b.height
+        val src = pixelsOf(b); val dst = IntArray(w * h)
+        val a = axis.lowercase()
+        val sx = a == "horizontal" || a == "h" || a == "x" || a == "both"
+        val sy = a == "vertical" || a == "v" || a == "y" || a == "both"
+        for (y in 0 until h) for (x in 0 until w) {
+            val nx = if (sx) w - 1 - x else x
+            val ny = if (sy) h - 1 - y else y
+            dst[y * w + x] = src[ny * w + nx]
+        }
+        return bitmapOf(dst, w, h)
+    }
+
+    /**
+     * Bilinear in PREMULTIPLIED-alpha space (review #6): interpolating straight
+     * RGBA lets fully transparent neighbors (often RGB=0, black) bleed into
+     * visible edge pixels, producing dark/color fringes on rotate_free.
+     */
+    private fun bilinear(src: IntArray, w: Int, h: Int, fx: Float, fy: Float): Int {
+        val x0 = fx.toInt(); val y0 = fy.toInt()
+        val x1 = min(x0 + 1, w - 1); val y1 = min(y0 + 1, h - 1)
+        val tx = fx - x0; val ty = fy - y0
+        val p0 = src[y0 * w + x0]; val p1 = src[y0 * w + x1]
+        val p2 = src[y1 * w + x0]; val p3 = src[y1 * w + x1]
+        fun pm(p: Int, shift: Int): Float = (channel(p, shift) * (p ushr 24 and 255)) / 255f
+        fun lerp(a: Float, b: Float, t: Float) = a * (1 - t) + b * t
+        fun row(shift: Int) =
+            lerp(lerp(pm(p0, shift), pm(p1, shift), tx), lerp(pm(p2, shift), pm(p3, shift), tx), ty)
+        val a = row(24)
+        fun unpm(shift: Int): Float = if (a <= 0f) 0f else row(shift) * 255f / a
+        return pack(a, unpm(16), unpm(8), unpm(0))
+    }
+
+    /** Rotate by any angle, filling exposed corners with [background] (bilinear inverse map). */
+    private fun rotateFree(b: Bitmap, degrees: Float, background: Int): Bitmap {
+        require(degrees.isFinite()) { "旋转角度无效" }
+        val rad = degrees * PI.toFloat() / 180f
+        val rawC = cos(rad); val rawS = sin(rad)
+        val c = if (abs(rawC) < 1e-6f) 0f else rawC
+        val s = if (abs(rawS) < 1e-6f) 0f else rawS
+        val w = b.width; val h = b.height
+        val nw = ceil(abs(w * c) + abs(h * s)).toInt().coerceAtLeast(1)
+        val nh = ceil(abs(w * s) + abs(h * c)).toInt().coerceAtLeast(1)
+        checkSize(nw, nh)
+        val src = pixelsOf(b)
+        val dst = IntArray(nw * nh).also { it.fill(background) }
+        val cx = (w - 1) / 2f; val cy = (h - 1) / 2f
+        val ncx = (nw - 1) / 2f; val ncy = (nh - 1) / 2f
+        for (jy in 0 until nh) for (ix in 0 until nw) {
+            val dx = ix - ncx; val dy = jy - ncy
+            val fx = dx * c + dy * s + cx
+            val fy = -dx * s + dy * c + cy
+            if (fx >= 0f && fy >= 0f && fx <= w - 1f && fy <= h - 1f) {
+                dst[jy * nw + ix] = bilinear(src, w, h, fx, fy)
+            }
+        }
+        return bitmapOf(dst, nw, nh)
+    }
+
+    /** Separable gaussian kernel applied only inside a rect; outside pixels are untouched. */
+    private fun gaussianBlur(b: Bitmap, op: ImageOp.GaussianBlur): Bitmap {
+        val w = b.width; val h = b.height
+        val r = op.radius.coerceIn(1, 15)
+        val sigma = r / 2f + 0.5f
+        val k = FloatArray(2 * r + 1)
+        var ksum = 0f
+        for (i in -r..r) { val v = exp(-(i * i).toFloat() / (2 * sigma * sigma)); k[i + r] = v; ksum += v }
+        for (i in k.indices) k[i] /= ksum
+        val rx = (op.x ?: 0).coerceIn(0, w - 1)
+        val ry = (op.y ?: 0).coerceIn(0, h - 1)
+        val rw = (op.w ?: (w - rx)).coerceIn(1, w - rx)
+        val rh = (op.h ?: (h - ry)).coerceIn(1, h - ry)
+        val rRight = rx + rw; val rBottom = ry + rh
+        val src = pixelsOf(b); val out = src.copyOf()
+        // Premultiplied-alpha accumulation (review #6): straight-RGBA blur lets
+        // transparent black neighbors darken visible pixels inside the region.
+        val tmp = IntArray(rw * rh)
+        for (jy in ry until rBottom) for (ix in rx until rRight) {
+            var a = 0f; var rr = 0f; var g = 0f; var bl = 0f
+            for (d in -r..r) {
+                val sx = (ix + d).coerceIn(0, w - 1)
+                val c = src[jy * w + sx]; val wt = k[d + r]; val al = channel(c, 24)
+                a += al * wt; rr += channel(c, 16) * al / 255f * wt; g += channel(c, 8) * al / 255f * wt; bl += channel(c, 0) * al / 255f * wt
+            }
+            tmp[(jy - ry) * rw + (ix - rx)] = pack(a, rr, g, bl)
+        }
+        for (jy in ry until rBottom) for (ix in rx until rRight) {
+            var a = 0f; var rr = 0f; var g = 0f; var bl = 0f
+            for (d in -r..r) {
+                val sy = (jy - ry + d).coerceIn(0, rh - 1)
+                val cc = tmp[sy * rw + (ix - rx)]; val wt = k[d + r]
+                a += channel(cc, 24) * wt; rr += channel(cc, 16) * wt; g += channel(cc, 8) * wt; bl += channel(cc, 0) * wt
+            }
+            val inv = if (a <= 0f) 0f else 255f / a
+            out[jy * w + ix] = pack(a, rr * inv, g * inv, bl * inv)
+        }
+        return bitmapOf(out, w, h)
+    }
+
+    /** Blend towards [color] with a radial falloff: center unchanged, corners dark. */
+    private fun vignette(b: Bitmap, strength: Float, color: Int): Bitmap {
+        val s = strength.coerceIn(0f, 1f)
+        if (s <= 0f) return b
+        val w = b.width; val h = b.height
+        val src = pixelsOf(b); val out = IntArray(w * h)
+        val cx = (w - 1) / 2f; val cy = (h - 1) / 2f
+        val maxD = sqrt(cx * cx + cy * cy).coerceAtLeast(1f)
+        val tr = Color.red(color); val tg = Color.green(color); val tb = Color.blue(color)
+        for (y in 0 until h) for (x in 0 until w) {
+            val dx = (x - cx) / maxD; val dy = (y - cy) / maxD
+            val f = (s * (dx * dx + dy * dy)).coerceIn(0f, 1f)
+            val c = src[y * w + x]
+            out[y * w + x] = (c and -0x1000000) or
+                pack(0f, channel(c, 16) * (1 - f) + tr * f,
+                    channel(c, 8) * (1 - f) + tg * f,
+                    channel(c, 0) * (1 - f) + tb * f)
+        }
+        return bitmapOf(out, w, h)
+    }
+
+    /** Fast per-channel 1%/99% percentile contrast stretch + mean-to-middle gamma. */
+    private fun autoEnhance(b: Bitmap): Bitmap {
+        val w = b.width; val h = b.height
+        val src = pixelsOf(b); val out = IntArray(w * h)
+        val hist = Array(3) { IntArray(256) }
+        for (c in src) {
+            hist[0][channel(c, 16)]++; hist[1][channel(c, 8)]++; hist[2][channel(c, 0)]++
+        }
+        val target = (src.size / 100L).coerceAtLeast(1)
+        fun percentile(ch: Int, low: Boolean): Int {
+            var acc = 0L
+            val range = if (low) 0..255 else 255 downTo 0
+            for (v in range) { acc += hist[ch][v]; if (acc >= target) return v }
+            return if (low) 0 else 255
+        }
+        val lo = IntArray(3) { percentile(it, true) }
+        val hi = IntArray(3) { percentile(it, false) }
+        // Zero-dynamic-range channels (flat color images) must keep their value —
+        // stretching them mapped everything to black (review #4).
+        fun stretch(v: Int, ch: Int) =
+            if (hi[ch] <= lo[ch]) v
+            else ((v - lo[ch]) * 255f / (hi[ch] - lo[ch])).roundToInt().coerceIn(0, 255)
+        var lumSum = 0L
+        for (i in src.indices) {
+            val c = src[i]
+            val r = stretch(channel(c, 16), 0); val g = stretch(channel(c, 8), 1); val bl = stretch(channel(c, 0), 2)
+            lumSum += (r * 299 + g * 587 + bl * 114) / 1000
+            out[i] = (c and -0x1000000) or (r shl 16) or (g shl 8) or bl
+        }
+        val mean = (lumSum / src.size).toInt().coerceIn(1, 254)
+        if (mean !in 108..148) {
+            val gamma = (ln(128f / 255f) / ln(mean / 255f)).coerceIn(0.5f, 2f)
+            val lut = IntArray(256) { (255f * (it / 255f).pow(gamma)).roundToInt().coerceIn(0, 255) }
+            for (i in out.indices) {
+                val c = out[i]
+                out[i] = (c and -0x1000000) or (lut[channel(c, 16)] shl 16) or
+                    (lut[channel(c, 8)] shl 8) or lut[channel(c, 0)]
+            }
+        }
+        return bitmapOf(out, w, h)
+    }
+
+    /** Baseline-left draw point for a 9-grid anchor (or explicit x/y), clamped to canvas. */
+    internal fun anchorPoint(anchor: String, w: Int, h: Int, textW: Float, textH: Float,
+                             margin: Float, x: Int?, y: Int?): Pair<Float, Float> {
+        val a = anchor.lowercase()
+        val ax = when (a) {
+            "top-left", "center-left", "bottom-left", "left" -> margin
+            "top-center", "center", "bottom-center" -> (w - textW) / 2f
+            else -> w - textW - margin
+        }
+        val ay = when (a) {
+            "top-left", "top-center", "top-right", "top" -> margin + textH
+            "center-left", "center", "center-right" -> h / 2f + textH / 2f
+            else -> h - margin
+        }
+        val px = (x?.toFloat() ?: ax).coerceIn(0f, (w - textW).coerceAtLeast(0f))
+        val py = (y?.toFloat() ?: ay).coerceIn(textH, h.toFloat())
+        return px to py
+    }
+
+    // Self-contained 5x7 bitmap font: Robolectric has no font rasterizer, and a
+    // pure-pixel glyph keeps JVM tests deterministic and device-independent.
+    // CJK/unknown chars fall back to a solid block; the existing `watermark` op
+    // still uses the system font for full Unicode coverage.
+    private val font5x7: Map<Char, IntArray> = mapOf(
+        'A' to intArrayOf(0x0E,0x11,0x11,0x1F,0x11,0x11,0x11),
+        'B' to intArrayOf(0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E),
+        'C' to intArrayOf(0x0E,0x11,0x10,0x10,0x10,0x11,0x0E),
+        'D' to intArrayOf(0x1E,0x11,0x11,0x11,0x11,0x11,0x1E),
+        'E' to intArrayOf(0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F),
+        'F' to intArrayOf(0x1F,0x10,0x10,0x1E,0x10,0x10,0x10),
+        'G' to intArrayOf(0x0E,0x11,0x10,0x17,0x11,0x11,0x0F),
+        'H' to intArrayOf(0x11,0x11,0x11,0x1F,0x11,0x11,0x11),
+        'I' to intArrayOf(0x1F,0x04,0x04,0x04,0x04,0x04,0x1F),
+        'J' to intArrayOf(0x07,0x02,0x02,0x02,0x02,0x12,0x0C),
+        'K' to intArrayOf(0x11,0x12,0x14,0x18,0x14,0x12,0x11),
+        'L' to intArrayOf(0x10,0x10,0x10,0x10,0x10,0x10,0x1F),
+        'M' to intArrayOf(0x11,0x1B,0x15,0x15,0x11,0x11,0x11),
+        'N' to intArrayOf(0x11,0x19,0x15,0x13,0x11,0x11,0x11),
+        'O' to intArrayOf(0x0E,0x11,0x11,0x11,0x11,0x11,0x0E),
+        'P' to intArrayOf(0x1E,0x11,0x11,0x1E,0x10,0x10,0x10),
+        'Q' to intArrayOf(0x0E,0x11,0x11,0x11,0x15,0x12,0x0D),
+        'R' to intArrayOf(0x1E,0x11,0x11,0x1E,0x14,0x12,0x11),
+        'S' to intArrayOf(0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E),
+        'T' to intArrayOf(0x1F,0x04,0x04,0x04,0x04,0x04,0x04),
+        'U' to intArrayOf(0x11,0x11,0x11,0x11,0x11,0x11,0x0E),
+        'V' to intArrayOf(0x11,0x11,0x11,0x11,0x11,0x0A,0x04),
+        'W' to intArrayOf(0x11,0x11,0x11,0x15,0x15,0x1B,0x11),
+        'X' to intArrayOf(0x11,0x11,0x0A,0x04,0x0A,0x11,0x11),
+        'Y' to intArrayOf(0x11,0x11,0x0A,0x04,0x04,0x04,0x04),
+        'Z' to intArrayOf(0x1F,0x01,0x02,0x04,0x08,0x10,0x1F),
+        '0' to intArrayOf(0x0E,0x11,0x13,0x15,0x19,0x11,0x0E),
+        '1' to intArrayOf(0x04,0x0C,0x04,0x04,0x04,0x04,0x0E),
+        '2' to intArrayOf(0x0E,0x11,0x01,0x02,0x04,0x08,0x1F),
+        '3' to intArrayOf(0x1F,0x02,0x04,0x02,0x01,0x11,0x0E),
+        '4' to intArrayOf(0x02,0x06,0x0A,0x12,0x1F,0x02,0x02),
+        '5' to intArrayOf(0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E),
+        '6' to intArrayOf(0x06,0x08,0x10,0x1E,0x11,0x11,0x0E),
+        '7' to intArrayOf(0x1F,0x01,0x02,0x04,0x08,0x08,0x08),
+        '8' to intArrayOf(0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E),
+        '9' to intArrayOf(0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C),
+        ' ' to intArrayOf(0,0,0,0,0,0,0),
+        '-' to intArrayOf(0,0,0,0x1F,0,0,0),
+        '.' to intArrayOf(0,0,0,0,0,0x0C,0x0C),
+        ':' to intArrayOf(0,0x0C,0x0C,0,0x0C,0x0C,0),
+    )
+    private val fontBlock = intArrayOf(0x1F,0x1F,0x1F,0x1F,0x1F,0x1F,0x1F)
+
+    private fun textDraw(b: Bitmap, op: ImageOp.TextDraw): Bitmap {
+        val w = b.width; val h = b.height
+        val out = pixelsOf(b)
+        val scale = (op.sizePx / 8f).roundToInt().coerceIn(1, 64)
+        val cell = 5 * scale; val cellH = 7 * scale; val gap = scale
+        val textW = (op.text.length * (cell + gap) - gap).toFloat().coerceAtLeast(1f)
+        val textH = cellH.toFloat()
+        val (px, py) = anchorPoint(op.anchor, w, h, textW, textH, 16f, op.x, op.y)
+        val left = px; val top = py - textH
+        val alpha = op.alpha.coerceIn(0, 255) / 255f
+        val tr = Color.red(op.color); val tg = Color.green(op.color); val tb = Color.blue(op.color)
+        val rot = op.rotation * PI.toFloat() / 180f
+        val cr = cos(rot); val sr = sin(rot)
+        val cx = left + textW / 2f; val cy = top + textH / 2f
+        // parseOps caps text length; extra guard here so direct callers can't OOM
+        // via a giant string. Non-latin glyphs (CJK etc.) fall back to fontBlock —
+        // reject them instead of silently rendering solid boxes (R109 review #3).
+        val glyphs = op.text.take(64).uppercase()
+        require(glyphs.all { it == ' ' || font5x7.containsKey(it) }) { "text_draw 暂不支持该字符（仅限 ASCII 可打印字符），中文请用带字体的渲染方案" }
+        for (ci in glyphs.indices) {
+            val glyph = font5x7[glyphs[ci]] ?: fontBlock
+            val gx0 = left + ci * (cell + gap)
+            for (gy in 0 until 7) {
+                val row = glyph[gy]
+                for (gx in 0 until 5) {
+                    if (((row shr (4 - gx)) and 1) == 0) continue
+                    for (oy in 0 until scale) for (ox in 0 until scale) {
+                        val vx = gx0 + gx * scale + ox
+                        val vy = top + gy * scale + oy
+                        val rx = cx + (vx - cx) * cr - (vy - cy) * sr
+                        val ry = cy + (vx - cx) * sr + (vy - cy) * cr
+                        val ix = rx.roundToInt(); val iy = ry.roundToInt()
+                        if (ix in 0 until w && iy in 0 until h) {
+                            val i = iy * w + ix
+                            val c = out[i]
+                            // Source-over compositing (review #2): the old blend kept
+                            // the destination alpha, so text on transparent pixels
+                            // stayed invisible. Mix destination color weighted by its
+                            // alpha, include the pen color's own alpha, and derive the
+                            // output alpha so text shows on any base.
+                            val da = channel(c, 24) / 255f
+                            val outA = alpha + da * (1 - alpha)
+                            val mixR = if (outA <= 0f) 0f else (tr * alpha + channel(c, 16) * da * (1 - alpha)) / outA
+                            val mixG = if (outA <= 0f) 0f else (tg * alpha + channel(c, 8) * da * (1 - alpha)) / outA
+                            val mixB = if (outA <= 0f) 0f else (tb * alpha + channel(c, 0) * da * (1 - alpha)) / outA
+                            out[i] = pack(outA * 255f, mixR, mixG, mixB)
+                        }
+                    }
+                }
+            }
+        }
+        return bitmapOf(out, w, h)
+    }
+
     private fun color(b: Bitmap, matrix: ColorMatrix): Bitmap {
         val out = Bitmap.createBitmap(b.width, b.height, Bitmap.Config.ARGB_8888)
         val pixels = IntArray(b.width * b.height)
@@ -383,7 +704,7 @@ private fun JsonObject.i(key: String) = s(key)?.toIntOrNull()
 private fun JsonObject.f(key: String) = s(key)?.toFloatOrNull()
 private fun JsonObject.flag(key: String, default: Boolean = false) = s(key)?.toBooleanStrictOrNull() ?: default
 private fun parseColor(value: String?): Int = try { Color.parseColor(value ?: "#ffffff") } catch (_: Exception) { error("颜色格式无效") }
-private fun parseOps(json: String): List<ImageOp> {
+internal fun parseOps(json: String): List<ImageOp> {
     val array = Json.parseToJsonElement(json) as? JsonArray ?: error("ops_json 应为 JSON 数组")
     require(array.size <= 32) { "最多 32 个编辑步骤" }
     return array.map { element -> val o = element as? JsonObject ?: error("每个编辑步骤须为对象")
@@ -405,6 +726,12 @@ private fun parseOps(json: String): List<ImageOp> {
             "watermark" -> ImageOp.Watermark(o.s("text") ?: error("缺少水印文字"),o.s("position") ?: "bottom-right",o.i("alpha") ?: 180)
             "composeover", "compose_over" -> ImageOp.ComposeOver(o.s("source") ?: o.s("overlayId") ?: error("缺少贴图源"),o.i("x") ?: 0,o.i("y") ?: 0,o.i("alpha") ?: 255)
             "lut" -> ImageOp.Lut(o.s("preset"),o.s("cube"),(o.f("strength") ?: 1f).coerceIn(0f,1f))
+            "flip" -> ImageOp.Flip(o.s("axis") ?: "horizontal")
+            "rotate_free", "rotatefree" -> ImageOp.RotateFree(o.f("degrees") ?: error("缺少 degrees"), parseColor(o.s("color") ?: o.s("background") ?: "#ffffffff"))
+            "text_draw", "textdraw" -> run { val t = o.s("text") ?: error("缺少文字"); require(t.length <= 64) { "文字最长 64 字符" }; require(t.all { it.code in 32..126 }) { "text_draw 暂不支持该字符（仅限 ASCII 可打印字符），中文请用带字体的渲染方案" }; val rot = (o.f("rotation") ?: o.f("angle") ?: 0f); require(rot.isFinite()) { "rotation 无效" }; ImageOp.TextDraw(t, (o.i("sizePx") ?: o.i("size") ?: 48).coerceIn(1,512), parseColor(o.s("color") ?: "#ffffffff"), (o.i("alpha") ?: 255).coerceIn(0,255), o.i("x"), o.i("y"), o.s("anchor") ?: "center", rot) }
+            "gaussian_blur", "gaussianblur", "blur_region" -> ImageOp.GaussianBlur((o.i("radius") ?: 4).coerceIn(1,15), o.i("x"), o.i("y"), o.i("w") ?: o.i("width"), o.i("h") ?: o.i("height"))
+            "vignette" -> ImageOp.Vignette((o.f("strength") ?: 0.5f).coerceIn(0f,1f), parseColor(o.s("color") ?: "#ff000000"))
+            "auto_enhance", "autoenhance" -> ImageOp.AutoEnhance
             else -> error("未知图片操作：${o.s("op")}")
         }
     }
@@ -420,7 +747,7 @@ class ImageEditTool(private val context: Context, override val name: String) : T
     override val parameters = when (name) {
         "image_info" -> schemaOf("source" to strParam("content:// URI、相册 id、本地路径或 base64"), required=listOf("source"))
         "image_collage" -> schemaOf("ids_or_uris" to strParam("图片源 JSON 数组"),"layout" to strParam("grid2x2 | hstack | vstack | free"),"output" to strParam("可选：png 或 jpeg"),"slots_json" to strParam("free 布局每张图片的 {x,y,w,h} JSON 数组"),"spacing" to intParam("像素间距"),"background" to strParam("背景颜色 #RRGGBB"),"corners" to intParam("圆角像素"),required=listOf("ids_or_uris","layout"))
-        else -> schemaOf("source" to strParam("content:// URI、相册 id、本地路径或 base64；上次 savedPath 可直接用"),"ops_json" to strParam("操作 JSON 数组，如 [{\"op\":\"crop\",\"aspect\":\"16:9\"},{\"op\":\"brightness\",\"value\":20}]"),required=listOf("source"))
+        else -> schemaOf("source" to strParam("content:// URI、相册 id、本地路径或 base64；上次 savedPath 可直接用"),"ops_json" to strParam("操作 JSON 数组。原有：crop/rotate/flip_h/flip_v/resize/brightness/contrast/saturation/sharpness/blur/grayscale/sepia/invert/border/watermark/compose_over/lut。R109 新增：flip{axis:h|v|both}、rotate_free{degrees,color}、text_draw{text,sizePx,color,alpha,anchor 九宫格或 x/y,rotation}、gaussian_blur{radius,x,y,w,h 区域}、vignette{strength,color}、auto_enhance。示例 [{\"op\":\"crop\",\"aspect\":\"16:9\"},{\"op\":\"vignette\",\"strength\":0.6}]"),required=listOf("source"))
     }
     override suspend fun execute(args: JsonObject): String = runCatching {
         if (name == "image_info") {
@@ -429,7 +756,16 @@ class ImageEditTool(private val context: Context, override val name: String) : T
         }
         if (name == "image_collage") {
             val sources = Json.parseToJsonElement(args.s("ids_or_uris") ?: error("缺少 ids_or_uris")) as? JsonArray ?: error("图片源须为 JSON 数组")
-            val images = sources.map { ImageEditEngine.decode(context, it.jsonPrimitive.content) }
+            // Bound before decoding (review #5): cap source count and running pixel
+            // total so oversized batches fail fast instead of exhausting memory.
+            require(sources.size in 1..16) { "拼图数量须为 1..16 张" }
+            var decoded = 0L
+            val images = sources.map { raw ->
+                val b = ImageEditEngine.decode(context, raw.jsonPrimitive.content)
+                decoded += b.width.toLong() * b.height.toLong()
+                require(ImageEditEngine.collageInputAllowed(decoded)) { "拼图输入总像素过大（上限 ${ImageEditEngine.MAX_COLLAGE_INPUT_PIXELS / 1_000_000}MP）" }
+                b
+            }
             try {
                 val slots = args.s("slots_json")?.let { (Json.parseToJsonElement(it) as JsonArray).map { e -> val o=e.jsonObject; val x=o.i("x")?:0; val y=o.i("y")?:0; Rect(x,y,x+(o.i("w")?:0),y+(o.i("h")?:0)) } }
                 val b = ImageEditEngine.collage(images,args.s("layout") ?: "grid2x2",slots,args.i("spacing")?:8,parseColor(args.s("background") ?: "#ffffff"),args.i("corners")?:0)
@@ -441,7 +777,7 @@ class ImageEditTool(private val context: Context, override val name: String) : T
         val original = ImageEditEngine.decode(context,source)
         val before = ImageEditEngine.thumbnail(original)
         val edited = ImageEditEngine.apply(original,ops) { ImageEditEngine.decode(context,it) }
-        try { result(context,edited,before,name == "image_edit", edited.hasAlpha() && ops.any { it is ImageOp.Rotate || it is ImageOp.Border }) }
+        try { result(context,edited,before,name == "image_edit", edited.hasAlpha() && ops.any { it is ImageOp.Rotate || it is ImageOp.Border || it is ImageOp.RotateFree }) }
         finally { edited.recycle() }
     }.getOrElse { "ERROR: 图片处理失败：${it.message ?: it.javaClass.simpleName}" }
     private fun result(context: Context, bitmap: Bitmap, before: String?, save: Boolean, png: Boolean): String {
