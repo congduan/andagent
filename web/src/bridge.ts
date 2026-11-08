@@ -2,6 +2,7 @@ import { currentLanguage, translate } from "./i18n";
 import { appConfirm, cancelConfirmDialog } from "./ConfirmDialog";
 import { loadConfirmMode } from "./confirmMode";
 import { TOOL_DESTRUCTIVE, TOOL_META } from "./toolMeta";
+import { waitForMainFrameToken } from "./settingBridge";
 // significant_motion (R84) 会主动阻塞等待硬件触发，最长 300s，必须走长任务超时。
 const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "significant_motion", "adb_shell", "adb_pull", "adb_push", "adb_screencap", "adb_screencast", "adb_record", "otg_transfer"]);
 /**
@@ -158,8 +159,8 @@ export interface DeeplinkDetail {
 }
 
 interface AndroidBridge {
-  resource_hub_list?(): string;
-  resource_hub_close?(kind: string, id: string): string;
+  /** R110-review 必修项①：资源中心唯一入口，args JSON 内携带主帧 __token。 */
+  resource_hub_call?(raw: string): string;
   getSettings(): string;
   memoryPrompt?(query: string): string;
   memoryCall?(name: string, argsJson: string): string;
@@ -249,11 +250,43 @@ interface AndroidBridge {
 export interface ResourceItem {
   kind: string; id: string; title: string; subtitle: string; aliveSince: number | null; canClose: boolean;
 }
-export function resourceHubList(): ResourceItem[] {
-  try { return JSON.parse(bridge()?.resource_hub_list?.() ?? "[]") as ResourceItem[]; } catch { return []; }
+
+/**
+ * R110-review 必修项①：资源中心调用唯一通道，携带仅注入主帧的 __token。
+ * 与 settingBridge.ts 同款错误处理：无桥 / 凭证未注入 / 桥抛异常 → undefined；
+ * 桥返回 ERROR: 前缀 → console.warn，但仍返回原始串（如实交给上层展示）。
+ */
+async function resourceHubCall(args: Record<string, unknown>): Promise<string | undefined> {
+  const fn = bridge()?.resource_hub_call;
+  if (typeof fn !== "function") return undefined;
+  const token = await waitForMainFrameToken();
+  if (!token) return undefined; // 主帧凭证未注入，禁止发起调用
+  let raw: string;
+  try {
+    raw = fn(JSON.stringify({ ...args, __token: token }));
+  } catch (e) {
+    console.warn("resource_hub_call failed", e);
+    return undefined;
+  }
+  if (typeof raw !== "string" || !raw) return undefined;
+  if (raw.startsWith("ERROR:")) console.warn(`resource_hub_call rejected: ${raw.slice(6).trim()}`);
+  return raw;
 }
-export function resourceHubClose(kind: string, id: string): string {
-  return bridge()?.resource_hub_close?.(kind, id) ?? "ERROR: 资源中心不可用";
+
+export async function resourceHubList(): Promise<ResourceItem[]> {
+  const raw = await resourceHubCall({ action: "list" });
+  if (raw === undefined) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as ResourceItem[] : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function resourceHubClose(kind: string, id: string): Promise<string> {
+  const raw = await resourceHubCall({ action: "close", kind, id });
+  return raw ?? "ERROR: 资源中心不可用";
 }
 
 declare global {

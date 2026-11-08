@@ -187,16 +187,43 @@ class AgentBridge(
     @JavascriptInterface
     fun cancelSshTransfer(key: String) { if (key.isNotBlank()) SshTransferCancel.request(key) }
 
+    /**
+     * R110-review 必修项①：资源中心唯一入口。此前 list/close 两个独立
+     * @JavascriptInterface 会被注入所有 iframe，canvas/HTML 卡片 sandbox、
+     * web_embed 跨源页可直调，绕过面板 appConfirm 关闭资源、读取连接元数据。
+     * 与 kvSettingCall 同模式：args JSON 内携带仅注入主帧 window 的 __token，
+     * ResourceHub.parseAction 做恒定时间比对，不符/解析失败立即拒绝，再按 action
+     * 分发到私有 list/close 路由（不再暴露给 iframe）。
+     */
     @JavascriptInterface
-    fun resource_hub_list(): String = runCatching {
+    fun resource_hub_call(raw: String): String {
+        val action = ResourceHub.parseAction(raw, settingToken) ?: return "ERROR: 资源中心凭证无效"
+        return when (action.action) {
+            "list" -> hubList()
+            "close" -> {
+                val kind = action.kind
+                val id = action.id
+                if (kind == null || id == null) "ERROR: 关闭操作缺少 kind/id"
+                else hubClose(kind, id)
+            }
+            else -> "ERROR: 未知操作"
+        }
+    }
+
+    private fun hubList(): String = runCatching {
+        // R110-review 建议项：传输异常退出不发 ssh.transfer.done 会永久残留，
+        // 快照前清理超过 24h 的陈旧条目（兜底，不依赖 done 事件）。
+        activeTransfers.values.removeAll { System.currentTimeMillis() - (it.aliveSince ?: 0L) > 24L * 3600 * 1000 }
         val context = requireNotNull(appContext)
         // Each source returns its own snapshot; no lock is held across source calls.
         SshSessionPool.pruneDisconnected()
         val ssh = SshSessionPool.registry.list().map {
             ResourceItem("ssh", it.id, it.nickname ?: "${it.user}@${it.host}", "${it.host}:${it.port}", it.startedAt)
         }
+        // R110-review 必修项②：id 用 AdbTarget.key（host:port），避免同 host
+        // 多端口时 React key 重复、close 经 registry.resolve 误关首项。
         val adb = AdbSessionHub.liveTargets().map {
-            ResourceItem("adb", it.host, it.host, "${it.host}:${it.port}")
+            ResourceItem("adb", it.key, it.host, "${it.host}:${it.port}")
         }
         val saf = SafTreeStore.list(context).map { ResourceItem("saf", it, it.substringAfterLast('/'), it) }
         val embedded = if (embeddedResourceVisible()) listOf(ResourceItem("embedded", "browser", "WebView", "embedded")) else emptyList()
@@ -213,8 +240,7 @@ class AgentBridge(
         } })
     }.getOrDefault("[]")
 
-    @JavascriptInterface
-    fun resource_hub_close(kind: String, id: String): String = runCatching {
+    private fun hubClose(kind: String, id: String): String = runCatching {
         val context = requireNotNull(appContext)
         ResourceHub.close(kind, id, mapOf(
             "ssh" to { ref ->

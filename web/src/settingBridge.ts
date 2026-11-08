@@ -24,8 +24,9 @@ function readSettingToken(): string {
   return typeof t === "string" && t ? t : "";
 }
 
-/** R96 review 必修项：token 可能晚于页面脚本注入，轮询等待最多 ~1200ms（100ms × 12）。 */
-async function waitForSettingToken(): Promise<string | undefined> {
+/** R96 review 必修项：token 可能晚于页面脚本注入，轮询等待最多 ~1200ms（100ms × 12）。
+ *  R110-review 必修项①：导出为 waitForMainFrameToken，供资源中心通道复用（行为不变）。 */
+export async function waitForMainFrameToken(): Promise<string | undefined> {
   for (let i = 0; i < 12; i++) {
     const token = readSettingToken();
     if (token) return token;
@@ -38,7 +39,7 @@ async function waitForSettingToken(): Promise<string | undefined> {
 export async function kvSettingCall<T = unknown>(name: "kv_get" | "kv_set", args: Record<string, unknown> = {}): Promise<T | undefined> {
   const fn = (window as unknown as { AndroidBridge?: { kvSettingCall?: (name: string, argsJson: string) => string } }).AndroidBridge?.kvSettingCall;
   if (typeof fn !== "function") return undefined;
-  const token = await waitForSettingToken();
+  const token = await waitForMainFrameToken();
   if (!token) return undefined; // R96 review 必修项：主帧凭证未注入，禁止发起调用
   let raw: string;
   try {
