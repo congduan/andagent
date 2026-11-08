@@ -38,6 +38,7 @@ import {
 import { CopyMenu, selectedText, useLongPress, type CopyMenuAction } from "./CopyMenu";
 import { Icon } from "./icons";
 import { SshTransferHost } from "./SshTransferCard";
+import { ResourceHubPanel } from "./ResourceHubPanel";
 import { Drawer } from "./Drawer";
 import { appConfirm, appPrompt, ConfirmDialog, PromptDialog } from "./ConfirmDialog";
 import { batchConversationMarkdown, conversationMarkdown, hasExportableMessages } from "./exportConversation";
@@ -680,6 +681,7 @@ export default function App() {
   // 不退场期间改 onboarding 标记：标题在滑出过程中不能变；下次打开由 openModelSetup 重置。
   const closeModelSetup = useCallback(() => { dismissModelSetup(); setShowModelSetup(false); }, []);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [resourceHubOpen, setResourceHubOpen] = useState(false);
   // 顶栏「更多」菜单的位置（点按钮时按按钮矩形定位，点空白处收起）。
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
   // 设置内部的子页也由 App 记账：子页多占一条 history 记录，返回时先回设置列表。
@@ -694,9 +696,10 @@ export default function App() {
   // 手势/按键先收起覆盖层，而不是退出 App。depth 由 backLayers 模块持久持有，
   // effect 重跑只做 attach + sync，不会把已压入的记录丢在栈里。
   const layerMgrRef = useRef<ReturnType<typeof createBackLayerManager> | null>(null);
-  const overlayRef = useRef({ showSettings, settingsOnSubpage, showModelSetup, drawerOpen });
-  overlayRef.current = { showSettings, settingsOnSubpage, showModelSetup, drawerOpen };
+  const overlayRef = useRef({ showSettings, settingsOnSubpage, showModelSetup, drawerOpen, resourceHubOpen });
+  overlayRef.current = { showSettings, settingsOnSubpage, showModelSetup, drawerOpen, resourceHubOpen };
   const closeTop = useCallback((): boolean => {
+    if (overlayRef.current.resourceHubOpen) { setResourceHubOpen(false); return true; }
     if (overlayRef.current.showModelSetup) { closeModelSetup(); return true; }
     // 设置子页优先于设置本身出栈，避免"一次返回关掉整个设置"。
     if (overlayRef.current.settingsOnSubpage) { setSettingsPage("home"); return true; }
@@ -709,9 +712,9 @@ export default function App() {
   useEffect(() => {
     const mgr = getLayerMgr();
     mgr.attach();
-    mgr.sync((showModelSetup ? 1 : 0) + (showSettings ? 1 : 0) + (settingsOnSubpage ? 1 : 0) + (drawerOpen ? 1 : 0));
+    mgr.sync((showModelSetup ? 1 : 0) + (showSettings ? 1 : 0) + (settingsOnSubpage ? 1 : 0) + (drawerOpen ? 1 : 0) + (resourceHubOpen ? 1 : 0));
     return () => mgr.detach();
-  }, [showSettings, settingsOnSubpage, showModelSetup, drawerOpen]);
+  }, [showSettings, settingsOnSubpage, showModelSetup, drawerOpen, resourceHubOpen]);
   // 卸载（页面销毁 / StrictMode 双挂载）时清空 history 栈，避免残留记录。
   useEffect(() => {
     getLayerMgr().attach();
@@ -941,6 +944,7 @@ export default function App() {
               </div>
             </div>
             <div className="head-actions">
+              <button type="button" className="icon-btn" title={t("resourceHub")} aria-label={t("resourceHub")} onClick={() => setResourceHubOpen(true)}>🧩</button>
               <button
                 type="button"
                 className="model-chip"
@@ -979,6 +983,7 @@ export default function App() {
               </button>
             </div>
           </header>
+          {resourceHubOpen && <ResourceHubPanel onClose={() => setResourceHubOpen(false)} />}
 
           {moreMenu && (
             <CopyMenu

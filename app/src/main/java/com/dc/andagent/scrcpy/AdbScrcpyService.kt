@@ -218,6 +218,8 @@ class AdbScrcpyService : Service() {
         @Volatile private var visible = false
         private var ready: CountDownLatch? = null
 
+        fun isRunning(): Boolean = synchronized(guard) { running }
+
         fun start(context: Context, target: String, maxSize: Int, fps: Int): String {
             AdbSessionHub.init(context.applicationContext)
             if (AdbSessionHub.target(target) == null) return "ERROR: 目标不可达：$target（先用 adb_connect 登记）"

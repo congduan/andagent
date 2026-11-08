@@ -158,6 +158,8 @@ export interface DeeplinkDetail {
 }
 
 interface AndroidBridge {
+  resource_hub_list?(): string;
+  resource_hub_close?(kind: string, id: string): string;
   getSettings(): string;
   memoryPrompt?(query: string): string;
   memoryCall?(name: string, argsJson: string): string;
@@ -242,6 +244,16 @@ interface AndroidBridge {
   uiStatus?(): string;
   uiScreenMetrics?(): string;
   webReload?(): string;
+}
+
+export interface ResourceItem {
+  kind: string; id: string; title: string; subtitle: string; aliveSince: number | null; canClose: boolean;
+}
+export function resourceHubList(): ResourceItem[] {
+  try { return JSON.parse(bridge()?.resource_hub_list?.() ?? "[]") as ResourceItem[]; } catch { return []; }
+}
+export function resourceHubClose(kind: string, id: string): string {
+  return bridge()?.resource_hub_close?.(kind, id) ?? "ERROR: 资源中心不可用";
 }
 
 declare global {

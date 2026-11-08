@@ -607,6 +607,22 @@ class MainActivity : ComponentActivity() {
                 stopped ?: "没有进行中的投影录屏；已停止屏幕捕获服务"
             },
             embeddedWebviewOpen = { uri -> openEmbeddedWebview(uri) },
+            embeddedResourceVisible = { embeddedLayer != null && embeddedBrowser != null },
+            embeddedResourceClose = { action ->
+                if (action != "browser" && action != "browser:hide") "ERROR: 浏览器不存在" else {
+                    runOnUiThread {
+                        if (action == "browser:hide") embeddedLayer?.visibility = View.GONE
+                        else {
+                            embeddedLayer?.let { (it.parent as? ViewGroup)?.removeView(it) }
+                            embeddedBrowser?.destroy()
+                            embeddedBrowser = null
+                            embeddedLayer = null
+                            embeddedHeader = null
+                        }
+                    }
+                    "OK"
+                }
+            },
             dbGuiOpen = { name -> dbGuiOpen(name) },
             // R91.5: 凭据录入只走原生界面；WebView 拿到的永远只是元数据。
             sshCredentialOpen = {

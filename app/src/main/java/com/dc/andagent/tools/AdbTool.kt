@@ -164,6 +164,11 @@ object AdbSessionHub {
         "已断开 ADB 目标 ${t.host}:${t.port}"
     }
 
+    /** Snapshot only connected targets; never reconnect while listing resources. */
+    fun liveTargets(): List<AdbTarget> = synchronized(lock) {
+        registry.list().filter { live[it.key]?.isAlive() == true }
+    }
+
     /** R100 ③：配对时把现有 ADB RSA 公钥（adbkey.pub 格式）交给原生层放进 PeerInfo。 */
     fun adbPublicKey(): ByteArray = AdbAuth.encodePublicKey(keyPair.public)
 

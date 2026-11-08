@@ -17,6 +17,10 @@ import com.dc.andagent.tools.JsonFixer
 import com.dc.andagent.tools.strArg
 import com.dc.andagent.tools.SshTransferCancel
 import com.dc.andagent.tools.SshTransferEvent
+import com.dc.andagent.tools.SshSessionPool
+import com.dc.andagent.tools.AdbSessionHub
+import com.dc.andagent.tools.SafTreeStore
+import com.dc.andagent.scrcpy.AdbScrcpyService
 import com.dc.andagent.cron.CronScheduler
 import com.dc.andagent.cron.CronStore
 import com.dc.andagent.cron.CronA2uiInbox
@@ -90,6 +94,8 @@ class AgentBridge(
     // prefers-color-scheme 取自宿主主题，应用是深色主题时会恒为 dark。
     private val systemThemeProvider: () -> String = { "light" },
     private val embeddedWebviewOpen: (String) -> String = { "ERROR: 浏览器不可用" },
+    private val embeddedResourceVisible: () -> Boolean = { false },
+    private val embeddedResourceClose: (String) -> String = { "ERROR: 浏览器不可用" },
     private val dbGuiOpen: (String) -> String = { "ERROR: 数据库浏览器不可用" },
     // R91.5: SSH 凭据只在原生界面录入/编辑；WebView 只能打开界面 / 看元数据 / 删除。
     private val sshCredentialOpen: () -> String = { "ERROR: SSH 凭据界面不可用" },
@@ -158,10 +164,15 @@ class AgentBridge(
         .build()
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val activeTransfers = ConcurrentHashMap<String, ResourceItem>()
+    private val resourceObservedAt = ConcurrentHashMap<String, Long>()
 
     fun emitNotice(message: String) { emit(buildJsonObject { put("type", "notice"); put("message", message) }) }
 
     fun emitTransferProgress(event: SshTransferEvent) {
+        if (event.type == "ssh.transfer.done") activeTransfers.remove(event.key)
+        else activeTransfers.putIfAbsent(event.key, ResourceItem("ssh_transfer", event.key,
+            event.name, event.direction, System.currentTimeMillis()))
         emit(buildJsonObject {
             put("type", event.type); put("key", event.key); put("name", event.name)
             put("direction", event.direction); put("percent", event.percent)
@@ -175,6 +186,64 @@ class AgentBridge(
 
     @JavascriptInterface
     fun cancelSshTransfer(key: String) { if (key.isNotBlank()) SshTransferCancel.request(key) }
+
+    @JavascriptInterface
+    fun resource_hub_list(): String = runCatching {
+        val context = requireNotNull(appContext)
+        // Each source returns its own snapshot; no lock is held across source calls.
+        SshSessionPool.pruneDisconnected()
+        val ssh = SshSessionPool.registry.list().map {
+            ResourceItem("ssh", it.id, it.nickname ?: "${it.user}@${it.host}", "${it.host}:${it.port}", it.startedAt)
+        }
+        val adb = AdbSessionHub.liveTargets().map {
+            ResourceItem("adb", it.host, it.host, "${it.host}:${it.port}")
+        }
+        val saf = SafTreeStore.list(context).map { ResourceItem("saf", it, it.substringAfterLast('/'), it) }
+        val embedded = if (embeddedResourceVisible()) listOf(ResourceItem("embedded", "browser", "WebView", "embedded")) else emptyList()
+        val transfer = activeTransfers.values.toList()
+        val scrcpy = if (AdbScrcpyService.isRunning()) listOf(ResourceItem("scrcpy", "service", "scrcpy", "投屏服务")) else emptyList()
+        val cron = CronStore(context).list().filter { it.enabled }.map {
+            ResourceItem("cron", it.id, it.name, it.schedule)
+        }
+        val groups = listOf(ssh, adb, saf, embedded, transfer, scrcpy, cron)
+        val keys = groups.flatten().map { "${it.kind}:${it.id}" }.toSet()
+        resourceObservedAt.keys.retainAll(keys)
+        ResourceHub.snapshot(groups.map { group -> group.map { item ->
+            item.copy(aliveSince = item.aliveSince ?: resourceObservedAt.computeIfAbsent("${item.kind}:${item.id}") { System.currentTimeMillis() })
+        } })
+    }.getOrDefault("[]")
+
+    @JavascriptInterface
+    fun resource_hub_close(kind: String, id: String): String = runCatching {
+        val context = requireNotNull(appContext)
+        ResourceHub.close(kind, id, mapOf(
+            "ssh" to { ref ->
+                val live = SshSessionPool.remove(ref)
+                if (live == null) "ERROR: SSH 会话不存在" else {
+                    live.session.disconnect(); "OK"
+                }
+            },
+            "adb" to { host -> AdbSessionHub.disconnect(host) },
+            "saf" to { uri ->
+                require(uri in SafTreeStore.list(context)) { "授权树不存在" }
+                val grant = context.contentResolver.persistedUriPermissions.firstOrNull { it.uri.toString() == uri }
+                if (grant != null) {
+                    val flags = (if (grant.isReadPermission) android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION else 0) or
+                        (if (grant.isWritePermission) android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0)
+                    if (flags != 0) context.contentResolver.releasePersistableUriPermission(Uri.parse(uri), flags)
+                }
+                SafTreeStore.remove(context, uri); "OK"
+            },
+            "embedded" to { embeddedResourceClose(it) },
+            "ssh_transfer" to { key ->
+                if (!activeTransfers.containsKey(key)) "ERROR: 传输不存在" else {
+                    SshTransferCancel.request(key); "OK"
+                }
+            },
+            "scrcpy" to { AdbScrcpyService.stop(context) },
+            "cron" to { taskId -> cronToggle(taskId, false) },
+        ))
+    }.getOrElse { "ERROR: ${it.message}" }
 
     /* ------------------------- deep links (#14) ------------------------- */
 
