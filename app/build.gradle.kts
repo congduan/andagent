@@ -87,16 +87,14 @@ android {
      * 不用于任何真实发布场景（正式发版请换成自己的 release keystore）。
      */
     signingConfigs {
-        // 用户指定（2026-11-08）：改用仓库内置 app/keystore/andagent-dev.jks
-        // （SHA-256 b2351aed...，alias `andagent`）。本机 ~/.android/debug.keystore
-        // 目前是 2023 年那份（7e857dc6...），与设备上已装包（2009f47f...）不一致，
-        // 无法覆盖安装。口令为公开的开发口令，正式发版请换自己的 release keystore。
+        // 2026-11-08 实测纠正（主控 keytool 验证）：本机 ~/.android/debug.keystore
+        // 就是 2009f47f（Oct 17 2026 生成）——与设备已装全部历史包一致，覆盖安装正常。
+        // 仓库 jks（b2351aed）与设备不一致会导致卸载重装，弃用。正式发版换 release keystore。
         create("dev") {
-            storeFile = file("keystore/andagent-dev.jks")
-            storePassword = "andagent-dev"
-            keyAlias = "andagent"
-            keyPassword = "andagent-dev"
-            storeType = "PKCS12"
+            storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
         }
     }
 

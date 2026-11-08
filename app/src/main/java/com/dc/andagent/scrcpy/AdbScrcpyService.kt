@@ -77,8 +77,8 @@ class AdbScrcpyService : Service() {
             if (window == null) {
                 window = FloatingMirrorWindow(
                     this, ::onSurfaceReady, ::onSurfaceGone, ::reconnect,
-                    { stopSelf() }, ::sendControl,
-                ).also { it.show() }
+                    { stopSelf() }, ::sendControl, ::switchQuality,
+                ).also { it.show(); it.setQuality(maxSize) }
             }
             synchronized(guard) { visible = true }
             ready?.countDown()
@@ -114,6 +114,14 @@ class AdbScrcpyService : Service() {
         val token = generation
         window?.showConnecting()
         worker = Thread({ stream(holder, token) }, "adb-mirror-video").also { it.start() }
+    }
+
+    /** 画质切换：更新成员 + prefs 后经 reconnect() 重开会话，generation 令牌防旧线程写新窗口。 */
+    private fun switchQuality(newMaxSize: Int) {
+        maxSize = newMaxSize
+        getSharedPreferences("adb_mirror", MODE_PRIVATE).edit().putInt(EXTRA_SIZE, maxSize).apply()
+        window?.setQuality(maxSize)
+        reconnect()
     }
 
     private fun sendControl(bytes: ByteArray) {

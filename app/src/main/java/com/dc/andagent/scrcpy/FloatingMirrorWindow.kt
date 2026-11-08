@@ -20,12 +20,13 @@ import kotlin.math.hypot
 
 /** Floating video surface with a separate touch layer above the decoded image. */
 class FloatingMirrorWindow(
-    context: Context,
+    private val context: Context,
     private val onSurfaceReady: (SurfaceHolder) -> Unit,
     private val onSurfaceGone: () -> Unit,
     private val onReconnect: () -> Unit,
     private val onClose: () -> Unit,
     private val onControl: (ByteArray) -> Unit,
+    private val onQualitySwitch: (Int) -> Unit,
 ) {
     private val wm = context.getSystemService(WindowManager::class.java)
     private val density = context.resources.displayMetrics.density
@@ -33,8 +34,12 @@ class FloatingMirrorWindow(
     private val screenW = context.resources.displayMetrics.widthPixels
     private val screenH = context.resources.displayMetrics.heightPixels
     private val grab = (56 * density).toInt()
+    private val headerPx = (28 * density).toInt()
+    private val videoPx = width * 9 / 16
+    private val toolbarPx = (32 * density).toInt()
+    private val baseHeight = headerPx + videoPx
     private val params = WindowManager.LayoutParams(
-        width, (width * 9 / 16) + (28 * density).toInt(),
+        width, baseHeight,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
         android.graphics.PixelFormat.TRANSLUCENT,
@@ -72,6 +77,27 @@ class FloatingMirrorWindow(
     private var startX = 0
     private var startY = 0
 
+    // 工具条：默认折叠，标题栏 ⌄/⌃ 展开一行按键。
+    private var toolbarExpanded = false
+    private var currentMaxSize = MirrorToolbar.QUALITY_SD
+    private val toolbarToggle = TextView(context).apply {
+        text = "⌄"; setTextColor(com.dc.andagent.ui.OverlayChrome.TEXT); textSize = 16f
+        gravity = Gravity.CENTER
+        setOnClickListener { toggleToolbar() }
+    }
+    private val backButton = toolButton("◀ 返回") { injectSystemKey(MirrorToolbar.KEY_BACK) }
+    private val homeButton = toolButton("● 主页") { injectSystemKey(MirrorToolbar.KEY_HOME) }
+    private val overviewButton = toolButton("▦ 多任务") { injectSystemKey(MirrorToolbar.KEY_APP_SWITCH) }
+    private val qualityButton = toolButton(MirrorToolbar.qualityLabel(currentMaxSize)) { onQualityClick() }
+    private val systemButtons = listOf(backButton, homeButton, overviewButton)
+    private val toolbar = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setBackgroundColor(com.dc.andagent.ui.OverlayChrome.HEADER_BG)
+        gravity = Gravity.CENTER_VERTICAL
+        visibility = View.GONE
+        for (b in systemButtons + qualityButton) addView(b, LinearLayout.LayoutParams(0, toolbarPx, 1f))
+    }
+
     init {
         updateBorder()
         com.dc.andagent.ui.OverlayChrome.applyRounded(root)
@@ -82,9 +108,13 @@ class FloatingMirrorWindow(
             text = "✕"; setTextColor(com.dc.andagent.ui.OverlayChrome.TEXT_DIM); textSize = 16f; gravity = Gravity.CENTER
             setOnClickListener { onClose() }
         }
-        bar.addView(title, LinearLayout.LayoutParams(0, (28 * density).toInt(), 1f))
-        bar.addView(close, LinearLayout.LayoutParams((48 * density).toInt(), (28 * density).toInt()))
-        val longPress = Runnable { passthrough = !passthrough; updateBorder(); badge.text = if (passthrough) "拖动模式" else "可操控"; badge.visibility = View.VISIBLE }
+        bar.addView(title, LinearLayout.LayoutParams(0, headerPx, 1f))
+        bar.addView(toolbarToggle, LinearLayout.LayoutParams((36 * density).toInt(), headerPx))
+        bar.addView(close, LinearLayout.LayoutParams((48 * density).toInt(), headerPx))
+        val longPress = Runnable {
+            passthrough = !passthrough; updateBorder(); refreshToolbarState()
+            badge.text = if (passthrough) "拖动模式" else "可操控"; badge.visibility = View.VISIBLE
+        }
         bar.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -106,12 +136,60 @@ class FloatingMirrorWindow(
         video.addView(badge, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
         touchLayer.setOnTouchListener { _, event -> handleTouch(event) }
         root.addView(bar)
-        root.addView(video, LinearLayout.LayoutParams(-1, width * 9 / 16))
+        root.addView(toolbar, LinearLayout.LayoutParams(-1, toolbarPx))
+        root.addView(video, LinearLayout.LayoutParams(-1, videoPx))
         surface.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) = Unit
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) = onSurfaceReady(holder)
             override fun surfaceDestroyed(holder: SurfaceHolder) = onSurfaceGone()
         })
+        refreshToolbarState()
+        applyToolbar()
+    }
+
+    private fun toolButton(label: String, onClick: () -> Unit): TextView = TextView(context).apply {
+        text = label
+        setTextColor(com.dc.andagent.ui.OverlayChrome.TEXT)
+        textSize = 11f
+        gravity = Gravity.CENTER
+        setOnClickListener { onClick() }
+    }
+
+    private fun toggleToolbar() {
+        toolbarExpanded = !toolbarExpanded
+        applyToolbar()
+    }
+
+    /** 展开/折叠时同步浮窗高度，避免固定 params 高度挤压视频或裁掉工具条。 */
+    private fun applyToolbar() {
+        toolbar.visibility = if (toolbarExpanded) View.VISIBLE else View.GONE
+        toolbarToggle.text = if (toolbarExpanded) "⌃" else "⌄"
+        params.height = baseHeight + if (toolbarExpanded) toolbarPx else 0
+        if (shown) wm.updateViewLayout(root, params)
+    }
+
+    private fun systemKeysEnabled(): Boolean = controlAvailable && !passthrough
+
+    /** 系统键仅在可操控时点亮；仅观看/拖动模式置灰且点击无效。 */
+    private fun refreshToolbarState() {
+        val enabled = systemKeysEnabled()
+        for (b in systemButtons) {
+            b.isEnabled = enabled
+            b.alpha = if (enabled) 1f else 0.4f
+        }
+    }
+
+    private fun injectSystemKey(keycode: Int) {
+        if (!systemKeysEnabled()) return
+        for (bytes in MirrorToolbar.systemKey(keycode)) onControl(bytes)
+    }
+
+    private fun onQualityClick() = onQualitySwitch(MirrorToolbar.nextQuality(currentMaxSize))
+
+    /** service 接线：切换成功后回写当前档位，保持按钮文案与会话一致。 */
+    fun setQuality(maxSize: Int) {
+        currentMaxSize = maxSize
+        qualityButton.text = MirrorToolbar.qualityLabel(maxSize)
     }
 
     private fun moveWindow(rawX: Float, rawY: Float) {
@@ -186,6 +264,7 @@ class FloatingMirrorWindow(
         updateBorder()
         badge.text = when { !available -> "仅观看"; passthrough -> "拖动模式"; else -> "可操控" }
         badge.visibility = if (available && !passthrough) View.GONE else View.VISIBLE
+        refreshToolbarState()
     }
 
     fun show() { wm.addView(root, params); com.dc.andagent.ui.OverlayChrome.enter(root); shown = true }
