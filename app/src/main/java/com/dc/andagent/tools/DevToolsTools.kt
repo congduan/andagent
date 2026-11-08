@@ -27,7 +27,7 @@ class DevToolsTool(private val context: Context, override val name: String) : To
     override val description = when (name) {
         "devtools_status" -> "查询 WebView 远程调试开关状态与可调试页面列表（序号/标题/URL）。"
         "devtools_debugging" -> "运行时开关 WebView 远程调试（release 包同样生效，持久化到设置）。开启后 devtools_* 工具与 USB chrome://inspect 均可用。"
-        "devtools_eval" -> "在指定页面执行 JavaScript 并返回结果（awaitPromise，可做 DOM 检查/抓取内容）。page 为 devtools_status 的序号或 URL/标题关键词，缺省第一个页面；web_embed 打开的页面可用此工具检查。"
+        "devtools_eval" -> "在指定页面执行 JavaScript 并返回结果（awaitPromise，可做 DOM 检查/抓取内容）。page 为 devtools_status 的序号或 URL/标题关键词，缺省优先 web_embed 生成的 /local/ 本地页面；web_embed 打开的页面可用此工具检查。"
         "devtools_console" -> "读取指定页面的 console 输出（log/warn/error 与未捕获异常）。从 attach 起实时监听 Runtime + Log 域，Log.enable 会补发页面加载期报错，无需先 devtools_eval 制造输出；按 error/warn/log 分组返回，错误带行号。"
         "devtools_errors" -> "只返回指定页面的 error 级 console/异常（含加载期报错，按行号）。排查「生成网页→嵌入→查错→修」工作流里的加载失败很方便。"
         else -> "截取指定页面当前画面为 PNG 存入相册 Pictures/AndAgent；缩略图由工具卡片展示。"
@@ -37,19 +37,19 @@ class DevToolsTool(private val context: Context, override val name: String) : To
         "devtools_debugging" -> schemaOf("enable" to boolParam("true 开启 / false 关闭"), required = listOf("enable"))
         "devtools_console" ->
             schemaOf(
-                "page" to strParam("页面序号或 URL/标题关键词，缺省第一个页面"),
+                "page" to strParam("页面序号或 URL/标题关键词，缺省优先 web_embed 生成的 /local/ 本地页面"),
                 "lines" to intParam("返回最近行数，默认 50，上限 300"),
             )
         "devtools_errors" ->
             schemaOf(
-                "page" to strParam("页面序号或 URL/标题关键词，缺省第一个页面"),
+                "page" to strParam("页面序号或 URL/标题关键词，缺省优先 web_embed 生成的 /local/ 本地页面"),
                 "lines" to intParam("返回最近 error 行数，默认 50，上限 300"),
             )
         "devtools_screenshot" ->
-            schemaOf("page" to strParam("页面序号或 URL/标题关键词，缺省第一个页面"))
+            schemaOf("page" to strParam("页面序号或 URL/标题关键词，缺省优先 web_embed 生成的 /local/ 本地页面"))
         else ->
             schemaOf(
-                "page" to strParam("页面序号或 URL/标题关键词，缺省第一个页面"),
+                "page" to strParam("页面序号或 URL/标题关键词，缺省优先 web_embed 生成的 /local/ 本地页面"),
                 "js" to strParam("要执行的 JavaScript 表达式或语句"),
                 required = listOf("js"),
             )

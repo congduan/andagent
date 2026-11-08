@@ -218,7 +218,7 @@ object DevToolsClient {
      * 若暴露给 devtools_eval，模型可在主帧执行任意 JS 读 token 并直调
      * AndroidBridge.kvSettingCall 读 secure/engines（含 CSE API key）——违反
      * 「凭据永不过模型」铁律。过滤后模型工具通道只触达 web_embed / dbgui 等
-     * 无凭证页面；resolvePage 缺省「第一个 page target」也不会再选中主 shell。
+     * 无凭证页面；selectTarget 缺省目标也不会再选中主 shell。
      */
     fun listPages(): List<DevToolsPage> {
         socketName?.let { cached -> runCatching { return filterMainShellPages(fetchPages(cached)) } }
@@ -314,9 +314,22 @@ object DevToolsClient {
             }
     }
 
-    /** 页面序号或 url/title 关键词 → 具体页面；null 时默认第一个 type=page 的 target。 */
-    fun resolvePage(selector: String?): DevToolsPage {
-        val pages = listPages()
+    /** 页面序号或 url/title 关键词 → 具体页面；缺省优先 web_embed 暂存的自写网页。 */
+    fun resolvePage(selector: String?): DevToolsPage =
+        selectTarget(listPages(), selector)
+
+    /**
+     * R108：多 WebView 目标选择（纯逻辑，无网络，JVM 单测可覆盖）。
+     * 真正渲染自写 HTML 的是 web_embed 打开的「内嵌 WebView」——它在 /json 里
+     * 是一个 /local/ 暂存页 target，与 dbgui / 外部 iframe / about:blank 并存
+     *（主 shell 已在 listPages 出口过滤）。旧实现无 selector 时取「第一个 page」，
+     * 会随机命中上述其它页面，导致 devtools_console/eval/errors 查不到生成页的
+     * 日志与报错。这里让缺省目标精确指向刚生成的页面：
+     * - 数字序号、url/title 关键词沿用旧行为；
+     * - 缺省（null/空白）优先 /local/ 暂存页，多个取最近暂存的（文件名毫秒时间戳）；
+     *   没有暂存页才回退旧行为（第一个 page target）。
+     */
+    fun selectTarget(pages: List<DevToolsPage>, selector: String?): DevToolsPage {
         selector?.toIntOrNull()?.let { idx ->
             return pages.getOrNull(idx)
                 ?: error("页面序号 $idx 超出范围（共 ${pages.size} 个），请用 devtools_status 查看")
@@ -327,9 +340,20 @@ object DevToolsClient {
                 it.url.lowercase().contains(needle) || it.title.lowercase().contains(needle)
             } ?: error("没有匹配 “$selector” 的页面；请用 devtools_status 查看列表")
         }
+        selectLocalStagedTarget(pages)?.let { return it }
         return pages.firstOrNull { it.type == "page" } ?: pages.firstOrNull()
-        ?: error("当前无可调试页面")
+            ?: error("当前无可调试页面")
     }
+
+    /** 最近暂存的 /local/ 页面（真正渲染 web_embed 自写 HTML 的 target）；无则 null。 */
+    fun selectLocalStagedTarget(pages: List<DevToolsPage>): DevToolsPage? =
+        pages.filter { it.type == "page" && isLocalStagedPage(it) }
+            .maxByOrNull { stagedPageMillis(it.url) }
+
+    /** stageLocalHtml 命名为 page_<毫秒>.html；URLEncoder 保留数字/点/下划线。 */
+    private val stagedMillis = Regex("page_(\\d{6,})\\.html", RegexOption.IGNORE_CASE)
+    private fun stagedPageMillis(url: String): Long =
+        stagedMillis.find(url)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
 
     /** Runtime.evaluate（awaitPromise + returnByValue），返回完整 CDP 响应对象。 */
     suspend fun evaluate(page: DevToolsPage, js: String): JsonObject =
@@ -356,6 +380,13 @@ object DevToolsClient {
     /** 读取某页的结构化 console 环形缓冲；首次调用建立连接并 enable Runtime + Log。 */
     suspend fun consoleLines(page: DevToolsPage, max: Int): List<ConsoleEntry> {
         val s = session(page)
+        // R108 修复：console/errors 路径此前从不调用 connect()——只有 devtools_eval
+        //（command()）会建 WebSocket。于是「web_embed → devtools_console/errors」
+        // 未先 eval 时，Runtime/Log.enable 永不发出，环形缓冲恒空（真机反馈的
+        // 「查不到自写网页日志/报错」）。这里显式建连，保证从 attach 起订阅
+        // consoleAPICalled / exceptionThrown / Log.entryAdded；connect() 幂等，
+        // 已连接（如先 eval 过）时不会重复 enable。
+        s.ensureConnected()
         // 等 Runtime.enable 落地（最多 800ms），顺便接住 Log.enable 补发的历史条目。
         runCatching { withTimeout(800) { s.awaitEnabled() } }
         return s.consoleLines(max)
@@ -454,6 +485,9 @@ object DevToolsClient {
                     },
                 ).also { socket = it }
         }
+
+        /** R108：供 consoleLines 调用——仅确保连接已建立（onOpen 会发 Runtime/Log.enable），不等待响应。 */
+        fun ensureConnected() { connect() }
 
         private fun drop(reason: String) {
             socket = null
@@ -612,6 +646,9 @@ fun devtoolsStatusJson(context: Context): String {
                         put("type", p.type)
                         put("title", p.title.ifBlank { p.url })
                         put("url", p.url)
+                        // R108：标出 web_embed 暂存的自写网页 target，模型可据此
+                        // 用 page=<index> 或 page=/local/ 精确指定 devtools_* 目标。
+                        put("staged", DevToolsClient.isLocalStagedPage(p))
                     }
                 },
             ),

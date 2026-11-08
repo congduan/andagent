@@ -274,4 +274,100 @@ class DevToolsClientTest {
             scanDevToolsSocketNames(content),
         )
     }
+
+    // ---------------- R108：多 WebView 目标选择（纯逻辑） ----------------
+
+    private val localRoute = "https://appassets.androidplatform.net/local/"
+
+    private fun page(
+        id: String,
+        url: String,
+        type: String = "page",
+        title: String = "",
+    ): DevToolsPage = DevToolsPage(id, type, title, url, "ws://localhost/devtools/page/$id")
+
+    @Test
+    fun selectTargetDefaultsToMostRecentStagedPageAmongManyWebviews() {
+        // 模拟 /json：主 shell 已被 listPages 过滤；剩下 dbgui / 外部 iframe /
+        // about:blank / 两个先后 web_embed 生成的 /local/ 页面 / service_worker。
+        // 真正渲染自写 HTML 的是那两个 /local/ 内嵌 WebView target。
+        val pages = listOf(
+            page("DB", "https://appassets.androidplatform.net/assets/dbgui/index.html"),
+            page("IFRAME", "https://example.com/widget", title = "remote card iframe"),
+            page("BLANK", "about:blank"),
+            page("L-OLD", localRoute + "page_1700000000000.html", title = "旧生成页"),
+            page("L-NEW", localRoute + "page_1700000009999.html", title = "新生成页"),
+            page("SW", "https://example.com/sw.js", type = "service_worker"),
+        )
+        val picked = DevToolsClient.selectTarget(pages, null)
+        assertEquals("L-NEW", picked.id) // 最近暂存的 /local/ 页，而非列表里第一个 page
+        assertTrue(DevToolsClient.isLocalStagedPage(picked))
+        // 空白 selector 与 null 一致
+        assertEquals("L-NEW", DevToolsClient.selectTarget(pages, "   ").id)
+    }
+
+    @Test
+    fun selectTargetPrefersLocalEvenWhenOtherPagesComeFirst() {
+        val pages = listOf(
+            page("EXT", "https://example.com/"),
+            page("DB", "https://appassets.androidplatform.net/assets/dbgui/index.html"),
+            page("LOCAL", localRoute + "page_1700000000001.html"),
+        )
+        assertEquals("LOCAL", DevToolsClient.selectTarget(pages, null).id)
+    }
+
+    @Test
+    fun selectTargetFallsBackToFirstPageWhenNoStagedPage() {
+        val pages = listOf(
+            page("DB", "https://appassets.androidplatform.net/assets/dbgui/index.html"),
+            page("EXT", "https://example.com/"),
+            page("SW", "https://example.com/sw.js", type = "service_worker"),
+        )
+        assertNull(DevToolsClient.selectLocalStagedTarget(pages))
+        // 无 /local/ → 旧行为：第一个 type=page
+        assertEquals("DB", DevToolsClient.selectTarget(pages, null).id)
+    }
+
+    @Test
+    fun selectTargetHonorsIndexAndKeyword() {
+        val pages = listOf(
+            page("LOCAL", localRoute + "page_1700000000001.html", title = "生成页"),
+            page("EXT", "https://example.com/report", title = "Report"),
+        )
+        // 数字序号精确命中，不被默认偏好覆盖
+        assertEquals("EXT", DevToolsClient.selectTarget(pages, "1").id)
+        assertEquals("LOCAL", DevToolsClient.selectTarget(pages, "0").id)
+        // url/title 关键词
+        assertEquals("EXT", DevToolsClient.selectTarget(pages, "example.com").id)
+        assertEquals("EXT", DevToolsClient.selectTarget(pages, "Report").id)
+        // /local/ 关键词也可显式指定自写页（web_embed target 标识路径）
+        assertEquals("LOCAL", DevToolsClient.selectTarget(pages, "/local/").id)
+        // 越界 / 无匹配照旧报错
+        assertTrue(runCatching { DevToolsClient.selectTarget(pages, "9") }.isFailure)
+        assertTrue(runCatching { DevToolsClient.selectTarget(pages, "nope") }.isFailure)
+    }
+
+    @Test
+    fun selectLocalStagedTargetRespectsR96SecurityInvariants() {
+        // 主 shell 形状 / dbgui / 外部页 / 非 page 类型的 /local/ target 都不算暂存页。
+        val shell = page("SHELL", "https://appassets.androidplatform.net/assets/web/index.html")
+        val dbgui = page("DB", "https://appassets.androidplatform.net/assets/dbgui/index.html")
+        val local = page("L", localRoute + "page_1700000000001.html")
+        val sw = page("SW", localRoute + "page_1700000009999.html", type = "service_worker")
+        val pages = listOf(shell, dbgui, local, sw)
+        assertEquals("L", DevToolsClient.selectLocalStagedTarget(pages)?.id)
+        val picked = DevToolsClient.selectTarget(pages, null)
+        assertEquals("L", picked.id)
+        // 缺省命中的暂存页对模型执行放行（R101 闭环）；R96 拦截项不回退。
+        assertTrue(DevToolsClient.canModelExecutePage(picked))
+        assertTrue(DevToolsClient.isMainShellPage(shell))
+        assertTrue(!DevToolsClient.canModelExecutePage(shell))
+        assertTrue(!DevToolsClient.canModelExecutePage(dbgui))
+    }
+
+    @Test
+    fun selectTargetErrorsOnEmptyList() {
+        assertTrue(runCatching { DevToolsClient.selectTarget(emptyList(), null) }.isFailure)
+        assertTrue(runCatching { DevToolsClient.selectTarget(emptyList(), "0") }.isFailure)
+    }
 }
