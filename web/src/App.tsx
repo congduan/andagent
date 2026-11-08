@@ -683,7 +683,9 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [resourceHubAnchor, setResourceHubAnchor] = useState<{ x: number; y: number } | null>(null);
   const resourceHubOpen = resourceHubAnchor !== null;
-  const setResourceHubOpen = (open: boolean) => setResourceHubAnchor(open ? { x: 0, y: 0 } : null);
+  // 无按钮锚点时贴屏幕右上角：x 语义是面板右边缘，y 是顶栏下沿。
+  const setResourceHubOpen = (open: boolean) =>
+    setResourceHubAnchor(open ? { x: window.innerWidth - 8, y: 56 } : null);
   // 顶栏「更多」菜单的位置（点按钮时按按钮矩形定位，点空白处收起）。
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
   // 设置内部的子页也由 App 记账：子页多占一条 history 记录，返回时先回设置列表。
@@ -958,7 +960,7 @@ export default function App() {
               </button>
               <button
                 type="button"
-                className="head-chip"
+                className={`head-chip ${resourceHubOpen ? "open" : ""}`}
                 title={t("resourceHub")}
                 aria-label={t("resourceHub")}
                 aria-haspopup="menu"
@@ -966,10 +968,11 @@ export default function App() {
                 onClick={(event) => {
                   if (resourceHubOpen) { setResourceHubOpen(false); return; }
                   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-                  setResourceHubAnchor({ x: rect.right - 150, y: rect.bottom + 6 });
+                  // x 传按钮右边缘：面板据此右对齐按钮，避免硬编码偏移。
+                  setResourceHubAnchor({ x: rect.right, y: rect.bottom + 6 });
                 }}
               >
-                🧩
+                <Icon name="puzzle" size={14} />
               </button>
               {/* 会话切换时用 key 重置：面板收起，列表重新按新会话计算。 */}
               <MessageNav key={snapshot.sessionId} items={userInputs} />

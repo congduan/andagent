@@ -3875,69 +3875,110 @@ button:disabled {
   justify-content: center;
   gap: 4px;
 }
-.resource-hub{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;background:var(--bg,#171923);color:var(--text,#f5f5f5);box-shadow:0 8px 32px #0008}
-.resource-hub-small{inset:auto 12px 140px auto;width:min(62vw,440px);height:min(calc(62vw * 16 / 9),70vh);border-radius:14px;overflow:hidden}
-.resource-hub-head{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:#3d5afe;color:white}
-.resource-hub-head button{border:0;background:transparent;color:inherit;font-size:20px;padding:4px 10px}
-.resource-hub-body{overflow:auto;flex:1;padding:12px 18px}
-.resource-hub-empty{text-align:center;margin:48px 0;opacity:.7}
-.resource-hub-group{margin:0 0 18px}.resource-hub-group h3{font-size:14px;margin:0 0 8px}.resource-hub-group h3 span{opacity:.6}
-.resource-hub-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;border-radius:10px;background:color-mix(in srgb,currentColor 7%,transparent);margin-bottom:6px;overflow-wrap:anywhere}
-.resource-hub-item>div:first-child{display:flex;flex-direction:column;min-width:0}.resource-hub-item small{opacity:.7}.resource-hub-item button{flex-shrink:0}.resource-hub-actions{display:flex;gap:4px}
-
-/* ============ R110 resource hub popover, polished ============ */
+/* ============ 资源中心浮层（与顶栏菜单 / 抽屉同一套设计语言） ============ */
+.resource-hub-small{position:fixed;inset:auto 12px 140px auto;width:min(62vw,440px);height:min(calc(62vw * 16 / 9),70vh);border-radius:14px;overflow:hidden}
 .resource-hub-popover{
-  position:fixed;inset:auto;z-index:80;display:flex;flex-direction:column;
-  width:min(92vw,480px);max-height:min(72vh,620px);
-  background:#1C2030;color:var(--text,#f5f5f5);
-  border:1px solid rgba(255,255,255,.08);border-radius:16px;
-  box-shadow:0 24px 64px rgba(0,0,0,.55),0 4px 16px rgba(0,0,0,.35);
-  overflow:hidden;
+  position:fixed;inset:auto;z-index:81;display:flex;flex-direction:column;
+  background:var(--menu-bg);color:var(--text);
+  border:1px solid var(--border-strong);border-radius:14px;
+  box-shadow:0 18px 44px rgba(0,0,0,.42),0 2px 8px rgba(0,0,0,.24);
+  overflow:hidden;font-size:13px;
+  animation:fade-up .14s ease both;
+}
+:root[data-theme="light"] .resource-hub-popover{
+  box-shadow:0 18px 44px rgba(20,24,34,.16),0 2px 8px rgba(20,24,34,.08);
 }
 .resource-hub-head{
-  display:flex;justify-content:space-between;align-items:center;
-  padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);
+  display:flex;align-items:center;gap:8px;
+  padding:11px 10px 11px 14px;border-bottom:1px solid var(--border);
 }
-.resource-hub-head strong{font-size:15px;font-weight:700;letter-spacing:.3px}
-.resource-hub-head button{
-  border:0;background:rgba(255,255,255,.06);color:rgba(255,255,255,.75);
-  font-size:15px;padding:6px 12px;border-radius:10px;min-width:36px;min-height:34px;
-  cursor:pointer;transition:background .15s ease;
+.resource-hub-title{
+  display:flex;align-items:center;gap:7px;min-width:0;
+  font-size:13px;font-weight:600;letter-spacing:.01em;color:var(--text);
 }
-.resource-hub-head button:hover{background:rgba(255,255,255,.12)}
-.resource-hub-head button:active{transform:scale(.95)}
-.resource-hub-body{overflow:auto;flex:1;padding:16px}
+.resource-hub-title svg{flex:none;color:var(--accent)}
+.resource-hub-count{
+  flex:none;min-width:18px;padding:0 6px;border-radius:999px;
+  background:var(--wash-3);color:var(--muted);
+  font-size:10px;font-weight:500;line-height:16px;
+  font-variant-numeric:tabular-nums;text-align:center;
+}
+.resource-hub-close{
+  margin-left:auto;flex:none;width:30px;height:30px;
+  display:grid;place-items:center;
+  border:0;border-radius:8px;background:transparent;color:var(--muted);
+  transition:background .16s ease,color .16s ease;
+}
+.resource-hub-close:hover{background:var(--wash-3);color:var(--text)}
+.resource-hub-close:active{background:var(--wash-4)}
+.resource-hub-body{
+  flex:1;overflow:auto;padding:4px 10px 10px;
+  -webkit-overflow-scrolling:touch;
+}
 .resource-hub-empty{
-  display:flex;flex-direction:column;align-items:center;gap:10px;
-  text-align:center;margin:56px 24px;
+  display:flex;flex-direction:column;align-items:center;gap:7px;
+  padding:34px 24px 38px;text-align:center;
 }
-.resource-hub-empty-icon{font-size:44px;line-height:1;opacity:.85}
-.resource-hub-empty strong{font-size:15px;font-weight:600}
-.resource-hub-empty small{font-size:12.5px;opacity:.55;line-height:1.6;max-width:300px}
-.resource-hub-group{margin:0 0 20px}
-.resource-hub-group h3{
-  font-size:11.5px;text-transform:uppercase;letter-spacing:1.4px;
-  margin:0 0 10px;opacity:.5;font-weight:700;
+.resource-hub-empty-icon{
+  display:grid;place-items:center;width:42px;height:42px;margin-bottom:3px;
+  border-radius:50%;background:var(--wash-2);color:var(--faint);
 }
-.resource-hub-group h3 span{opacity:.8;font-weight:500}
+.resource-hub-empty strong{font-size:13px;font-weight:600;color:var(--text)}
+.resource-hub-empty small{font-size:12px;line-height:1.6;color:var(--muted);max-width:280px}
+.resource-hub-group{margin:8px 0 0}
+.resource-hub-group-head{
+  display:flex;align-items:center;gap:6px;
+  margin:0;padding:6px 6px 5px;
+  color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.03em;
+}
+.resource-hub-group-head svg{flex:none;color:var(--faint)}
+.resource-hub-group-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .resource-hub-item{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:12px;border-radius:12px;margin-bottom:8px;overflow-wrap:anywhere;
-  background:rgba(255,255,255,.045);
-  border:1px solid rgba(255,255,255,.07);
+  display:flex;align-items:center;gap:10px;
+  padding:8px 10px;margin-bottom:6px;
+  border:1px solid var(--border);border-radius:10px;
+  background:var(--wash-1);
+  transition:background .16s ease,border-color .16s ease;
 }
-.resource-hub-item>div:first-child{display:flex;flex-direction:column;min-width:0;gap:2px}
-.resource-hub-item strong{font-size:14px}
-.resource-hub-item small{opacity:.6;font-size:12px}
-.resource-hub-item button{
-  flex-shrink:0;min-height:34px;border-radius:10px;cursor:pointer;
-  border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);
-  color:var(--text,#f5f5f5);padding:6px 12px;font-size:13px;
-  transition:background .15s ease,transform .1s ease;
+.resource-hub-item:hover{background:var(--wash-2);border-color:var(--border-strong)}
+.resource-hub-icon{
+  flex:none;width:28px;height:28px;
+  display:grid;place-items:center;border-radius:8px;
+  background:var(--wash-2);color:var(--muted);
 }
-.resource-hub-item button:hover{background:rgba(255,255,255,.12)}
-.resource-hub-item button:active{transform:scale(.96)}
-.resource-hub-actions{display:flex;gap:6px}
-
+.resource-hub-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.resource-hub-main strong{
+  font-size:13px;font-weight:600;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.resource-hub-meta{
+  display:flex;align-items:center;gap:6px;min-width:0;
+  font-size:11px;color:var(--faint);
+}
+.resource-hub-subtitle{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.resource-hub-meta small{flex:none;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+.resource-hub-dot{flex:none;width:2px;height:2px;border-radius:50%;background:currentColor;opacity:.7}
+.resource-hub-tag{
+  flex:none;padding:1px 7px;border-radius:999px;
+  background:var(--wash-2);color:var(--faint);
+  font-size:10.5px;line-height:16px;white-space:nowrap;
+}
+.resource-hub-actions{display:flex;flex:none;gap:4px}
+.resource-hub-actions button{
+  flex:none;min-height:28px;padding:0 10px;
+  border:1px solid var(--border);border-radius:8px;
+  background:transparent;color:var(--muted);
+  font-size:12px;transition:background .16s ease,color .16s ease,border-color .16s ease;
+}
+.resource-hub-actions button:hover{
+  background:var(--wash-3);border-color:var(--border-strong);color:var(--text);
+}
+.resource-hub-actions button:active{background:var(--wash-4)}
+.resource-hub-actions button.danger{color:var(--danger)}
+.resource-hub-actions button.danger:hover{
+  background:color-mix(in srgb,var(--danger) 12%,transparent);
+  border-color:color-mix(in srgb,var(--danger) 28%,transparent);
+  color:var(--danger);
+}
 /* R110-review P2: 手势条安全兜底（maxHeight 预留 24px 之外再加 env 兜底） */
 .resource-hub-popover{margin-bottom:env(safe-area-inset-bottom,0px)}
