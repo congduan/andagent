@@ -308,6 +308,26 @@ object DevToolsClient {
     private fun filterMainShellPages(pages: List<DevToolsPage>): List<DevToolsPage> =
         pages.filterNot { isMainShellPage(it) }
 
+    /**
+     * R109 诊断：/json 原始页面清单（不过滤）。真机排「无可调试页面」用——
+     * 区分三种失败：socket /json 空（WebView 未实例化或调试未生效）、
+     * 全被主 shell 过滤（URL 形态与判定不匹配）、连接失败（socket 名漂移）。
+     */
+    fun diagnosePages(): String {
+        val sb = StringBuilder()
+        val candidates = runCatching { socketCandidates() }.getOrElse { listOf("scan-fail: ${it.message}") }
+        sb.append("candidates=${candidates.joinToString("|")}; cached=$socketName\n")
+        for (candidate in candidates) {
+            val body = runCatching {
+                val request = Request.Builder().url("$LOCAL_HOST/json").header("Connection", "close").build()
+                baseClient.newBuilder().socketFactory(DevToolsSocketFactory(candidate)).build()
+                    .newCall(request).execute().use { resp -> "${resp.code}: ${resp.body?.string()?.take(1200)}" }
+            }.getOrElse { "FAIL ${it.message ?: it.javaClass.simpleName}" }
+            sb.append("[$candidate] $body\n")
+        }
+        return sb.toString()
+    }
+
     private fun fetchPages(name: String): List<DevToolsPage> {
         val request = Request.Builder()
             .url("$LOCAL_HOST/json")
@@ -662,7 +682,8 @@ fun devtoolsStatusJson(context: Context): String {
         // 空列表给可操作引导：主 shell 页被安全过滤是设计行为，模型需要先
         // web_embed 打开一个页面才有可调试 target。
         if (pages.getOrDefault(emptyList()).isEmpty() && !pages.isFailure) {
-            put("hint", "列表为空是因为主 shell 页面被安全过滤（不可调试）。请先用 web_embed 打开你要调试的 HTML 页面，再调用 devtools_* 工具。")
+            put("hint", "列表为空。请先用 web_embed 打开你要调试的 HTML 页面再重试。诊断(R109)：")
+            put("diagnose", runCatching { DevToolsClient.diagnosePages() }.getOrDefault("diagnose fail").take(800))
         }
     }.toString()
 }
