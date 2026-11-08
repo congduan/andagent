@@ -244,4 +244,60 @@ class ImageEditEngineTest {
         assertTrue(ops[4] is ImageOp.Vignette)
         assertTrue(ops[5] is ImageOp.AutoEnhance)
     }
+
+    // R109 review follow-ups (main-controller fixes):
+    @Test fun autoEnhanceKeepsFlatColorImages() {
+        val src = Bitmap.createBitmap(50, 50, Bitmap.Config.ARGB_8888)
+        src.eraseColor(Color.rgb(100, 150, 200))
+        val out = ImageEditEngine.apply(src, listOf(ImageOp.AutoEnhance))
+        assertEquals(Color.rgb(100, 150, 200), out.getPixel(25, 25))
+        out.recycle()
+    }
+
+    @Test fun parseOpsRejectsNonAsciiAndOverlongTextDraw() {
+        val ex1 = runCatching { parseOps("[{\"op\":\"text_draw\",\"text\":\"你好\"}]") }
+        assertTrue(ex1.isFailure)
+        val long = "a".repeat(65)
+        val ex2 = runCatching { parseOps("[{\"op\":\"text_draw\",\"text\":\"$long\"}]") }
+        assertTrue(ex2.isFailure)
+        // JSON cannot express NaN/Infinity numerically; "nan" text falls back to
+        // the 0f default via toFloatOrNull, and the engine still guards isFinite.
+    }
+
+    @Test fun textDrawVisibleOnTransparentBase() {
+        val src = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888) // fully transparent
+        val out = ImageEditEngine.apply(src, listOf(ImageOp.TextDraw("TEST", 48, Color.WHITE, 255, null, null, "center", 0f)))
+        var lit = 0
+        for (y in 0 until out.height) for (x in 0 until out.width) {
+            if (out.getPixel(x, y) != 0) lit++
+        }
+        assertTrue("text on transparent base produced no visible pixels", lit > 0)
+        out.recycle()
+    }
+
+    @Test fun rotateFreeTransparentCornersHaveNoDarkFringe() {
+        // Opaque white center on a transparent base: bilinear edge pixels must not
+        // darken toward black (premultiplied interpolation).
+        val src = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
+        val white = Color.WHITE
+        for (y in 40 until 60) for (x in 40 until 60) src.setPixel(x, y, white)
+        val out = ImageEditEngine.apply(src, listOf(ImageOp.RotateFree(10f, 0x00000000)))
+        var minA = 255
+        var fringe = false
+        for (y in 0 until out.height) for (x in 0 until out.width) {
+            val p = out.getPixel(x, y)
+            val a = Color.alpha(p)
+            if (a in 1..254 && Color.red(p) < a - 24 && a > 40) fringe = true // RGB far below alpha => dark bleed
+            if (a < minA) minA = a
+        }
+        assertFalse("dark fringe on rotated transparent edges", fringe)
+        out.recycle()
+    }
+
+    @Test fun parseOpsCapsStepsAt32Still() {
+        val ops = parseOps("[" + (1..32).joinToString(",") { "{\"op\":\"invert\"}" } + "]")
+        assertEquals(32, ops.size)
+        val ex = runCatching { parseOps("[" + (1..33).joinToString(",") { "{\"op\":\"invert\"}" } + "]") }
+        assertTrue(ex.isFailure)
+    }
 }
