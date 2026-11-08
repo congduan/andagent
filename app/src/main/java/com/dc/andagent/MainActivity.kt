@@ -607,20 +607,32 @@ class MainActivity : ComponentActivity() {
                 stopped ?: "没有进行中的投影录屏；已停止屏幕捕获服务"
             },
             embeddedWebviewOpen = { uri -> openEmbeddedWebview(uri) },
-            embeddedResourceVisible = { embeddedLayer != null && embeddedBrowser != null },
+            embeddedResourceVisible = { synchronized(embeddedLock) { embeddedLayer != null && embeddedBrowser != null } },
             embeddedResourceClose = { action ->
                 if (action != "browser" && action != "browser:hide") "ERROR: 浏览器不存在" else {
+                    // R110-review 必修项③：JavaBridge 线程等主线程真实执行结果，
+                    // 不再立即返回 "OK" 虚报成功。await 在锁外等，防死锁。
+                    val latch = java.util.concurrent.CountDownLatch(1)
+                    val result = arrayOfNulls<String>(1)
                     runOnUiThread {
-                        if (action == "browser:hide") embeddedLayer?.visibility = View.GONE
-                        else {
-                            embeddedLayer?.let { (it.parent as? ViewGroup)?.removeView(it) }
-                            embeddedBrowser?.destroy()
-                            embeddedBrowser = null
-                            embeddedLayer = null
-                            embeddedHeader = null
+                        try {
+                            synchronized(embeddedLock) {
+                                if (action == "browser:hide") embeddedLayer?.visibility = View.GONE
+                                else {
+                                    embeddedLayer?.let { (it.parent as? ViewGroup)?.removeView(it) }
+                                    embeddedBrowser?.destroy()
+                                    embeddedBrowser = null
+                                    embeddedLayer = null
+                                    embeddedHeader = null
+                                }
+                                result[0] = "OK"
+                            }
+                        } finally {
+                            latch.countDown()
                         }
                     }
-                    "OK"
+                    if (latch.await(2, java.util.concurrent.TimeUnit.SECONDS)) result[0] ?: "ERROR: 操作超时，请重试"
+                    else "ERROR: 操作超时，请重试"
                 }
             },
             dbGuiOpen = { name -> dbGuiOpen(name) },
@@ -994,6 +1006,8 @@ class MainActivity : ComponentActivity() {
     private var embeddedLayer: ViewGroup? = null
     private var embeddedBrowser: WebView? = null
     private var embeddedHeader: ViewGroup? = null
+    /** R110-review 必修项③：三字段主线程写、JavaBridge 线程读，统一用此锁同步。 */
+    private val embeddedLock = Any()
 
     private fun openEmbeddedWebview(raw: String): String {
         val uri = Uri.parse(raw)
@@ -1021,30 +1035,32 @@ class MainActivity : ComponentActivity() {
             else -> return "ERROR: 内嵌浏览器支持 https 网页与本地 HTML 文件（file:/// 或 content://）；其他 scheme 请用 open_uri"
         }
         runOnUiThread {
-            // R109 用户方案：单例 WebView 常驻悬浮层。首次创建，此后复用（loadUrl 换页）；
-            // 「关闭」= 隐藏悬浮层（WebView 存活，DevTools target 不消失）。
-            val browser = embeddedBrowser ?: WebView(this).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.allowFileAccess = false
-                settings.allowContentAccess = false
-                setBackgroundColor(themeBackgroundColor())
-                webViewClient = object : WebViewClient() {
-                    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = localMedia.intercept(request) ?: assetLoader.shouldInterceptRequest(request.url)
-                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = request.url.scheme != "https" && request.url.scheme != "appassets"
-                }
-            }.also { embeddedBrowser = it }
+            synchronized(embeddedLock) {
+                // R109 用户方案：单例 WebView 常驻悬浮层。首次创建，此后复用（loadUrl 换页）；
+                // 「关闭」= 隐藏悬浮层（WebView 存活，DevTools target 不消失）。
+                val browser = embeddedBrowser ?: WebView(this).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    setBackgroundColor(themeBackgroundColor())
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = localMedia.intercept(request) ?: assetLoader.shouldInterceptRequest(request.url)
+                        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = request.url.scheme != "https" && request.url.scheme != "appassets"
+                    }
+                }.also { embeddedBrowser = it }
 
-            val layer = embeddedLayer ?: buildEmbeddedLayer(browser).also { embeddedLayer = it }
-            // header 标题更新（host 或本地文件名）
-            embeddedHeader?.let { h ->
-                (h.getChildAt(1) as? TextView)?.text = if (uri.scheme == "https") uri.host else uri.lastPathSegment?.substringAfterLast('/') ?: "local"
+                val layer = embeddedLayer ?: buildEmbeddedLayer(browser).also { embeddedLayer = it }
+                // header 标题更新（host 或本地文件名）
+                embeddedHeader?.let { h ->
+                    (h.getChildAt(1) as? TextView)?.text = if (uri.scheme == "https") uri.host else uri.lastPathSegment?.substringAfterLast('/') ?: "local"
+                }
+                if (layer.parent == null) {
+                    (findViewById(android.R.id.content) as? ViewGroup)?.addView(layer)
+                }
+                layer.visibility = android.view.View.VISIBLE
+                browser.loadUrl(loadUrl)
             }
-            if (layer.parent == null) {
-                (findViewById(android.R.id.content) as? ViewGroup)?.addView(layer)
-            }
-            layer.visibility = android.view.View.VISIBLE
-            browser.loadUrl(loadUrl)
         }
         return "OPENED"
     }
@@ -1067,8 +1083,8 @@ class MainActivity : ComponentActivity() {
         }
         header.addView(headerButton("⬇", "收起为小窗") { setEmbeddedSmallWindow() })
         header.addView(TextView(this).apply { textSize = 15f; setSingleLine(true); text = "embedded" }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(headerButton("✕", "隐藏悬浮层") { embeddedLayer?.visibility = android.view.View.GONE })
-        embeddedHeader = header
+        header.addView(headerButton("✕", "隐藏悬浮层") { synchronized(embeddedLock) { embeddedLayer?.visibility = android.view.View.GONE } })
+        synchronized(embeddedLock) { embeddedHeader = header }
 
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1080,24 +1096,39 @@ class MainActivity : ComponentActivity() {
 
     /** 小窗态：右下角 45% 宽悬浮块（仍在本窗口内，免悬浮窗权限）。 */
     private fun setEmbeddedSmallWindow() {
-        embeddedLayer?.layoutParams = (embeddedLayer?.layoutParams ?: FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)).also {
-            val dm = resources.displayMetrics
-            val w = (dm.widthPixels * 0.62f).toInt()
-            it as FrameLayout.LayoutParams
-            it.width = w
-            it.height = (w * 16 / 9)
-            it.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
-            it.setMargins(12, 12, 12, 140)
+        synchronized(embeddedLock) {
+            embeddedLayer?.layoutParams = (embeddedLayer?.layoutParams ?: FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)).also {
+                val dm = resources.displayMetrics
+                val w = (dm.widthPixels * 0.62f).toInt()
+                it as FrameLayout.LayoutParams
+                it.width = w
+                it.height = (w * 16 / 9)
+                it.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+                it.setMargins(12, 12, 12, 140)
+            }
+            embeddedLayer?.setPadding(0, 0, 0, 0)
+            embeddedLayer?.requestLayout()
         }
-        embeddedLayer?.requestLayout()
     }
 
     /** 全屏态（默认）。 */
     private fun setEmbeddedFullscreen() {
-        embeddedLayer?.layoutParams = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        embeddedLayer?.requestLayout()
+        synchronized(embeddedLock) {
+            embeddedLayer?.layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            // 全屏态吃满窗口（edge-to-edge），header 会顶进状态栏、底沿贴手势条——
+            // 用 insets padding 让出安全区（关闭按钮不被遮挡）。小窗态已用 margin 避开，无需处理。
+            embeddedLayer?.setOnApplyWindowInsetsListener { view, insets ->
+                val sys = insets.getInsets(
+                    androidx.core.view.WindowInsetsCompat.Type.systemBars()
+                        or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+                view.setPadding(sys.left, sys.top, sys.right, sys.bottom)
+                insets
+            }
+            embeddedLayer?.requestApplyInsets()
+            embeddedLayer?.requestLayout()
+        }
     }
 
     /** Copy a local HTML file into the appassets/local route (readable by the
@@ -1151,10 +1182,12 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         if (FilePickResultBridge.launcher === filePickLaunchCallback) FilePickResultBridge.launcher = null
         dbGuiDialog?.dismiss()
-        embeddedBrowser?.destroy()
-        embeddedBrowser = null
-        embeddedLayer = null
-        embeddedHeader = null
+        synchronized(embeddedLock) {
+            embeddedBrowser?.destroy()
+            embeddedBrowser = null
+            embeddedLayer = null
+            embeddedHeader = null
+        }
         if (::nfcSession.isInitialized) nfcSession.close()
         bridge.shutdown()
         if (::liveLoopRunner.isInitialized) liveLoopRunner.shutdown()

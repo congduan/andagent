@@ -485,7 +485,7 @@ function TemplateGrid() {
   );
 }
 
-function Composer({ hasKey }: { hasKey: boolean }) {
+function Composer({ hasKey, onResourceHub }: { hasKey: boolean; onResourceHub: () => void }) {
   const { t } = useI18n();
   const aui = useAui();
   const running = useAuiState((state) => state.thread.isRunning);
@@ -586,6 +586,15 @@ function Composer({ hasKey }: { hasKey: boolean }) {
     <div className="composer-dock">
       <ComposerPrimitive.Root className="composer">
         <div className="composer-row">
+          <button
+            type="button"
+            className="icon-btn"
+            title={t("resourceHub")}
+            aria-label={t("resourceHub")}
+            onClick={onResourceHub}
+          >
+            🧩
+          </button>
           {hasKey && (
             <button
               type="button"
@@ -944,7 +953,6 @@ export default function App() {
               </div>
             </div>
             <div className="head-actions">
-              <button type="button" className="icon-btn" title={t("resourceHub")} aria-label={t("resourceHub")} onClick={() => setResourceHubOpen(true)}>🧩</button>
               <button
                 type="button"
                 className="model-chip"
@@ -1027,7 +1035,7 @@ export default function App() {
           </ThreadPrimitive.Root>
 
           <SshTransferHost />
-          <Composer hasKey={isModelConfigured(settings)} />
+          <Composer hasKey={isModelConfigured(settings)} onResourceHub={() => setResourceHubOpen(true)} />
 
           {settingsPresence.rendered && (
             <SettingsPanel
