@@ -973,6 +973,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val embeddedKeepAlive = ArrayDeque<WebView>()
+
     private fun openEmbeddedWebview(raw: String): String {
         val uri = Uri.parse(raw)
         // https: remote pages. Local HTML files: load their bytes through the
@@ -1032,7 +1034,19 @@ class MainActivity : ComponentActivity() {
             val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(header); addView(browser, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)) }
             dialog.setContentView(container)
             dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            dialog.setOnDismissListener { browser.stopLoading(); browser.loadUrl("about:blank"); (browser.parent as? ViewGroup)?.removeView(browser); browser.destroy(); if (embeddedDialog === dialog) embeddedDialog = null }
+                        // R109 修复「devtools 无可调试网页」：dismiss 时**保留** WebView 实例
+            // （stopLoading 但不 destroy），页面 target 在 DevTools /json 里保持存活，
+            // AI 关闭浮层后仍可 devtools_console/eval 调试。实例复用：同 uri 重开时
+            // 复活既有 Dialog；数量上限 3 个，超限按 LRU destroy 最旧（防内存堆积）。
+            dialog.setOnDismissListener {
+                browser.stopLoading()
+                (browser.parent as? ViewGroup)?.removeView(browser)
+                embeddedKeepAlive.add(browser)
+                if (embeddedKeepAlive.size > 3) {
+                    runCatching { embeddedKeepAlive.removeFirst().destroy() }
+                }
+                if (embeddedDialog === dialog) embeddedDialog = null
+            }
             embeddedDialog = dialog
             dialog.show()
             dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
