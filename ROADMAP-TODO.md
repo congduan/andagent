@@ -53,7 +53,7 @@
 | 14 | 深度链接回调：andagent:// scheme，供外部/小组件触发对话 | ✅ | Manifest VIEW/BROWSABLE；andagent://send?prompt=..&auto=1；原生队列 + deeplink.flush 事件 + App.tsx 自动发送/填入；andagent://refresh 触发小组件刷新 |
 | 15 | 联系人读取（READ_CONTACTS，name/phone 搜索） | ✅ | contacts_search（动态权限） |
 | 16 | 短信读取（READ_SMS） | ✅ | sms_read（号码/正文/时间过滤，只读） |
-| 17 | **自我扩展（agent 自建工具）**：my_tool_create/list/read/update/delete/test/enable 七元工具；JS handler（exports.tools=[{name:"run",handler}]）+ 工具白名单（禁 skill_/mcp_/cron_/live_/script_/my_ 前缀）+ 参数 JSON Schema；持久化 filesDir/selfext/，reload 恢复；schema 经 extensionTools() 对模型可见；上限 20；update/delete 需 confirm=true；沙箱内禁调写操作元工具 | ✅ | SelfExtTools.kt + MainActivity 注册 + QuickJsEngine 递归清单 + SELF_EXT_GUIDE 提示词；SelfExtToolsTest 6 用例；代码在库待 commit，真机端到端复测待做 |
+| 17 | **自我扩展（agent 自建工具）**：my_tool_create/list/read/update/delete/test/enable/share 八元工具；JS handler（exports.tools=[{name:"run",handler}]）+ 工具白名单（禁 skill_/mcp_/cron_/live_/script_/my_ 前缀）+ 参数 JSON Schema；持久化 filesDir/selfext/，reload 恢复；schema 经 extensionTools() 对模型可见；上限 20；update/delete 需 confirm=true；沙箱内禁调写操作元工具；my_tool_share 导出标准技能 ZIP（另一台设备 skill_install 注册为 skill_<名字>_run） | ✅ | SelfExtTools.kt + MainActivity 注册 + QuickJsEngine 递归清单 + SELF_EXT_GUIDE 提示词；SelfExtToolsTest 7 用例；代码在库待 commit，真机端到端复测待做 |
 
 ## ✅ 已完成（v0.2.1 → v0.10.0 战果存档）
 - ✅ 文档生成（纯 Kotlin DOCX/PPTX/XLSX、对话工具、QuickJS API；R8）

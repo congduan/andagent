@@ -835,7 +835,7 @@ const SELF_EXT_GUIDE = [
   "- 创建前先向用户简要说明：要建什么工具、为什么现有工具组合不够。创建成功后，下一轮对话即可直接调用该 my_* 工具；用 my_tool_test 验证后再正式使用。",
   "- 工具形态：code 是 exports.tools = [{ name: \"run\", handler: function(args){...} }]；handler 内用 andagent.tool(name, JSON.stringify(args)) 调用 allow 白名单声明的现有工具（如 http_request、db_query、web_read），andagent.kv / andagent.fs / andagent.db 可存取状态，return 结果（可 JSON 序列化）。顶层代码保持纯净，不要在顶层调用工具。",
   "- parameters_json 写参数 JSON Schema（type/properties/required），description 写清楚何时使用、返回什么，让以后的对话能直接用对。",
-  "- 管理用 my_tool_list / my_tool_read / my_tool_update（改代码需 confirm=true）/ my_tool_delete / my_tool_enable；上限 20 个，禁止 skill_/mcp_/cron_/live_/script_/my_ 前缀工具进白名单。",
+  "- 管理用 my_tool_list / my_tool_read / my_tool_update（改代码需 confirm=true）/ my_tool_delete / my_tool_enable / my_tool_share（导出技能 ZIP 供另一台设备 skill_install）；上限 20 个，禁止 skill_/mcp_/cron_/live_/script_/my_ 前缀工具进白名单。",
 ].join("\n");
 
 const SELF_EXT_GUIDE_EN = [
@@ -844,7 +844,7 @@ const SELF_EXT_GUIDE_EN = [
   "- Before creating, briefly tell the user what tool you will build and why existing tools are insufficient. After creation it becomes callable in the next turn; verify with my_tool_test before real use.",
   "- Tool shape: code is exports.tools = [{ name: \"run\", handler: function(args){...} }]. Inside the handler call allowlisted tools with andagent.tool(name, JSON.stringify(args)) (e.g. http_request, db_query, web_read); use andagent.kv / andagent.fs / andagent.db for state; return a JSON-serializable result. Keep top-level code pure; never call tools at top level.",
   "- parameters_json is the arguments JSON Schema (type/properties/required); description must state when to use it and what it returns so later conversations use it correctly.",
-  "- Manage with my_tool_list / my_tool_read / my_tool_update (code changes need confirm=true) / my_tool_delete / my_tool_enable; max 20 tools; skill_/mcp_/cron_/live_/script_/my_ prefixed tools are forbidden in the allowlist.",
+  "- Manage with my_tool_list / my_tool_read / my_tool_update (code changes need confirm=true) / my_tool_delete / my_tool_enable / my_tool_share (exports a skill ZIP installable via skill_install on another device); max 20 tools; skill_/mcp_/cron_/live_/script_/my_ prefixed tools are forbidden in the allowlist.",
 ].join("\n");
 
 /**

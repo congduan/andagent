@@ -122,6 +122,43 @@ class SelfExtManager(private val context: Context, private val tools: MutableMap
         return File(dir, "main.js").readText()
     }
 
+    /**
+     * 导出为标准技能包（SKILL.md + main.js ZIP）：另一台 andagent 可用 skill_install 安装，
+     * 安装后以 skill_<name>_run 形式注册，工具白名单原样保留。
+     */
+    fun share(name: String): String {
+        val (m, dir) = installed[name] ?: error("自建工具不存在：$name")
+        val description = m.description.replace(Regex("[\\r\\n]+"), " ").replace("\"", "\\\"")
+        val frontmatter = buildString {
+            append("---\n")
+            append("name: ${m.name}\n")
+            append("description: \"$description\"\n")
+            append("tools: [${m.allow.joinToString(",")}]\n")
+            if (m.reason.isNotBlank()) {
+                append("prompt: |\n")
+                m.reason.lines().forEach { append("  $it\n") }
+            }
+            append("version: ${m.version}\n")
+            append("---\n")
+        }
+        val target = File(context.cacheDir, "shared_selfext").apply { mkdirs() }
+        val out = File(target, "${m.name}-v${m.version}.zip")
+        java.util.zip.ZipOutputStream(out.outputStream()).use { zip ->
+            zip.putNextEntry(java.util.zip.ZipEntry("SKILL.md"))
+            zip.write(frontmatter.toByteArray(Charsets.UTF_8)); zip.closeEntry()
+            zip.putNextEntry(java.util.zip.ZipEntry("main.js"))
+            zip.write(File(dir, "main.js").readBytes()); zip.closeEntry()
+        }
+        val text = buildString {
+            append("分享自建工具「").append(m.name).append("」v").append(m.version)
+            append("：技能 ZIP 已生成，可在另一台 andagent 上用 skill_install 安装（安装后注册为 skill_").append(m.name).append("_run）。")
+        }
+        return buildJsonObject {
+            put("name", m.name); put("version", m.version)
+            put("file", out.absolutePath); put("text", text)
+        }.toString()
+    }
+
     @Synchronized fun list(): String = JsonArray(installed.map { (name, pair) ->
         val (m, dir) = pair
         buildJsonObject {
@@ -209,7 +246,7 @@ class SelfExtManager(private val context: Context, private val tools: MutableMap
         val VALID_NAME = Regex("my_[a-z][a-z0-9_]{0,47}")
         val META_NAMES = setOf(
             "my_tool_create", "my_tool_list", "my_tool_read", "my_tool_update",
-            "my_tool_delete", "my_tool_test", "my_tool_enable",
+            "my_tool_delete", "my_tool_test", "my_tool_enable", "my_tool_share",
         )
         private val FORBIDDEN_EXACT = setOf("js_eval", "json_fix")
         private val FORBIDDEN_PREFIXES = listOf("my_", "skill_", "mcp_", "cron_", "live_", "script_")
@@ -240,6 +277,7 @@ class SelfExtTool(private val registry: SelfExtManager, override val name: Strin
         "my_tool_delete" -> "删除自建工具，需 confirm=true。"
         "my_tool_test" -> "用测试参数运行自建工具并返回 handler 输出，不改变注册状态。"
         "my_tool_enable" -> "启用或停用自建工具。"
+        "my_tool_share" -> "把自建工具导出为标准技能包（SKILL.md + main.js ZIP），另一台 andagent 可用 skill_install 安装（注册为 skill_<名字>_run），返回 ZIP 路径。"
         else -> "自建工具管理。"
     }
     override val parameters = when (name) {
@@ -265,6 +303,7 @@ class SelfExtTool(private val registry: SelfExtManager, override val name: Strin
         "my_tool_delete" -> schemaOf("name" to strParam("工具名"), "confirm" to boolParam("确认删除"), required = listOf("name", "confirm"))
         "my_tool_test" -> schemaOf("name" to strParam("工具名"), "args_json" to strParam("测试参数 JSON 对象"), required = listOf("name"))
         "my_tool_enable" -> schemaOf("name" to strParam("工具名"), "enabled" to boolParam("启用"), required = listOf("name", "enabled"))
+        "my_tool_share" -> schemaOf("name" to strParam("工具名"), required = listOf("name"))
         else -> schemaOf()
     }
     override suspend fun execute(args: JsonObject): String = runCatching { when (name) {
@@ -289,6 +328,7 @@ class SelfExtTool(private val registry: SelfExtManager, override val name: Strin
         "my_tool_delete" -> registry.delete(args.strArg("name") ?: error("缺少 name"), args.boolArg("confirm") == true)
         "my_tool_test" -> registry.test(args.strArg("name") ?: error("缺少 name"), args.strArg("args_json"))
         "my_tool_enable" -> registry.enable(args.strArg("name") ?: error("缺少 name"), args.boolArg("enabled") == true)
+        "my_tool_share" -> registry.share(args.strArg("name") ?: error("缺少 name"))
         else -> "ERROR: 未知元工具 $name"
     } }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
 }

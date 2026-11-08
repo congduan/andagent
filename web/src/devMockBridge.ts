@@ -294,6 +294,7 @@ function install(): void {
       { name: "my_tool_delete", description: "[mock] 删除自建工具，需 confirm=true。", parameters: { type: "object", properties: { name: { type: "string" }, confirm: { type: "boolean" } }, required: ["name", "confirm"] } },
       { name: "my_tool_test", description: "[mock] 用测试参数运行自建工具。", parameters: { type: "object", properties: { name: { type: "string" }, args_json: { type: "string" } }, required: ["name"] } },
       { name: "my_tool_enable", description: "[mock] 启用或停用自建工具。", parameters: { type: "object", properties: { name: { type: "string" }, enabled: { type: "boolean" } }, required: ["name", "enabled"] } },
+      { name: "my_tool_share", description: "[mock] 导出自建工具为技能 ZIP。", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
     ]),
     skillPrompt: () => "",
     skillManage: () => unavailable("技能管理"),

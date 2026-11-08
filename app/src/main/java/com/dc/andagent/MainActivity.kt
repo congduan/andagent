@@ -658,7 +658,7 @@ class MainActivity : ComponentActivity() {
         selfExtManager = com.dc.andagent.tools.SelfExtManager(appContext, tools, quickJsEngine)
         listOf(
             "my_tool_create", "my_tool_list", "my_tool_read", "my_tool_update",
-            "my_tool_delete", "my_tool_test", "my_tool_enable",
+            "my_tool_delete", "my_tool_test", "my_tool_enable", "my_tool_share",
         ).forEach { tools[it] = com.dc.andagent.tools.SelfExtTool(selfExtManager, it) }
         selfExtManager.reload()
 

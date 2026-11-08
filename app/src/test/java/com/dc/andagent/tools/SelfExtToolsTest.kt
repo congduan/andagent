@@ -120,6 +120,33 @@ class SelfExtToolsTest {
     }
 
     @Test
+    fun shareExportsInstallableSkillZip() {
+        installTool()
+        manager.reload()
+        val result = Json.parseToJsonElement(manager.share("my_echo")).jsonObject
+        assertEquals("my_echo", result["name"]!!.jsonPrimitive.content)
+        val zipPath = result["file"]!!.jsonPrimitive.content
+        val zip = File(zipPath)
+        assertTrue(zip.isFile && zip.length() > 0)
+        // 解包并校验 SKILL.md 能被 SkillFormat 解析（另一台设备 skill_install 的前提）
+        var skillMd = ""
+        var mainJs = ""
+        java.util.zip.ZipInputStream(zip.inputStream()).use { z ->
+            while (true) {
+                val entry = z.nextEntry ?: break
+                val bytes = z.readBytes()
+                if (entry.name == "SKILL.md") skillMd = String(bytes, Charsets.UTF_8)
+                if (entry.name == "main.js") mainJs = String(bytes, Charsets.UTF_8)
+            }
+        }
+        assertTrue(skillMd.startsWith("---\n"))
+        val manifest = SkillFormat.parse(skillMd)
+        assertEquals("my_echo", manifest.name)
+        assertEquals(listOf("kv_get"), manifest.allow.toList())
+        assertEquals(echoSource, mainJs)
+    }
+
+    @Test
     fun metaToolExecuteReturnsErrorStringsInsteadOfThrowing() = runBlocking {
         val tool = SelfExtTool(manager, "my_tool_create")
         assertTrue(tool.execute(buildJsonObject { put("name", JsonPrimitive("bad name")) }).startsWith("ERROR"))
