@@ -178,6 +178,11 @@ export const TOOL_META: Record<string, ToolMeta> = {
   bt_audio_route: { label: "蓝牙音频路由", labelEn: "Bluetooth audio route", icon: "headphones", destructive: true },
   bt_battery: { label: "蓝牙电量", labelEn: "Bluetooth battery", icon: "battery" },
   usb_list: { label: "USB 设备", labelEn: "USB devices", icon: "plug" },
+  usb_serial_open: { label: "打开串口", labelEn: "Open serial", icon: "plug" },
+  usb_serial_read: { label: "读取串口", labelEn: "Read serial", icon: "plug" },
+  usb_serial_write: { label: "写入串口", labelEn: "Write serial", icon: "plug" },
+  usb_serial_close: { label: "关闭串口", labelEn: "Close serial", icon: "plug" },
+  usb_serial_capture: { label: "抓取串口日志", labelEn: "Capture serial log", icon: "download" },
   usb_midi: { label: "USB MIDI", labelEn: "USB MIDI", icon: "music" },
   // R113: 蜂窝深度（全部只读）
   cell_info: { label: "基站信号诊断", labelEn: "Cell signal diagnostics", icon: "antenna" },
