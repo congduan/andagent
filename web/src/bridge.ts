@@ -299,14 +299,17 @@ async function resourceHubCall(args: Record<string, unknown>): Promise<string | 
  * 原生 list 失败返回 "ERROR: ..."、主帧凭证未注入/无桥返回 undefined、payload
  * 非法都会置 failed=true —— 面板据此显示错误态与重试，而不是谎报空态。
  */
-export async function resourceHubSnapshot(): Promise<{ items: ResourceItem[]; failed: boolean }> {
+export async function resourceHubSnapshot(): Promise<{ items: ResourceItem[]; failed: boolean; reason?: string }> {
   const raw = await resourceHubCall({ action: "list" });
-  if (raw === undefined || raw.startsWith("ERROR:")) return { items: [], failed: true };
+  // 失败透传原始原因（凭证无效 / 读取失败：xxx / 无桥 / 凭证未注入），
+  // 面板错误态显示具体文案而不是笼统「读取失败」——真机排障需要。
+  if (raw === undefined) return { items: [], failed: true, reason: "主帧凭证未注入或桥不可用" };
+  if (raw.startsWith("ERROR:")) return { items: [], failed: true, reason: raw.slice(6).trim() };
   try {
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? { items: parsed as ResourceItem[], failed: false } : { items: [], failed: true };
+    return Array.isArray(parsed) ? { items: parsed as ResourceItem[], failed: false } : { items: [], failed: true, reason: "payload 非数组" };
   } catch {
-    return { items: [], failed: true };
+    return { items: [], failed: true, reason: "payload 解析失败" };
   }
 }
 

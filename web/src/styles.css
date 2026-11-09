@@ -4166,3 +4166,5 @@ button:disabled {
 .user-image { margin: 2px 0; max-width: 148px; }
 .user-image-thumb { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; }
 .user-image-thumb img { display: block; width: auto; max-width: 100%; max-height: 148px; border-radius: 12px; object-fit: contain; }
+
+.resource-hub-reason{opacity:.7;font-size:12px;max-width:280px;line-height:1.5}

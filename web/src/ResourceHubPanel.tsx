@@ -27,6 +27,7 @@ export function ResourceHubPanel({ onClose, anchor }: { onClose: () => void; anc
   // 读取失败（凭证未注入 / 桥异常 / 原生返回 ERROR）与“没有资源”必须区分：
   // 此前失败被当成空数组，面板会谎报「当前无存活的连接与任务」。
   const [failed, setFailed] = useState(false);
+  const [reason, setReason] = useState<string | undefined>();
   const [now, setNow] = useState(Date.now());
   const alive = useRef(true);
   useEffect(() => {
@@ -39,6 +40,7 @@ export function ResourceHubPanel({ onClose, anchor }: { onClose: () => void; anc
     if (!alive.current) return;
     setItems(snapshot.items);
     setFailed(snapshot.failed);
+    setReason(snapshot.reason);
     setNow(Date.now());
   }, []);
 
@@ -98,7 +100,7 @@ export function ResourceHubPanel({ onClose, anchor }: { onClose: () => void; anc
               <span className="resource-hub-empty-icon" aria-hidden="true"><Icon name={failed ? "refresh" : "plug"} size={20} /></span>
               <strong>{t(failed ? "resourceLoadFailed" : "resourceEmpty")}</strong>
               {failed
-                ? <button type="button" onClick={() => { void refresh(); }}>{t("resourceRetry")}</button>
+                ? <><small className="resource-hub-reason">{reason ?? t("resourceReasonUnknown")}</small><button type="button" onClick={() => { void refresh(); }}>{t("resourceRetry")}</button></>
                 : <small>{t("resourceEmptyHint")}</small>}
             </div>
           )}
