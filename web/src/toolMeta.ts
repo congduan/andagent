@@ -107,6 +107,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
   adb_push: { label: "ADB 推送", labelEn: "ADB push", icon: "upload", destructive: true },
   // R100 ③: 无线调试配对码配对（配对本身无损，destructive=false，与 Kotlin AdbTool.destructive 对齐）
   adb_pair: { label: "ADB 无线配对", labelEn: "ADB wireless pairing", icon: "lock" },
+  adb_pair_qr: { label: "ADB 扫码配对", labelEn: "ADB QR pairing", icon: "lock" },
   // R100 ③: ADB 通道 scrcpy 投屏 / 录制（工具名与 Kotlin AdbScrcpyToolSpec.NAMES 对齐；adb_input 无 Kotlin 注册已移除）
   adb_screencast: { label: "ADB 投屏截图", labelEn: "ADB screencast", icon: "image" },
   adb_record: { label: "ADB 投屏录制", labelEn: "ADB record", icon: "video", destructive: true },
