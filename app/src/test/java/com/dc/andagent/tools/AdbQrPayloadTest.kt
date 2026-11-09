@@ -1,5 +1,6 @@
 package com.dc.andagent.tools
 
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
@@ -24,7 +25,24 @@ class AdbQrPayloadTest {
 
     @Test fun serviceNameSelectsQrPasswordRatherThanEncodingIt() {
         assertEquals("1234567890", AdbQrPayload.passwordForService("studio-abc", "studio-abc", "1234567890"))
+        assertEquals("1234567890", AdbQrPayload.passwordForService("studio-abc-2", "studio-abc", "1234567890"))
+        assertEquals("1234567890", AdbQrPayload.passwordForService("studio\\045abc", "studio-abc", "1234567890"))
+        assertEquals("1234567890", AdbQrPayload.passwordForService("studio\\-abc", "studio-abc", "1234567890"))
         assertNull(AdbQrPayload.passwordForService("studio-other", "studio-abc", "1234567890"))
+        assertNull(AdbQrPayload.passwordForService("other-studio-abc", "studio-abc", "1234567890"))
+    }
+
+    @Test fun pairingDiscoveryUsesAospServiceType() {
+        assertEquals(listOf("_adb-tls-pairing._tcp"), AdbQrProgress.pairingServiceTypes)
+    }
+
+    @Test fun timeoutEvidenceNamesMismatchedServicesAndNativeStage() {
+        val session = AdbQrSession.Pending("studio-abc", "1234567890", 30, CompletableDeferred())
+        session.found("studio-other", false)
+        session.failure("实例名不匹配")
+        assertTrue(session.evidence().contains("发现 1 个服务，匹配 0 个，不匹配 1 个，实例名=[studio-other]，均不匹配期望 S=studio-abc"))
+        session.nativeStage = "SPAKE2_DERIVE"
+        assertTrue(session.evidence().contains("nativeStage=SPAKE2_DERIVE"))
     }
 
     @Test fun progressIsMonotonicAndTimeoutNamesTheStalledStage() {

@@ -122,7 +122,8 @@ std::string Jstr(JNIEnv* env, jstring s) {
     if (!s) return {};
     const char* p = env->GetStringUTFChars(s, nullptr);
     if (!p) return {};
-    std::string out(p);
+    // GetStringUTFChars may contain an encoded NUL; preserve the full JNI byte length.
+    std::string out(p, static_cast<size_t>(env->GetStringUTFLength(s)));
     env->ReleaseStringUTFChars(s, p);
     return out;
 }
