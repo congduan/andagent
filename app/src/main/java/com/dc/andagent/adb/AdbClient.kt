@@ -172,6 +172,9 @@ class AdbClient(
     }
 
     /** 打开 shell 流，收 WRTE 数据直到 A_CLSE 或对端关闭；输出按 UTF-8 字符边界截断（对齐 ssh_exec）。 */
+    /** R125：同一 adbd 连接上的 shell 流强制串行——并发 openStream 会互相读走对方的
+     *  OKAY/WRTE 帧（localId 分流未实现），荣耀/华为 adbd 上表现为响应串扰与间歇性
+     *  空输出（真机会话 doc_2e995dfda38b）。串行化是最小可靠修复；真多路复用留待需要时。 */
     fun openStream(command: String): String = synchronized(lock) {
         runCatching {
             if (input == null) error("未连接：请先调用 connect()")
@@ -245,6 +248,14 @@ class AdbClient(
                             gotAck = true
                             runCatching { write(AdbMessage(A_CLSE, localId, msg.arg0, ByteArray(0))) }
                             break
+                        }
+                        A_CNXN -> {
+                            // R125：对端在会话中途重发 CNXN = adbd 已 handle_offline 重置本
+                            // transport（无线调试页刷新/周期公告触发）。旧 socket 上的后续
+                            // OPEN 全部被静默丢弃——这正是「重连后第一条成功，之后容易
+                            // 失败」的根源。立即 fail-fast 让调用方重建连接。
+                            gotAck = true
+                            error("ADB 连接已被目标机重置（收到重发 CNXN）。请直接重试，将自动重建连接。")
                         }
                         else -> Unit // 忽略未知命令
                     }
@@ -621,8 +632,9 @@ class AdbClient(
         /** A_OPEN 后的 ACK 快速失败窗口：正常 adbd 毫秒级回 OKAY/WRTE/CLSE，
          * 超过该窗口仍三无则给出可操作引导，不干等 SESSION_TIMEOUT_MS。 */
         const val ACK_WINDOW_MS = 8_000L
-        /** 对齐 ssh_exec 的 STDOUT_LIMIT（8KB）。 */
-        const val MAX_OUTPUT_BYTES = 8 * 1024
+        /** R125：8KB 对齐 ssh_exec 的旧值——adb shell 大输出（截图 base64/包列表/日志）
+         *  需要更大窗口；MAX_PAYLOAD 已 256KB，输出上限提到 256KB 与之匹配。 */
+        const val MAX_OUTPUT_BYTES = 256 * 1024
         const val HANDSHAKE_MAX_MESSAGES = 8
         const val AUTH_WAIT_MS = 3000
         /** R124：peerCnxnFirst 模式下等对端主动 CNXN 的窗口（iadb-ios 用 30s，取 15s）。 */

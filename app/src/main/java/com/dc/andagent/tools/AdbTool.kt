@@ -25,10 +25,11 @@ import kotlinx.serialization.json.put
 import java.io.File
 import java.security.KeyPair
 
-/** 注册进 MainActivity 工具表的 ADB 工具族（R100 ② 7 个 + R103 scrcpy 2 个 + 配对 1 个）。 */
+/** 注册进 MainActivity 工具表的 ADB 工具族（R100 ② 7 个 + R103 scrcpy 2 个 + 配对 1 个 + R122 adb_input）。 */
 val ADB_TOOLS = listOf(
     "adb_connect", "adb_devices", "adb_disconnect",
     "adb_shell", "adb_screencap", "adb_pull", "adb_push",
+    "adb_input",
     AdbPairTool.NAME,
     AdbQrPairTool.NAME,
 ) + AdbScrcpyToolSpec.NAMES
@@ -351,6 +352,8 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             "从目标手机拉取单个文件到本机 Download/AndAgentSsh（或 app_private），返回 savedPath。max_mb 对齐 ssh_download（默认 512，钳制 1..4096）。"
         "adb_push" ->
             "把本机文件上传到目标手机（SYNC SEND）。local_path/remote_path 必填；max_mb 对齐 ssh_download。"
+        "adb_input" ->
+            "向 ADB 目标机注入输入（纯 shell：input tap/swipe/draganddrop/keyevent/text）。target 必填（先用 adb_connect 登记）；action=tap（x/y）、swipe（x/y/x2/y2，duration_ms 默认 300）、drag（x/y/x2/y2，duration_ms 默认 300）、key（keycode，0..65535）、text（要键入的 ASCII 文本）。text 会做 shell 单引号转义并把空格转成 %s（AOSP input 命令要求），中文/emoji 等非 ASCII 如实拒绝并提示改用剪贴板；不做原生控制通道注入。破坏性：改变目标机输入/界面状态，走 web 确认闸。"
         AdbPairTool.NAME -> AdbPairTool.description
         AdbQrPairTool.NAME -> AdbQrPairTool.description
         in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.description(name)
@@ -359,7 +362,7 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
 
     /** 安全边界：shell/pull/push + 录制 adb_record 标 destructive（web 确认闸 + 提示词覆盖）。 */
     override val destructive = name in setOf(
-        "adb_shell", "adb_pull", "adb_push", AdbScrcpyToolSpec.RECORD,
+        "adb_shell", "adb_pull", "adb_push", "adb_input", AdbScrcpyToolSpec.RECORD,
     )
 
     override val parameters = when (name) {
@@ -393,6 +396,18 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             "max_mb" to intParam("大小上限 MB，默认 512，钳制 1..4096"),
             required = listOf("target", "local_path", "remote_path"),
         )
+        "adb_input" -> schemaOf(
+            "target" to strParam("目标 host 或 host:port"),
+            "action" to strParam("tap|swipe|key|text|drag"),
+            "x" to intParam("tap/swipe/drag 起点 X 坐标"),
+            "y" to intParam("tap/swipe/drag 起点 Y 坐标"),
+            "x2" to intParam("swipe/drag 终点 X 坐标"),
+            "y2" to intParam("swipe/drag 终点 Y 坐标"),
+            "duration_ms" to intParam("swipe/drag 时长毫秒，默认 300"),
+            "keycode" to intParam("key 的 Android keyevent 数字（0..65535）"),
+            "text" to strParam("text 要键入的 ASCII 文本"),
+            required = listOf("target", "action"),
+        )
         AdbPairTool.NAME -> AdbPairTool.parameters
         AdbQrPairTool.NAME -> AdbQrPairTool.parameters
         in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.parameters(name)
@@ -414,6 +429,7 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
                 AdbSessionHub.disconnect(host)
             }
             "adb_shell" -> doShell(args)
+            "adb_input" -> doInput(args)
             "adb_screencap" -> doScreencap(args)
             "adb_pull" -> doPull(args)
             "adb_push" -> doPush(args)
@@ -464,6 +480,32 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         }
     }
 
+    /** R122：纯 shell 输入注入，命令由 AdbInputCodec 构造（单引号转义 / %s / 参数校验）。 */
+    private fun doInput(args: JsonObject): String {
+        val target = args.strArg("target") ?: return "ERROR: 缺少 target"
+        val built = AdbInputCodec.build(
+            action = args.strArg("action"),
+            x = args.intArg("x"),
+            y = args.intArg("y"),
+            x2 = args.intArg("x2"),
+            y2 = args.intArg("y2"),
+            durationMs = args.intArg("duration_ms"),
+            keycode = args.intArg("keycode"),
+            text = args.strArg("text"),
+        )
+        val cmd = built.command ?: return built.error ?: "ERROR: 构造输入命令失败"
+        val c = AdbSessionHub.client(target) ?: return noTarget(target)
+        val out = c.openStream(cmd)
+        // R121f：ACK 8s 快速失败时连接已被 adbd 抛弃，主动重置以便下次重建。
+        val reset = AdbSessionHub.resetStalled(out, c)
+        return buildString {
+            appendLine("target=$target")
+            appendLine("command=${cmd.take(300)}")
+            append("--- output ---\n$out")
+            if (reset) append("\n连接已重置，请直接重试（会重建连接）")
+        }
+    }
+
     private fun doScreencap(args: JsonObject): String {
         val target = args.strArg("target") ?: return "ERROR: 缺少 target"
         val c = AdbSessionHub.client(target) ?: return noTarget(target)
@@ -473,22 +515,32 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         val shot = c.openStream("screencap -p $remote && echo SC_OK")
         if (shot.startsWith("ERROR")) return "ERROR: screencap 执行失败：$shot"
         return when (val r = c.syncPull(remote, SCREENCAP_MAX_BYTES)) {
-            is AdbClient.AdbSyncResult.Pulled -> {
-                // 清理目标机上的临时文件（内部操作，不经过用户确认闸）。
-                runCatching { c.openStream("rm -f $remote") }
-                val base64 = Base64.encodeToString(r.bytes, Base64.NO_WRAP)
-                // 复用 devtools_screenshot 公共段：base64 PNG → 相册 + 缩略图（等同 image_save 落相册）。
-                val json = Json.parseToJsonElement(devtoolsScreenshotJson(context, base64)).jsonObject
-                buildJsonObject {
-                    json.forEach { (k, v) -> put(k, v) }
-                    put("target", target)
-                    put("remotePath", remote)
-                    put("bytes", r.bytes.size)
-                }.toString()
+            is AdbClient.AdbSyncResult.Pulled -> screencapResult(context, target, remote, r.bytes)
+            is AdbClient.AdbSyncResult.Failed -> {
+                // R125 fallback：部分 OEM adbd（荣耀/华为实测）在 TLS 连接上拒绝 sync:
+                // 服务——改走 shell base64 通道（MAX_OUTPUT_BYTES 已 256KB，单命令拿全）。
+                val b64 = c.openStream("base64 -w 0 $remote")
+                if (b64.startsWith("ERROR")) {
+                    return "ERROR: 拉取截图失败：sync=${r.reason}；shell 回退也失败：$b64"
+                }
+                runCatching {
+                    screencapResult(context, target, remote, android.util.Base64.decode(b64.trim(), android.util.Base64.NO_WRAP or android.util.Base64.DEFAULT))
+                }.getOrElse { "ERROR: shell 回退解码失败：${it.message}" }
             }
-            is AdbClient.AdbSyncResult.Failed -> "ERROR: 拉取截图失败：${r.reason}"
             is AdbClient.AdbSyncResult.Pushed -> "ERROR: 拉取截图返回意外结果"
         }
+    }
+
+    private fun screencapResult(context: Context, target: String, remote: String, bytes: ByteArray): String {
+        runCatching { AdbSessionHub.client(target)?.openStream("rm -f $remote") }
+        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+        val json = Json.parseToJsonElement(devtoolsScreenshotJson(context, base64)).jsonObject
+        return buildJsonObject {
+            json.forEach { (k, v) -> put(k, v) }
+            put("target", target)
+            put("remotePath", remote)
+            put("bytes", bytes.size)
+        }.toString()
     }
 
     private fun doPull(args: JsonObject): String {
