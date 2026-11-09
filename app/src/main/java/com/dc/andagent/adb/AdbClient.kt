@@ -167,7 +167,8 @@ class AdbClient(
                             "ADB shell 无响应（8 秒内未收到目标确认）。最常见原因：" +
                                 "①目标手机熄屏/锁屏（亮屏解锁后重试）；" +
                                 "②目标机正被其它 adb 客户端（PC adb 等）占用——adbd 同一时间只服务一个无线客户端；" +
-                                "③目标机「无线调试」页已退出导致端口失效——重新进入该页查看当前端口并 adb_connect 重连。" +
+                                "③目标机「无线调试」页已退出导致端口失效——重新进入该页查看当前端口并 adb_connect 重连；" +
+                                "④若下方帧序列出现 RX A_AUTH TOKEN：目标机仍视本机为未授权设备（配对信任未生效）——重启目标机「无线调试」后重新配对。 " +
                                 " 帧序列：OPEN sent@$openAt; no OKAY/WRTE/CLSE by ${System.currentTimeMillis()}; ${frameSummary()}"
                         )
                     }
@@ -515,7 +516,10 @@ class AdbClient(
         AdbProtocol.readMessage(input ?: error("输入流不可用")).also { traceFrame("RX", it) }
 
     private fun traceFrame(direction: String, msg: AdbMessage) {
-        if (msg.command !in setOf(A_OPEN, A_OKAY, A_WRTE, A_CLSE)) return
+        // R121e：AUTH/CNXN/STLS 纳入追踪——若 adbd 在 TLS 后仍发 A_AUTH TOKEN，
+        // 说明它视本机为未授权设备（配对信任未生效），这是「连接成功但服务无响应」
+        // 的决定性证据；此前只追 OPEN/OKAY/WRTE/CLSE 会漏掉这个信号。
+        if (msg.command !in setOf(A_OPEN, A_OKAY, A_WRTE, A_CLSE, A_AUTH, A_CNXN, A_STLS)) return
         val name = String(byteArrayOf(msg.command.toByte(), (msg.command ushr 8).toByte(),
             (msg.command ushr 16).toByte(), (msg.command ushr 24).toByte()), Charsets.US_ASCII)
         val line = "${System.currentTimeMillis()} $direction $name arg0=${msg.arg0} arg1=${msg.arg1} len=${msg.data.size}"
