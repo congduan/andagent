@@ -149,4 +149,134 @@ class AdbToolRulesTest {
         assertFalse("明文路径不受指纹影响", AdbToolRules.tlsPinMissing(false, null))
         assertFalse(AdbToolRules.tlsPinMissing(false, ""))
     }
+
+    // ---- R121f: host 级目标合并 / 防僵尸连接 / 诊断 ---------------------------
+    @Test
+    fun mergeHostMigratesEntryToNewPortAndRemovesSiblings() {
+        val host = "10.104.102.164"
+        val reg = AdbSessionRegistry()
+        // 真机证据：同一目标机 3 条历史端口残留（connected/offline 混合）。
+        reg.add(AdbTarget(host, 39829))
+        reg.add(AdbTarget(host, 42359))
+        reg.add(AdbTarget(host, 43033))
+        assertEquals(3, reg.size())
+
+        // 换端口 connect 成功：条目迁移到新 host:port，保留 TLS/指纹元数据。
+        val current = AdbTarget(host, 44500, tls = true, fingerprint = "ab".repeat(32))
+        val stale = reg.mergeHost(current)
+
+        assertEquals("同 host 只保留一条", 1, reg.size())
+        assertEquals("迁移到新 host:port", "$host:44500", reg.list().single().key)
+        assertEquals("保留 TLS/指纹元数据", current, reg.list().single())
+        assertEquals(
+            setOf("$host:39829", "$host:42359", "$host:43033"),
+            stale.toSet(),
+        )
+        assertTrue("旧端口条目已移除", reg.list().none { it.port != 44500 })
+    }
+
+    @Test
+    fun pairingSuccessCollapsesToSingleHostEntry() {
+        val host = "10.104.102.164"
+        val reg = AdbSessionRegistry()
+        reg.add(AdbTarget(host, 39829))
+        reg.add(AdbTarget(host, 42359, tls = true, fingerprint = "cd".repeat(32)))
+        reg.add(AdbTarget(host, 43033))
+        assertEquals(3, reg.size())
+
+        // 模拟 Hub.rememberPairing 的登记侧动作：保留一条占位（最新端口）并标记 TLS + 新指纹，
+        // 合并掉同 host 旧条目（Hub 另会 closeOtherLive 关掉旧端口 live）。
+        val fp = "ef".repeat(32)
+        val sameHost = reg.list().filter { it.host.equals(host, ignoreCase = true) }
+        reg.mergeHost(sameHost.last().copy(tls = true, fingerprint = fp))
+
+        assertEquals(1, reg.size())
+        assertEquals(43033, reg.list().single().port)
+        assertTrue(reg.list().single().tls)
+        assertEquals(fp, reg.list().single().fingerprint)
+    }
+
+    @Test
+    fun resolveKeepsOldPortRefsWorkingAfterMigration() {
+        val host = "10.104.102.164"
+        val reg = AdbSessionRegistry()
+        reg.add(AdbTarget(host, 39829))
+        reg.mergeHost(AdbTarget(host, 43033))
+        assertEquals(43033, reg.resolve("$host:43033")!!.port) // 精确 key
+        assertEquals(43033, reg.resolve(host)!!.port)           // 裸 host
+        assertEquals(43033, reg.resolve("$host:39829")!!.port) // 迁移前的旧 host:port 引用不断链
+        assertNull(reg.resolve("9.9.9.9:5555"))
+        assertNull(reg.resolve("$host:abc"))  // 非数字端口不误匹配
+        assertNull(reg.resolve("$host:"))     // 空端口不误匹配
+    }
+
+    @Test
+    fun staleLiveKeysSelectsOldPortsForReconnectCleanup() {
+        val host = "10.104.102.164"
+        val keys = listOf("$host:39829", "$host:42359", "$host:43033")
+        // client() 重连：保留当前端口，清掉历史端口。
+        assertEquals(
+            listOf("$host:39829", "$host:42359"),
+            AdbToolRules.staleLiveKeys(keys, host, "$host:43033"),
+        )
+        // connect() 建连前清场：keeperKey=null → 该 host 全部 live 都清。
+        assertEquals(keys, AdbToolRules.staleLiveKeys(keys, host, null))
+        // 不同 host / 前缀碰撞（host 后必须紧跟冒号）不误伤。
+        val mixed = keys + listOf("10.104.102.16:5555", "other:1")
+        assertEquals(keys, AdbToolRules.staleLiveKeys(mixed, host, null))
+        // keeper 大小写不敏感，不会把自己关掉。
+        assertEquals(emptyList<String>(), AdbToolRules.staleLiveKeys(listOf("HOST:5555"), "host", "host:5555"))
+    }
+
+    @Test
+    fun legacyMultiPortKvLoadsAndSelfHealDetectsDuplicates() {
+        val host = "10.104.102.164"
+        val legacy = kotlinx.serialization.json.Json.parseToJsonElement(
+            """[{"host":"$host","port":41265,"tls":true},""" +
+                """{"host":"$host","port":39829,"tls":true},""" +
+                """{"host":"$host","port":42359,"tls":true},""" +
+                """{"host":"$host","port":43033,"tls":true}]""",
+        )
+        val decoded = AdbToolRules.decodeTargets(legacy) // 老 KV 读取不崩
+        assertEquals(4, decoded.size)
+        val reg = AdbSessionRegistry()
+        reg.replaceAll(decoded)
+        val groups = reg.duplicateHostGroups()
+        assertEquals(1, groups.size)
+        assertEquals(4, groups.single().size)
+        // devices() 断言式自愈：合并后不再出现同 host 多条目。
+        reg.mergeHost(groups.single().last())
+        assertTrue(reg.duplicateHostGroups().isEmpty())
+        assertEquals(1, reg.size())
+    }
+
+    @Test
+    fun removeHostDropsAllPortsOfOneTarget() {
+        val reg = AdbSessionRegistry()
+        reg.add(AdbTarget("10.104.102.164", 39829))
+        reg.add(AdbTarget("10.104.102.164", 43033))
+        reg.add(AdbTarget("192.168.1.5", 5555))
+        val removed = reg.removeHost("10.104.102.164")
+        assertEquals(2, removed.size)
+        assertEquals(1, reg.size())
+        assertEquals(5555, reg.list().single().port)
+        assertTrue(reg.removeHost("9.9.9.9").isEmpty())
+    }
+
+    @Test
+    fun formatDurationAndShellStallDetection() {
+        assertEquals("0s", AdbToolRules.formatDuration(0L))
+        assertEquals("12s", AdbToolRules.formatDuration(12_000L))
+        assertEquals("1m5s", AdbToolRules.formatDuration(65_000L))
+        assertEquals("2h3m", AdbToolRules.formatDuration(7_380_000L))
+        assertEquals("0s", AdbToolRules.formatDuration(-5_000L)) // 负值钳制
+
+        assertTrue(
+            AdbToolRules.isShellAckStall(
+                "ERROR: ADB shell 执行失败：ADB shell 无响应（8 秒内未收到目标确认）…",
+            ),
+        )
+        assertFalse(AdbToolRules.isShellAckStall("ERROR: ADB shell 执行失败：未连接：请先调用 connect()"))
+        assertFalse(AdbToolRules.isShellAckStall("hello world"))
+    }
 }

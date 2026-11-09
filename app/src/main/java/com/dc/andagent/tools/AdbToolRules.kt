@@ -24,7 +24,13 @@ data class AdbTarget(
     val key: String get() = "$host:$port"
 }
 
-/** 已保存目标的注册表（纯 JVM，@Synchronized）。跨工具调用与 app 重启由 KV 持久化恢复。 */
+/**
+ * 已保存目标的注册表（纯 JVM，@Synchronized）。跨工具调用与 app 重启由 KV 持久化恢复。
+ *
+ * R121f：key 仍是 "host:port"，但语义改为 **host 级唯一**——同一台目标机只保留一条
+ * 条目。换端口重连（无线调试主端口每次进设置页都会变）时由 [mergeHost] 把条目迁移到
+ * 新 host:port 并移除同 host 的旧端口条目，避免 adbd 单客户端限制下多连接互顶。
+ */
 class AdbSessionRegistry {
     private val entries = LinkedHashMap<String, AdbTarget>()
 
@@ -32,9 +38,47 @@ class AdbSessionRegistry {
 
     @Synchronized fun remove(key: String): AdbTarget? = entries.remove(key)
 
-    /** target 参数可为 "host:port"、"host" 或精确 key。 */
-    @Synchronized fun resolve(ref: String): AdbTarget? =
-        entries[ref] ?: entries.values.firstOrNull { it.host.equals(ref, ignoreCase = true) }
+    /**
+     * R121f 核心：同一 host 只保留 [target] 这一条（迁移到新 host:port）。返回被移除的
+     * 同 host 旧 key 列表，供 Hub 关闭对应 live 连接、诊断日志使用。
+     * 配对指纹由 Hub 的 host 级 pairings 表（不由本表）保存，故迁移不丢凭据；connect()
+     * 每次据 isPaired/fingerprintFor(host) 重算 tls/指纹写入本条目。
+     */
+    @Synchronized fun mergeHost(target: AdbTarget): List<String> {
+        val stale = entries.keys.filter { k ->
+            k != target.key && entries[k]!!.host.equals(target.host, ignoreCase = true)
+        }
+        stale.forEach { entries.remove(it) }
+        entries[target.key] = target
+        return stale
+    }
+
+    /** R121f：按 host 移除该目标机全部端口条目（断开时一次清干净），返回被移除的目标。 */
+    @Synchronized fun removeHost(host: String): List<AdbTarget> {
+        val victims = entries.values.filter { it.host.equals(host, ignoreCase = true) }
+        victims.forEach { entries.remove(it.key) }
+        return victims
+    }
+
+    /** R121f 自愈：返回含多条目（>1）的 host 分组（老用户 KV 可能残留同 host 多端口）。 */
+    @Synchronized fun duplicateHostGroups(): List<List<AdbTarget>> =
+        entries.values.groupBy { it.host.lowercase() }.values.filter { it.size > 1 }.toList()
+
+    /**
+     * target 参数可为 "host:port"、"host"；并兼容端口迁移后的【旧 host:port 引用】——
+     * 形如 "host:port" 且端口为纯数字时，按 host 前缀收敛到该 host 当前唯一条目，
+     * 保证老引用不断链（R121f）。
+     */
+    @Synchronized fun resolve(ref: String): AdbTarget? {
+        entries[ref]?.let { return it }
+        entries.values.firstOrNull { it.host.equals(ref, ignoreCase = true) }?.let { return it }
+        val hostPart = ref.substringBeforeLast(':')
+        val portPart = ref.substringAfterLast(':')
+        if (hostPart != ref && portPart.isNotEmpty() && portPart.all { it in '0'..'9' }) {
+            return entries.values.firstOrNull { it.host.equals(hostPart, ignoreCase = true) }
+        }
+        return null
+    }
 
     @Synchronized fun list(): List<AdbTarget> = entries.values.toList()
 
@@ -146,4 +190,29 @@ object AdbToolRules {
             v.jsonPrimitive.contentOrNull?.takeIf { isValidFingerprint(it) }
         }
     }
+
+    /**
+     * R121f：adbd 无线调试同一时间只服务一个 TLS 客户端。给定同 host 的 live key 集合，
+     * 返回应被 close 的旧端口 key；keeperKey=null 时表示该 host 全部 live 都要清（建连前清场）。
+     * 纯函数，便于 JVM 单测覆盖「client 重连清理旧 live」的决策逻辑。
+     */
+    fun staleLiveKeys(liveKeys: Collection<String>, host: String, keeperKey: String?): List<String> =
+        liveKeys.filter { k ->
+            (keeperKey == null || !k.equals(keeperKey, ignoreCase = true)) &&
+                k.startsWith("$host:", ignoreCase = true)
+        }
+
+    /** R121f：adb_devices 展示「已连接时长」的格式化（纯函数）。 */
+    fun formatDuration(ms: Long): String {
+        val s = (ms / 1000L).coerceAtLeast(0L)
+        return when {
+            s < 60L -> "${s}s"
+            s < 3600L -> "${s / 60L}m${s % 60L}s"
+            else -> "${s / 3600L}h${(s % 3600L) / 60L}m"
+        }
+    }
+
+    /** R121f：识别 AdbClient.openStream 的 ACK 8s 快速失败文案（连接已被 adbd 抛弃的信号）。 */
+    fun isShellAckStall(result: String): Boolean =
+        result.contains("8 秒内未收到目标确认") || result.contains("ADB shell 无响应")
 }
