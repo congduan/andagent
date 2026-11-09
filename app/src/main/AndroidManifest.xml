@@ -129,6 +129,11 @@
         android:usesCleartextTraffic="true"
         android:allowAudioPlaybackCapture="true">
 
+        <activity
+            android:name=".tools.AdbQrPairActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+
         <receiver android:name=".cron.CronReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

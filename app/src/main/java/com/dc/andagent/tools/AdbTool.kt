@@ -29,6 +29,7 @@ val ADB_TOOLS = listOf(
     "adb_connect", "adb_devices", "adb_disconnect",
     "adb_shell", "adb_screencap", "adb_pull", "adb_push",
     AdbPairTool.NAME,
+    AdbQrPairTool.NAME,
 ) + AdbScrcpyToolSpec.NAMES
 
 /**
@@ -203,6 +204,7 @@ object AdbSessionHub {
     fun devices(): String = synchronized(lock) {
         val targets = registry.list()
         if (targets.isEmpty()) {
+            if (pairings.isNotEmpty()) return "已配对待连接：${pairings.keys.joinToString()}。请从目标机无线调试主页读取主端口，调用 adb_connect(host, port)；配对端口不能用作主端口。"
             return "没有已保存的 ADB 目标。用 adb_connect(host, port=5555) 连接目标手机（无线调试端口从手机「无线调试」页读取）。"
         }
         val sb = StringBuilder("已保存 ADB 目标 ${targets.size} 个：\n")
@@ -221,6 +223,9 @@ object AdbSessionHub {
                 }
             }
             sb.append("- ${t.host}:${t.port}  $status\n")
+        }
+        pairings.keys.filter { host -> targets.none { it.host.equals(host, true) } }.forEach { host ->
+            sb.append("- $host  paired(待连接主端口)\n")
         }
         sb.append("提示：首次连接需在手机点「允许」授权；adb_shell/pull/push/screencap 会自动重连离线目标。")
         sb.toString().trimEnd()
@@ -246,6 +251,7 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         "adb_push" ->
             "把本机文件上传到目标手机（SYNC SEND）。local_path/remote_path 必填；max_mb 对齐 ssh_download。"
         AdbPairTool.NAME -> AdbPairTool.description
+        AdbQrPairTool.NAME -> AdbQrPairTool.description
         in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.description(name)
         else -> "ADB 工具"
     }
@@ -287,12 +293,14 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             required = listOf("target", "local_path", "remote_path"),
         )
         AdbPairTool.NAME -> AdbPairTool.parameters
+        AdbQrPairTool.NAME -> AdbQrPairTool.parameters
         in AdbScrcpyToolSpec.NAMES -> AdbScrcpyToolSpec.parameters(name)
         else -> schemaOf()
     }
 
     override suspend fun execute(args: JsonObject): String = withContext(Dispatchers.IO) {
-        runCatching { dispatch(args) }
+        if (name == AdbQrPairTool.NAME) AdbQrPairTool.execute(context, args)
+        else runCatching { dispatch(args) }
             .getOrElse { e -> "ERROR: ${e.message ?: e.javaClass.simpleName}" }
     }
 
