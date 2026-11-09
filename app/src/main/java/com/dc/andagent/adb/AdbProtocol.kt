@@ -33,7 +33,10 @@ const val A_SYNC = 0x434e5953
 // ---- CNXN 参数 ----
 /** A_VERSION_SKIP_CHECKSUM：≥ 此版本双方忽略 data_check。 */
 const val A_VERSION = 0x01000001
-const val MAX_DATA = 4096
+// R121f：4096 是老式 ADB 最小值——OEM adbd（ColorOS 等）在 shell,v2 模式下生成的
+// 响应块可超 4096，对端容量声明过小会导致 adbd 写入阻塞、服务静默挂死（用户真机
+// 帧序列实锤：我方 arg1=4096 vs adbd arg1=262144）。对齐 PC adb 的 256KB。
+const val MAX_DATA = 256 * 1024
 
 // ---- AUTH arg0（AOSP：TOKEN=1 / SIGNATURE=2 / RSAPUBLICKEY=3）----
 const val ADB_AUTH_TOKEN = 1
