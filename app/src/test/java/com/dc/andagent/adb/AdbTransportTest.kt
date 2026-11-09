@@ -95,9 +95,9 @@ class AdbTransportTest {
                     assertEquals(A_OPEN, open.command)
                     val clientId = open.arg0
                     AdbProtocol.writeMessage(out, AdbMessage(A_OKAY, 2, clientId, ByteArray(0)))
-                    AdbProtocol.writeMessage(out, AdbMessage(A_WRTE, clientId, 2, "hi\n".toByteArray()))
+                    AdbProtocol.writeMessage(out, AdbMessage(A_WRTE, 2, clientId, "hi\n".toByteArray()))
                     assertEquals(A_OKAY, AdbProtocol.readMessage(inp).command)
-                    AdbProtocol.writeMessage(out, AdbMessage(A_CLSE, clientId, 2, ByteArray(0)))
+                    AdbProtocol.writeMessage(out, AdbMessage(A_CLSE, 2, clientId, ByteArray(0)))
                 }
             } catch (e: Throwable) {
                 serverError = e

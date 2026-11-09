@@ -55,13 +55,13 @@ class AdbClientTest {
                     val clientId = open.arg0
                     // 6) OKAY
                     AdbProtocol.writeMessage(out, AdbMessage(A_OKAY, SERVER_ID, clientId, ByteArray(0)))
-                    // 7) WRTE "hi\n"
-                    AdbProtocol.writeMessage(out, AdbMessage(A_WRTE, clientId, SERVER_ID, "hi\n".toByteArray()))
+                    // 7) WRTE "hi\n"（R126 过滤后客户端按 arg1==localId 识别本流帧）
+                    AdbProtocol.writeMessage(out, AdbMessage(A_WRTE, SERVER_ID, clientId, "hi\n".toByteArray()))
                     // 8) 等客户端 A_OKAY ack（确定性锁步，无 sleep）
                     val ack = AdbProtocol.readMessage(inp)
                     assertEquals(A_OKAY, ack.command)
-                    // 9) CLSE
-                    AdbProtocol.writeMessage(out, AdbMessage(A_CLSE, clientId, SERVER_ID, ByteArray(0)))
+                    // 9) CLSE（arg1=clientId 才会被客户端认作本流关闭，R126 过滤）
+                    AdbProtocol.writeMessage(out, AdbMessage(A_CLSE, SERVER_ID, clientId, ByteArray(0)))
                 }
             } catch (e: Throwable) {
                 serverError = e
@@ -421,9 +421,11 @@ class AdbClientTest {
         val localId = 1 // connect() 不占用 localId，openStream 第一次取 1
         val frames = frameBytes(
             cnxnFrame(),
+            // R126 过滤后：WRTE/CLSE 的 arg1 必须等于客户端 localId（AOSP 语义：
+            // arg0=发送方 id，arg1=接收方 id），否则被识别为其它流的帧而丢弃。
             AdbMessage(A_OKAY, SERVER_ID, localId, ByteArray(0)),
-            AdbMessage(A_WRTE, localId, SERVER_ID, "hi\n".toByteArray()),
-            AdbMessage(A_CLSE, localId, SERVER_ID, ByteArray(0)),
+            AdbMessage(A_WRTE, SERVER_ID, localId, "hi\n".toByteArray()),
+            AdbMessage(A_CLSE, SERVER_ID, localId, ByteArray(0)),
         )
         val fake = ScriptedTransport(ByteArrayInputStream(frames))
         val client = AdbClient(transport = fake, ackWindowMs = 80)
