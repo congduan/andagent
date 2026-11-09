@@ -228,6 +228,11 @@ class AdbClient(
                             Unit // OPEN 确认 / WRTE 的 ack
                         }
                         A_WRTE -> {
+                            // R126：非本流的迟到帧（上一流 CLSE 延迟后的残留 WRTE）直接
+                            // 丢弃——荣耀/华为 adbd 慢时上一流的响应会滞留到下一流窗口，
+                            // 不过滤就会「新命令读到旧结果」（用户真机错位实录）。
+                            if (msg.arg1 != localId) Unit
+                            else {
                             if (!gotAck) { gotAck = true; runCatching { transport.setReadTimeout(savedTimeout) } }
                             val chunks = decoder?.feed(msg.data) ?: listOf(ShellV2Decoder.Chunk(1, msg.data))
                             for (chunk in chunks) {
@@ -243,11 +248,16 @@ class AdbClient(
                             }
                             // 每个 WRTE 都要回 A_OKAY（arg0=本地 id，arg1=对端 id）；对端已关时忽略写失败。
                             runCatching { write(AdbMessage(A_OKAY, localId, msg.arg0, ByteArray(0))) }
+                            }
                         }
                         A_CLSE -> {
-                            gotAck = true
-                            runCatching { write(AdbMessage(A_CLSE, localId, msg.arg0, ByteArray(0))) }
-                            break
+                            // R126：只认本流的 CLSE（msg.arg1 == localId）；其它流的 CLSE
+                            // 丢弃（那是 adbd 关别流的通告）。
+                            if (msg.arg1 == localId) {
+                                gotAck = true
+                                runCatching { write(AdbMessage(A_CLSE, localId, msg.arg0, ByteArray(0))) }
+                                break
+                            }
                         }
                         A_CNXN -> {
                             // R125：对端在会话中途重发 CNXN = adbd 已 handle_offline 重置本
