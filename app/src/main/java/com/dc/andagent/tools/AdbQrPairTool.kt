@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -26,8 +27,29 @@ import kotlinx.serialization.json.JsonObject
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
 
+internal object AdbQrProgress {
+    enum class Stage(val label: String) {
+        QR_READY("二维码已显示"), DISCOVERING("mDNS 发现"), SERVICE_FOUND("发现配对服务"),
+        RESOLVING("解析配对服务"), CONNECTING("连接配对端口 / TLS / SPAKE2"), COMPLETE("配对完成")
+    }
+
+    fun advance(current: Stage, next: Stage): Stage = if (next.ordinal > current.ordinal) next else current
+
+    fun timeout(stage: Stage, seconds: Int): String =
+        "ERROR: 扫码配对超时（${seconds} 秒，阶段：${stage.label}）。" + when (stage) {
+            Stage.QR_READY, Stage.DISCOVERING -> "未发现目标机广播；确认目标机已扫码、两机同一 Wi-Fi，并检查路由器 AP 隔离。"
+            Stage.SERVICE_FOUND, Stage.RESOLVING -> "发现广播但无法解析服务地址；检查 Wi-Fi / mDNS。"
+            Stage.CONNECTING -> "已取得配对地址，但连接或握手未完成；检查两机互访及目标机无线调试状态。"
+            Stage.COMPLETE -> "请查看配对结果。"
+        }
+}
+
 /** Settings AdbQrCode accepts T:ADB. SSID is an mDNS instance, not a Wi-Fi network. */
 internal object AdbQrPayload {
+    /** AOSP QR mode uses S as the mDNS instance name and P as the SPAKE2 password. */
+    fun passwordForService(instanceName: String, ssid: String, password: String): String? =
+        password.takeIf { instanceName == ssid }
+
     fun escape(value: String): String = buildString {
         value.forEach { ch ->
             if (ch == '\\' || ch == ';' || ch == ',' || ch == ':') append('\\')
@@ -50,7 +72,9 @@ internal object AdbQrPayload {
 }
 
 internal object AdbQrSession {
-    data class Pending(val ssid: String, val password: String, val seconds: Int, val result: CompletableDeferred<String>)
+    data class Pending(val ssid: String, val password: String, val seconds: Int, val result: CompletableDeferred<String>) {
+        @Volatile var stage = AdbQrProgress.Stage.QR_READY
+    }
     @Volatile var pending: Pending? = null
 }
 
@@ -70,8 +94,8 @@ object AdbQrPairTool {
         }
         return try {
             context.startActivity(Intent(context, AdbQrPairActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            withTimeoutOrNull((seconds + 25L) * 1000) { session.result.await() }
-                ?: "ERROR: 超时未配对，请确保目标机在扫码页且同一网络。"
+            withTimeoutOrNull((seconds + 50L) * 1000) { session.result.await() }
+                ?: "ERROR: 扫码配对页未返回结果（阶段：${session.stage.label}）。"
         } catch (e: Exception) {
             "ERROR: 无法打开二维码配对页：${e.message ?: e.javaClass.simpleName}"
         } finally {
@@ -82,13 +106,16 @@ object AdbQrPairTool {
 
 /** Full-screen, inset-aware QR screen. The phone starts the server after scanning. */
 class AdbQrPairActivity : Activity() {
+    private val tag = "AdbQrPair"
     private val handler = Handler(Looper.getMainLooper())
     private val done = AtomicBoolean(false)
     private val pairing = AtomicBoolean(false)
+    private val resolving = AtomicBoolean(false)
     private var discovery: NsdManager.DiscoveryListener? = null
     private var lock: WifiManager.MulticastLock? = null
     private var started = 0L
     private var pending: AdbQrSession.Pending? = null
+    private var resolveAttempts = 0
     private lateinit var status: TextView
     private lateinit var countdown: TextView
 
@@ -120,63 +147,107 @@ class AdbQrPairActivity : Activity() {
         root.addView(countdown)
         root.addView(close)
         setContentView(root)
+        Log.i(tag, "stage=QR_READY service=${session.ssid} timeout=${session.seconds}s")
         discover(session)
         tick()
     }
 
     private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
 
+    private fun stage(next: AdbQrProgress.Stage, detail: String = "") {
+        pending?.let { it.stage = AdbQrProgress.advance(it.stage, next) }
+        Log.i(tag, "stage=${next.name} $detail")
+    }
+
     private fun tick() {
         if (done.get()) return
         val seconds = pending?.seconds ?: return
-        val remain = seconds - ((SystemClock.elapsedRealtime() - started) / 1000).toInt()
+        val limit = seconds + if (pairing.get()) 40 else 0
+        val remain = limit - ((SystemClock.elapsedRealtime() - started) / 1000).toInt()
         countdown.text = "剩余 ${remain.coerceAtLeast(0)} 秒"
-        if (remain <= 0) complete("ERROR: 超时未配对，请确保目标机在扫码页且同一网络。")
+        if (remain <= 0) complete(AdbQrProgress.timeout(pending?.stage ?: AdbQrProgress.Stage.QR_READY, limit))
         else handler.postDelayed(::tick, 1000)
     }
 
     private fun discover(session: AdbQrSession.Pending) {
         val manager = getSystemService(NSD_SERVICE) as NsdManager
-        lock = (applicationContext.getSystemService(WIFI_SERVICE) as? WifiManager)
-            ?.createMulticastLock("andagent-adb-qr")?.apply { setReferenceCounted(false); acquire() }
+        lock = try {
+            (applicationContext.getSystemService(WIFI_SERVICE) as? WifiManager)
+                ?.createMulticastLock("andagent-adb-qr")?.apply { setReferenceCounted(false); acquire() }
+        } catch (e: Exception) {
+            Log.e(tag, "stage=DISCOVERING multicast lock failed", e)
+            null
+        }
+        Log.i(tag, "multicastLock=${lock?.isHeld == true}")
         val listener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(type: String) = Unit
-            override fun onDiscoveryStopped(type: String) = Unit
-            override fun onStartDiscoveryFailed(type: String, code: Int) { complete("ERROR: mDNS 发现启动失败 ($code)，请检查 Wi-Fi。") }
-            override fun onStopDiscoveryFailed(type: String, code: Int) = Unit
-            override fun onServiceLost(info: NsdServiceInfo) = Unit
+            override fun onDiscoveryStarted(type: String) { stage(AdbQrProgress.Stage.DISCOVERING, "type=$type") }
+            override fun onDiscoveryStopped(type: String) { Log.i(tag, "discovery stopped type=$type") }
+            override fun onStartDiscoveryFailed(type: String, code: Int) { complete("ERROR: 阶段 mDNS 发现：启动失败 ($code)，请检查 Wi-Fi。") }
+            override fun onStopDiscoveryFailed(type: String, code: Int) { Log.w(tag, "discovery stop failed code=$code") }
+            override fun onServiceLost(info: NsdServiceInfo) { Log.i(tag, "service lost name=${info.serviceName}") }
             override fun onServiceFound(info: NsdServiceInfo) {
-                if (done.get() || info.serviceName != session.ssid) return
-                manager.resolveService(info, object : NsdManager.ResolveListener {
-                    override fun onResolveFailed(info: NsdServiceInfo, code: Int) = Unit
+                Log.i(tag, "service found name=${info.serviceName} type=${info.serviceType}")
+                if (done.get() || AdbQrPayload.passwordForService(info.serviceName, session.ssid, session.password) == null) return
+                stage(AdbQrProgress.Stage.SERVICE_FOUND)
+                resolve(info)
+            }
+
+            private fun resolve(info: NsdServiceInfo) {
+                if (done.get() || pairing.get()) return
+                if (!resolving.compareAndSet(false, true)) return
+                resolveAttempts++
+                stage(AdbQrProgress.Stage.RESOLVING, "attempt=$resolveAttempts")
+                try { manager.resolveService(info, object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(info: NsdServiceInfo, code: Int) {
+                        resolving.set(false)
+                        Log.w(tag, "stage=RESOLVING failed code=$code attempt=$resolveAttempts")
+                        if (resolveAttempts < 2) handler.postDelayed({ resolve(info) }, 1000)
+                        else complete("ERROR: 阶段服务解析：mDNS 解析失败 ($code)，已重试；请检查同一 Wi-Fi 和 AP 隔离。")
+                    }
                     override fun onServiceResolved(resolved: NsdServiceInfo) {
-                        if (done.get() || resolved.serviceName != session.ssid) return
-                        val host = resolved.host?.hostAddress ?: return
-                        val port = resolved.port.takeIf { it in 1..65535 } ?: return
+                        resolving.set(false)
+                        if (done.get()) return
+                        Log.i(tag, "stage=RESOLVING resolved name=${resolved.serviceName} host=${resolved.host?.hostAddress} port=${resolved.port}")
+                        if (AdbQrPayload.passwordForService(resolved.serviceName, session.ssid, session.password) == null) return
+                        val host = resolved.host?.hostAddress
+                        val port = resolved.port
+                        if (host.isNullOrBlank() || port !in 1..65535) {
+                            complete("ERROR: 阶段服务解析：目标机广播缺少有效地址或配对端口。")
+                            return
+                        }
                         if (!pairing.compareAndSet(false, true)) return
+                        stage(AdbQrProgress.Stage.CONNECTING, "host=$host port=$port")
                         runOnUiThread { status.text = "已发现 $host:$port，正在安全配对…" }
                         Thread {
                             val raw = runCatching {
                                 AdbPairNative.pair(host, port, session.password, AdbSessionHub.adbPublicKey(), "AndAgent")
                             }.getOrElse { "ERROR\nREASON=${it.javaClass.simpleName}\n" }
+                            val fields = AdbPairTool.fields(raw)
+                            Log.i(tag, "stage=PAIR_RESULT success=${raw.startsWith("OK")} nativeStage=${fields["STAGE"]} reason=${fields["REASON"]}")
                             if (raw.startsWith("OK")) {
                                 if (done.get()) return@Thread
                                 AdbSessionHub.rememberPairing(host, AdbPairTool.pairingFingerprint(raw))
+                                stage(AdbQrProgress.Stage.COMPLETE)
                                 complete("✅ 配对成功：${AdbPairTool.fields(raw)["GUID"].orEmpty()} ($host)。请在目标机无线调试主页查看主端口，然后调用 adb_connect(host=\"$host\", port=<主端口>)；配对端口 $port 不能用于连接。")
-                            } else complete("ERROR: 目标机已被发现，但 SPAKE2 配对失败（${AdbPairTool.fields(raw)["REASON"] ?: "协议错误"}）。请确认两机在同一 Wi-Fi 后重新扫码。")
+                            } else complete("ERROR: 阶段连接 / 握手（原生阶段 ${fields["STAGE"] ?: "未知"}）：${fields["REASON"] ?: "协议错误"}；目标机 $host:$port。请确认两机可互访后重新扫码。")
                         }.start()
                     }
-                })
+                }) } catch (e: Exception) {
+                    resolving.set(false)
+                    Log.e(tag, "stage=RESOLVING exception", e)
+                    complete("ERROR: 阶段服务解析：${e.javaClass.simpleName}。")
+                }
             }
         }
         discovery = listener
         try { manager.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, listener) }
-        catch (e: Exception) { complete("ERROR: mDNS 发现失败：${e.message}") }
+        catch (e: Exception) { Log.e(tag, "stage=DISCOVERING exception", e); complete("ERROR: 阶段 mDNS 发现：${e.message}") }
     }
 
     private fun complete(message: String) {
         if (Looper.myLooper() != Looper.getMainLooper()) { runOnUiThread { complete(message) }; return }
         if (!done.compareAndSet(false, true)) return
+        Log.i(tag, "stage=FINISHED result=${if (message.startsWith("✅")) "success" else "failure"} last=${pending?.stage}")
         status.text = message
         pending?.result?.complete(message)
         handler.postDelayed({ finish() }, if (message.startsWith("✅")) 3000 else 1000)

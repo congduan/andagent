@@ -32,6 +32,7 @@
  * exporter output (label "adb-label", incl. NUL).
  */
 #include <jni.h>
+#include <android/log.h>
 
 #include <algorithm>
 #include <arpa/inet.h>
@@ -111,6 +112,7 @@ static_assert(sizeof(PeerInfo) == kMaxPeerInfoSize, "PeerInfo layout");
 struct PairResult {
     bool ok = false;
     std::string reason;  // machine-readable failure code
+    std::string stage = "TCP_CONNECT";
     std::string guid;
     std::string cert_fp;  // R103: SHA-256 hex of the pairing server's leaf cert
 };
@@ -333,6 +335,11 @@ bool ReadPacket(SSL* ssl, PairingPacketHeader* h, std::vector<uint8_t>* payload)
 PairResult DoPair(const std::string& host, int port, const std::string& code,
                   const std::vector<uint8_t>& adb_pubkey, const std::string& device_name) {
     PairResult r;
+    auto stage = [&r](const char* value) {
+        r.stage = value;
+        __android_log_print(ANDROID_LOG_INFO, "AdbQrPair", "native stage=%s", value);
+    };
+    stage("TCP_CONNECT");
     (void)device_name;  // AOSP protocol has no client-name field; used by Kotlin side only.
 
     int fd = ConnectWithTimeout(host, port);
@@ -341,6 +348,7 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
         return r;
     }
 
+    stage("TLS_CERT");
     CertKey ck;
     if (!GenerateSelfSignedCert(&ck)) {
         close(fd);
@@ -348,6 +356,7 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
         return r;
     }
 
+    stage("TLS_HANDSHAKE");
     TlsSession tls;
     if (!SetupTls(&tls, ck, fd)) {
         close(fd);
@@ -367,6 +376,7 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
 
     // pairing_connection.cpp:190-198 - append TLS exporter material to the
     // password so the PAKE is bound to this exact TLS session.
+    stage("TLS_EXPORT");
     std::vector<uint8_t> ekm(kExportedKeySize);
     if (SSL_export_keying_material(tls.ssl.get(), ekm.data(), ekm.size(), kExportedKeyLabel,
                                    sizeof(kExportedKeyLabel), nullptr, 0, 0) != 1) {
@@ -382,6 +392,7 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
         return r;
     }
 
+    stage("SPAKE2_CREATE");
     PairingAuthCtx* auth = pairing_auth_client_new(pswd.data(), pswd.size());
     if (!auth) {
         close(fd);
@@ -394,6 +405,7 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
     } guard{auth};
 
     // pairing_connection.cpp:295-330 DoExchangeMsgs
+    stage("SPAKE2_SEND");
     size_t msg_len = pairing_auth_msg_size(auth);
     if (msg_len == 0) {
         r.reason = "SPAKE2";
@@ -406,6 +418,7 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
         return r;
     }
 
+    stage("SPAKE2_RECEIVE");
     PairingPacketHeader hdr = {};
     std::vector<uint8_t> their_msg;
     if (!ReadPacket(tls.ssl.get(), &hdr, &their_msg) || hdr.type != kTypeSpake2Msg) {
@@ -413,6 +426,7 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
         return r;
     }
     // pairing_auth_init_cipher CHECK()s on empty input, so validate first.
+    stage("SPAKE2_DERIVE");
     if (their_msg.empty() || !pairing_auth_init_cipher(auth, their_msg.data(), their_msg.size())) {
         r.reason = "PROTOCOL";
         return r;
@@ -420,6 +434,7 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
 
     // pairing_connection.cpp:332-405 DoExchangePeerInfo
     // adb_wifi.cpp:210-214 - client PeerInfo carries our ADB RSA public key.
+    stage("PEER_INFO_SEND");
     PeerInfo pi = {};  // 8192 zero bytes
     pi.type = kPeerInfoRsaPubKey;
     size_t copy = std::min<size_t>(adb_pubkey.size(), sizeof(pi.data));
@@ -438,6 +453,7 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
         return r;
     }
 
+    stage("PEER_INFO_RECEIVE");
     std::vector<uint8_t> their_enc;
     if (!ReadPacket(tls.ssl.get(), &hdr, &their_enc) || hdr.type != kTypePeerInfo) {
         r.reason = "PROTOCOL";
@@ -463,6 +479,7 @@ PairResult DoPair(const std::string& host, int port, const std::string& code,
         r.reason = "PROTOCOL";
         return r;
     }
+    stage("COMPLETE");
     r.ok = true;
     r.guid = std::string(reinterpret_cast<const char*>(their.data),
                          strnlen(reinterpret_cast<const char*>(their.data), sizeof(their.data)));
@@ -573,7 +590,7 @@ Java_com_dc_andagent_tools_AdbPairNative_nativePair(JNIEnv* env, jobject /*thiz*
     if (r.ok) {
         out = "OK\nGUID=" + r.guid + "\nCERT_FP=" + r.cert_fp + "\n";
     } else {
-        out = "ERROR\nREASON=" + r.reason + "\n";
+        out = "ERROR\nREASON=" + r.reason + "\nSTAGE=" + r.stage + "\n";
     }
     return env->NewStringUTF(out.c_str());
 }
