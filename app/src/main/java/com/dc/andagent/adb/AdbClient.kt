@@ -519,7 +519,7 @@ class AdbClient(
         // R121e：AUTH/CNXN/STLS 纳入追踪——若 adbd 在 TLS 后仍发 A_AUTH TOKEN，
         // 说明它视本机为未授权设备（配对信任未生效），这是「连接成功但服务无响应」
         // 的决定性证据；此前只追 OPEN/OKAY/WRTE/CLSE 会漏掉这个信号。
-        if (msg.command !in setOf(A_OPEN, A_OKAY, A_WRTE, A_CLSE, A_AUTH, A_CNXN, A_STLS)) return
+        if (msg.command !in setOf(A_OPEN, A_OKAY, A_WRTE, A_CLSE, A_AUTH, A_CNXN)) return
         val name = String(byteArrayOf(msg.command.toByte(), (msg.command ushr 8).toByte(),
             (msg.command ushr 16).toByte(), (msg.command ushr 24).toByte()), Charsets.US_ASCII)
         val line = "${System.currentTimeMillis()} $direction $name arg0=${msg.arg0} arg1=${msg.arg1} len=${msg.data.size}"
