@@ -10,6 +10,25 @@ import java.net.SocketTimeoutException
 import java.security.KeyPair
 
 /**
+ * R124 连接选项（真机 A/B 开关，见 AdbSessionHub.TLS_PEER_CNXN_FIRST）。
+ *
+ * [peerCnxnFirst] = true：TLS 建连后【不主动发 CNXN】，先等 adbd 在 TLS 握手完成后
+ * 主动发来的 CNXN。三方对照一致：iadb-ios ADBClient.swift:103-118（handleSTLS 里
+ * upgradeToTLS 后直接 receiveMessage 等 .connect）、cocool97/adb_client
+ * adb_message_device.rs:89-101（upgrade_connection 后 read_handshake_message 等 CNXN）。
+ * 我们在 TLS 后多发一次 CNXN 会被 adbd 的 handle_new_connection 当作新连接：
+ * 该函数首行 handle_offline(t)（adb.cpp:408）把 t->online 清 0（adb.cpp:217），
+ * use_tls 分支只 send_tls_request 不会重新 online（adb.cpp:420-424），于是后续
+ * A_OPEN 命中 `if (!t->online) break`（adb.cpp:502）被静默丢弃——
+ * 这正是 ColorOS 上「A_OPEN 后零响应，连 CLSE 都没有」的成因。
+ */
+data class AdbConnectOptions(
+    val peerCnxnFirst: Boolean = false,
+    /** 用 `shell,v2,raw:` 显式禁 PTY（对齐 iadb-ios ADBClient.swift:218）。 */
+    val rawShellService: Boolean = false,
+)
+
+/**
  * R100 ② / R103 A：ADB 客户端（纯 JVM/Kotlin）——CNXN → AUTH → OPEN/WRTE/CLSE / sync:。
  *
  * 传输层由 [transport] 注入：默认 [TcpTransport]（明文），配对过的 Android 11+
@@ -30,11 +49,15 @@ class AdbClient(
     private val transport: AdbTransport = TcpTransport(),
     /** A_OPEN 后的 ACK 快速失败窗口；可注入以便纯 JVM 单测不必真等 8s。 */
     private val ackWindowMs: Long = ACK_WINDOW_MS,
+    /** R124：TLS 时序与 shell 服务串开关（见 [AdbConnectOptions]）。 */
+    private val options: AdbConnectOptions = AdbConnectOptions(),
 ) {
     private var input: InputStream? = null
     private var output: OutputStream? = null
     private var nextLocalId = 1
     private var peerFeatures: Set<String> = emptySet()
+    /** R124：目标机 CNXN banner 全文（features 权威数据），写入帧序列 evidence。 */
+    private var peerBannerText: String = ""
     private val recentFrames = ArrayDeque<String>()
     /** 单条 TCP 连接上的流是锁步协议：所有对外操作串行化，避免并发工具调用互相踩帧。 */
     private val lock = Any()
@@ -54,8 +77,16 @@ class AdbClient(
             output = transport.outputStream()
 
             peerFeatures = emptySet()
+            peerBannerText = ""
             recentFrames.clear()
-            write(AdbMessage(A_CNXN, A_VERSION, MAX_DATA, (AdbFeatures.hostBanner() + "\u0000").toByteArray()))
+            // R124：TLS 传输在 open() 内已完成「明文 CNXN → STLS → TLS 握手」，
+            // adbd 握手成功后会主动发 CNXN；此时绝不重发我方 CNXN（见 AdbConnectOptions）。
+            // 明文 TcpTransport 仍须由我方发起 CNXN。
+            if (options.peerCnxnFirst) {
+                runCatching { transport.setReadTimeout(PEER_CNXN_WAIT_MS) }
+            } else {
+                write(AdbMessage(A_CNXN, A_VERSION, MAX_DATA, (AdbFeatures.hostBanner() + "\u0000").toByteArray()))
+            }
             when (val r = handshake()) {
                 is Handshake.Connected -> {
                     // 握手期可能把读超时调到 AUTH_WAIT_MS；连上后放宽，避免长 shell/传输被连接超时误杀。
@@ -101,6 +132,8 @@ class AdbClient(
             when (msg.command) {
                 A_CNXN -> {
                     peerFeatures = AdbFeatures.parseBanner(msg.data)
+                    // R124：banner 全文留痕——目标机 features 列表是权威数据。
+                    peerBannerText = AdbFeatures.bannerText(msg.data)
                     return Handshake.Connected
                 }
                 A_AUTH -> when (msg.arg0) {
@@ -144,7 +177,12 @@ class AdbClient(
             if (input == null) error("未连接：请先调用 connect()")
             val localId = nextLocalId++
             val v2 = AdbFeatures.useShellV2(peerFeatures)
-            write(AdbMessage(A_OPEN, localId, 0, (AdbFeatures.shellService(command, v2) + "\u0000").toByteArray()))
+            write(
+                AdbMessage(
+                    A_OPEN, localId, 0,
+                    (AdbFeatures.shellService(command, v2, options.rawShellService) + "\u0000").toByteArray(),
+                ),
+            )
             val openAt = System.currentTimeMillis()
 
             // A_OPEN 后的 ACK 快速失败：正常 adbd 毫秒级回 OKAY/WRTE/CLSE。
@@ -519,16 +557,30 @@ class AdbClient(
         // R121e：AUTH/CNXN/STLS 纳入追踪——若 adbd 在 TLS 后仍发 A_AUTH TOKEN，
         // 说明它视本机为未授权设备（配对信任未生效），这是「连接成功但服务无响应」
         // 的决定性证据；此前只追 OPEN/OKAY/WRTE/CLSE 会漏掉这个信号。
-        if (msg.command !in setOf(A_OPEN, A_OKAY, A_WRTE, A_CLSE, A_AUTH, A_CNXN)) return
+        // R124：真正把 A_STLS 加入集合（此前注释写了 STLS 但集合里没有），并对
+        // CNXN/OPEN 记录 payload 全文——OPEN 的服务名与对端 CNXN 的 features 是
+        // 三方对照的权威证据，只记 len= 时用户帧序列里看不到具体内容。
+        if (msg.command !in setOf(A_OPEN, A_OKAY, A_WRTE, A_CLSE, A_AUTH, A_CNXN, A_STLS)) return
         val name = String(byteArrayOf(msg.command.toByte(), (msg.command ushr 8).toByte(),
             (msg.command ushr 16).toByte(), (msg.command ushr 24).toByte()), Charsets.US_ASCII)
-        val line = "${System.currentTimeMillis()} $direction $name arg0=${msg.arg0} arg1=${msg.arg1} len=${msg.data.size}"
+        val payload = if (msg.command == A_CNXN || msg.command == A_OPEN) {
+            " payload='${AdbFeatures.bannerText(msg.data)}'"
+        } else ""
+        val line = "${System.currentTimeMillis()} $direction $name arg0=${msg.arg0} arg1=${msg.arg1} " +
+            "len=${msg.data.size}$payload"
         recentFrames.addLast(line)
         if (recentFrames.size > 32) recentFrames.removeFirst()
         if (BuildConfig.DEBUG) runCatching { android.util.Log.d("AdbClientFrames", line) }
     }
 
-    private fun frameSummary(): String = recentFrames.takeLast(8).joinToString(" | ")
+    /** R124：目标机 CNXN banner 全文（含 features），供上层日志/evidence 读取。 */
+    fun peerBanner(): String = synchronized(lock) { peerBannerText }
+
+    private fun frameSummary(): String {
+        val frames = recentFrames.takeLast(8).joinToString(" | ")
+        return if (peerBannerText.isEmpty()) frames
+        else "$frames | RX CNXN banner='$peerBannerText'"
+    }
 
     /** 粗粒度存活判断；底层连接假活由下一次读超时兜底。 */
     fun isAlive(): Boolean = transport.isAlive()
@@ -573,6 +625,8 @@ class AdbClient(
         const val MAX_OUTPUT_BYTES = 8 * 1024
         const val HANDSHAKE_MAX_MESSAGES = 8
         const val AUTH_WAIT_MS = 3000
+        /** R124：peerCnxnFirst 模式下等对端主动 CNXN 的窗口（iadb-ios 用 30s，取 15s）。 */
+        const val PEER_CNXN_WAIT_MS = 15_000
         /** 建连后的读超时：shell/文件传输可能长时间无输出，不沿用 connect 的短超时。 */
         const val SESSION_TIMEOUT_MS = 90_000
     }

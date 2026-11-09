@@ -29,6 +29,8 @@ const val A_OKAY = 0x59414b4f
 const val A_WRTE = 0x45545257
 const val A_CLSE = 0x45534c43
 const val A_SYNC = 0x434e5953
+/** R124 诊断：TLS 升级帧（AOSP adb.cpp:448-455）。纳入帧追踪，便于发现重复 STLS。 */
+const val A_STLS = 0x534c5453
 
 // ---- CNXN 参数 ----
 /** A_VERSION_SKIP_CHECKSUM：≥ 此版本双方忽略 data_check。 */

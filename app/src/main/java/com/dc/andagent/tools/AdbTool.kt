@@ -8,6 +8,7 @@ import android.provider.MediaStore
 import android.util.Base64
 import com.dc.andagent.adb.AdbAuth
 import com.dc.andagent.adb.AdbClient
+import com.dc.andagent.adb.AdbConnectOptions
 import com.dc.andagent.adb.AdbTransport
 import com.dc.andagent.adb.AndroidKeystoreKeyWrapper
 import com.dc.andagent.adb.TcpTransport
@@ -45,6 +46,21 @@ object AdbSessionHub {
     /** R103 A：配对时记录的设备证书指纹（host -> SHA-256 hex，null = 已配对但未取到）。仅记录用途。 */
     private const val PAIRINGS_KEY = "pairings"
     const val RECONNECT_TIMEOUT_MS = 3000
+
+    /**
+     * R124 真机 A/B 开关（只改这几行，协议层不动）：
+     *  - [TLS_PEER_CNXN_FIRST]=true：TLS 后【不】重发我方 CNXN，只等 adbd 主动 CNXN
+     *    （三方对照一致的正确时序）；置 false 复现 R121f 旧时序做对照。
+     *  - [TLS_RAW_SHELL_SERVICE]=true：用 `shell,v2,raw:`（对齐 iadb-ios）。
+     *  - banner features：改 AdbFeatures.ACTIVE_FEATURES（MINIMAL / WIRELESS / PC_FULL）。
+     */
+    private const val TLS_PEER_CNXN_FIRST = true
+    private const val TLS_RAW_SHELL_SERVICE = false
+
+    private fun connectOptions(tls: Boolean) = AdbConnectOptions(
+        peerCnxnFirst = tls && TLS_PEER_CNXN_FIRST,
+        rawShellService = tls && TLS_RAW_SHELL_SERVICE,
+    )
 
     val registry = AdbSessionRegistry()
     private val live = LinkedHashMap<String, AdbClient>()
@@ -127,6 +143,7 @@ object AdbSessionHub {
             if (t.tls) {
                 TlsTransport(listOfNotNull(t.fingerprint), AdbPairNative, keyPair.private.encoded)
             } else TcpTransport(),
+            options = connectOptions(t.tls),
         )
 
     /**
@@ -177,8 +194,11 @@ object AdbSessionHub {
                 if (tls) {
                     TlsTransport(listOfNotNull(pinnedFp), AdbPairNative, keyPair.private.encoded)
                 } else TcpTransport()
-            val c = AdbClient(keyPair, transport)
-            val r = c.connect(host, port)
+            val c = AdbClient(keyPair, transport, options = connectOptions(tls))
+            val r0 = c.connect(host, port)
+            // R124 诊断：把目标机 CNXN banner 全文（features 权威数据）随连接结果留痕。
+            val banner = c.peerBanner()
+            val r = if (r0.startsWith("OK") && banner.isNotEmpty()) "$r0\n对端 CNXN banner：$banner" else r0
             if (r.startsWith("OK")) putLive(key, c) else c.close()
             // OK / AUTH_REQUIRED 都登记（便于 adb_devices 看到、重试）；纯网络 ERROR 不登记。
             if (r.startsWith("OK") || r.startsWith("AUTH_REQUIRED")) {

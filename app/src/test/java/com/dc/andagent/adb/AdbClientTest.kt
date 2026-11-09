@@ -1,6 +1,7 @@
 package com.dc.andagent.adb
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,7 +38,7 @@ class AdbClientTest {
                     val cnxn = AdbProtocol.readMessage(inp)
                     assertEquals(A_CNXN, cnxn.command)
                     assertEquals(A_VERSION, cnxn.arg0)
-                    assertEquals("host::features=shell_v2\u0000", String(cnxn.data))
+                    assertEquals(AdbFeatures.hostBanner() + "\u0000", String(cnxn.data))
                     // 2) AUTH TOKEN
                     AdbProtocol.writeMessage(out, AdbMessage(A_AUTH, ADB_AUTH_TOKEN, 0, token))
                     // 3) 客户端签名 → JDK 公钥验签
@@ -331,6 +332,14 @@ class AdbClientTest {
         override fun setReadTimeout(ms: Int) { timeouts += ms }
         override fun isAlive(): Boolean = true
         override fun close() {}
+
+        /** R124：把客户端写出的帧解回来，断言 CNXN 时序与 A_OPEN 服务名。 */
+        fun writtenMessages(): List<AdbMessage> {
+            val out = mutableListOf<AdbMessage>()
+            val src = ByteArrayInputStream(sink.toByteArray())
+            while (src.available() > 0) out += AdbProtocol.readMessage(src)
+            return out
+        }
     }
 
     /** 先吐出 [prefix]（握手用 CNXN 帧），之后每次 read 抛 SocketTimeoutException，
@@ -425,5 +434,74 @@ class AdbClientTest {
         assertEquals("退出后读超时必须恢复为 SESSION_TIMEOUT_MS",
             AdbClient.SESSION_TIMEOUT_MS, fake.timeouts.last())
         assertTrue("ACK 窗口应设过 1s 读超时", fake.timeouts.contains(1_000))
+    }
+
+    /* ---------------- R124：TLS 时序 / CNXN banner evidence / OPEN payload ---------------- */
+
+    /**
+     * 三方对照结论：TLS 后不重发我方 CNXN，只等 adbd 主动 CNXN（iadb-ios
+     * ADBClient.swift:103-118 / cocool97 adb_message_device.rs:89-101 / AOSP
+     * adb.cpp:407-424）。多发的 CNXN 会触发 adbd handle_offline → A_OPEN 静默丢弃。
+     */
+    @Test
+    fun peerCnxnFirstSkipsClientCnxnAndWaitsForDeviceBanner() {
+        val banner = "device::ro.product.name=OnePlus9;features=cmd,stat_v2\u0000"
+        val frames = frameBytes(
+            AdbMessage(A_CNXN, A_VERSION, MAX_DATA, banner.toByteArray()),
+            AdbMessage(A_OKAY, SERVER_ID, 1, ByteArray(0)),
+            AdbMessage(A_WRTE, SERVER_ID, 1, "pong\n".toByteArray()),
+            AdbMessage(A_CLSE, SERVER_ID, 1, ByteArray(0)),
+        )
+        val fake = ScriptedTransport(ByteArrayInputStream(frames))
+        val client = AdbClient(transport = fake, options = AdbConnectOptions(peerCnxnFirst = true))
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+        assertFalse("peerCnxnFirst 不得发我方 CNXN（否则 adbd handle_offline）",
+            fake.writtenMessages().any { it.command == A_CNXN })
+        assertEquals("pong\n", client.openStream("echo pong"))
+        assertTrue(client.peerBanner().contains("features=cmd,stat_v2"))
+    }
+
+    /** 默认（明文）时序仍由我方发起 CNXN，行为不回退。 */
+    @Test
+    fun legacyCnxnFirstStillSendsClientCnxn() {
+        val fake = ScriptedTransport(ByteArrayInputStream(frameBytes(cnxnFrame())))
+        val client = AdbClient(transport = fake)
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+        val sent = fake.writtenMessages()
+        assertEquals(1, sent.count { it.command == A_CNXN })
+        assertEquals(AdbFeatures.hostBanner() + "\u0000", String(sent.first { it.command == A_CNXN }.data))
+    }
+
+    /** R124 诊断：帧序列必须带 RX CNXN banner 全文 + A_OPEN 服务名全文（不止 len=）。 */
+    @Test
+    fun frameSequenceKeepsPeerBannerAndOpenServicePayload() {
+        val banner = "device::ro.product.model=LE2120;features=shell_v2,cmd,stat_v2,ls_v2,abb\u0000"
+        val fake = ScriptedTransport(
+            SilentInputStream(frameBytes(AdbMessage(A_CNXN, A_VERSION, MAX_DATA, banner.toByteArray())), 5),
+        )
+        val client = AdbClient(transport = fake, ackWindowMs = 60)
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+        val result = client.openStream("getprop ro.build.version.release")
+        assertTrue(result.startsWith("ERROR"))
+        assertTrue("缺 RX CNXN 全文: $result", result.contains("features=shell_v2,cmd,stat_v2,ls_v2,abb"))
+        assertTrue("缺 A_OPEN 服务名: $result", result.contains("shell,v2:getprop ro.build.version.release"))
+    }
+
+    /** rawShellService 开关把服务串切成 iadb-ios 的 `shell,v2,raw:` 形式。 */
+    @Test
+    fun rawShellServiceOptionChangesOpenPayload() {
+        val stdout = byteArrayOf(1, 3, 0, 0, 0) + "ok\n".toByteArray() // shell v2 stdout chunk
+        val frames = frameBytes(
+            AdbMessage(A_CNXN, A_VERSION, MAX_DATA, "device::features=shell_v2\u0000".toByteArray()),
+            AdbMessage(A_OKAY, SERVER_ID, 1, ByteArray(0)),
+            AdbMessage(A_WRTE, SERVER_ID, 1, stdout),
+            AdbMessage(A_CLSE, SERVER_ID, 1, ByteArray(0)),
+        )
+        val fake = ScriptedTransport(ByteArrayInputStream(frames))
+        val client = AdbClient(transport = fake, options = AdbConnectOptions(rawShellService = true))
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+        assertEquals("ok\n", client.openStream("echo ok"))
+        val open = fake.writtenMessages().first { it.command == A_OPEN }
+        assertEquals("shell,v2,raw:echo ok\u0000", String(open.data))
     }
 }
