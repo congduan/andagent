@@ -306,9 +306,12 @@ object WifiP2pCodec {
     /** DIRECT-<前缀>-<token>，超 32 字节时截断 token。 */
     fun defaultNetworkName(prefix: String, token: String): String {
         val clean = prefix.filter { it.code in 0x20..0x7E }.take(8).ifEmpty { "AndAgent" }
-        var name = "DIRECT-$clean-$token"
-        while (name.toByteArray(Charsets.UTF_8).size > 32 && token.isNotEmpty()) {
-            name = "DIRECT-$clean-${token.take(token.length - 1)}"
+        // 截断必须基于上一轮的产物收敛：若反复从原始 token 切片，token 永不缩短，死循环。
+        var tail = token
+        var name = "DIRECT-$clean-$tail"
+        while (name.toByteArray(Charsets.UTF_8).size > 32 && tail.isNotEmpty()) {
+            tail = tail.take(tail.length - 1)
+            name = "DIRECT-$clean-$tail"
         }
         return name
     }
@@ -370,7 +373,7 @@ object RttCodec {
         val n = sorted.size
         val median = if (n % 2 == 1) sorted[n / 2] else ((sorted[n / 2 - 1] + sorted[n / 2]) / 2.0).toInt()
         val mean = sorted.sum() / n
-        val variance = sorted.sumOf { (it - mean).toDouble() } / n
+        val variance = sorted.sumOf { ((it - mean).toDouble()).let { d -> d * d } } / n
         return Stats(
             count = n,
             meanMm = mean,

@@ -10,11 +10,11 @@ import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
-import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.dc.andagent.ui.FloatingDragHelper
 import kotlin.math.abs
 import kotlin.math.hypot
 
@@ -31,13 +31,10 @@ class FloatingMirrorWindow(
     private val wm = context.getSystemService(WindowManager::class.java)
     private val density = context.resources.displayMetrics.density
     private val width = (240 * density).toInt()
-    private val screenW = context.resources.displayMetrics.widthPixels
-    private val screenH = context.resources.displayMetrics.heightPixels
-    private val grab = (56 * density).toInt()
     private val headerPx = (28 * density).toInt()
     private val videoPx = width * 9 / 16
     private val toolbarPx = (32 * density).toInt()
-    private val baseHeight = headerPx + videoPx
+    private var baseHeight = headerPx + videoPx
     private val params = WindowManager.LayoutParams(
         width, baseHeight,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -52,7 +49,6 @@ class FloatingMirrorWindow(
     private val surface = SurfaceView(context)
     private val touchLayer = View(context).apply { visibility = View.GONE }
     private val handler = Handler(Looper.getMainLooper())
-    private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private val message = TextView(context).apply {
         setTextColor(Color.WHITE); setBackgroundColor(0xCC121721.toInt()); gravity = Gravity.CENTER
         text = "正在连接…"; visibility = View.VISIBLE
@@ -63,6 +59,8 @@ class FloatingMirrorWindow(
         setPadding(6, 2, 6, 2); text = "仅观看"; visibility = View.GONE
     }
     private var shown = false
+    private lateinit var dragHelper: FloatingDragHelper
+    private lateinit var videoLayout: LinearLayout.LayoutParams
     private var videoWidth = 0
     private var videoHeight = 0
     private var controlAvailable = false
@@ -111,23 +109,10 @@ class FloatingMirrorWindow(
         bar.addView(title, LinearLayout.LayoutParams(0, headerPx, 1f))
         bar.addView(toolbarToggle, LinearLayout.LayoutParams((36 * density).toInt(), headerPx))
         bar.addView(close, LinearLayout.LayoutParams((48 * density).toInt(), headerPx))
-        val longPress = Runnable {
+        // 标题拖动完全交给 dragHelper.bindDrag；长按手势通过 bindDrag 的 onLongPress 回调保留。
+        val longPress = {
             passthrough = !passthrough; updateBorder(); refreshToolbarState()
             badge.text = if (passthrough) "拖动模式" else "可操控"; badge.visibility = View.VISIBLE
-        }
-        bar.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    dragX = event.rawX; dragY = event.rawY; startX = params.x; startY = params.y
-                    handler.postDelayed(longPress, ViewConfiguration.getLongPressTimeout().toLong()); true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (hypot(event.rawX - dragX, event.rawY - dragY) > slop) handler.removeCallbacks(longPress)
-                    moveWindow(event.rawX, event.rawY); true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { handler.removeCallbacks(longPress); true }
-                else -> true
-            }
         }
         val video = FrameLayout(context)
         video.addView(surface, FrameLayout.LayoutParams(-1, -1))
@@ -137,7 +122,31 @@ class FloatingMirrorWindow(
         touchLayer.setOnTouchListener { _, event -> handleTouch(event) }
         root.addView(bar)
         root.addView(toolbar, LinearLayout.LayoutParams(-1, toolbarPx))
-        root.addView(video, LinearLayout.LayoutParams(-1, videoPx))
+        videoLayout = LinearLayout.LayoutParams(-1, videoPx)
+        root.addView(video, videoLayout)
+        val resize = TextView(context).apply {
+            text = "◢"; textSize = 23f; gravity = Gravity.CENTER
+            setTextColor(com.dc.andagent.ui.OverlayChrome.TEXT)
+            setBackgroundColor(com.dc.andagent.ui.OverlayChrome.HEADER_BG)
+            elevation = 16 * density
+            contentDescription = "调整投屏浮窗大小"
+        }
+        video.addView(resize, FrameLayout.LayoutParams((44 * density).toInt(), (44 * density).toInt(), Gravity.BOTTOM or Gravity.END))
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            // Type.systemBars()/getInsets(int) 是 API 30+ 接口；minSdk 26 的旧系统直接返回原 insets（无安全区 padding，不崩溃）。
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+            }
+            insets
+        }
+        root.requestApplyInsets()
+        dragHelper = FloatingDragHelper(context, wm, root, params, "mirror_${context.getSharedPreferences("adb_mirror", Context.MODE_PRIVATE).getString("target", "default")}",
+            onChange = {
+                baseHeight = params.height - if (toolbarExpanded) toolbarPx else 0
+                videoLayout.height = (baseHeight - headerPx).coerceAtLeast(1)
+                video.layoutParams = videoLayout
+            }).also { it.restore(); it.bindDrag(title, longPress); it.bindResize(resize) }
         surface.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) = Unit
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) = onSurfaceReady(holder)
@@ -156,15 +165,15 @@ class FloatingMirrorWindow(
     }
 
     private fun toggleToolbar() {
-        toolbarExpanded = !toolbarExpanded
+        toolbarExpanded = MirrorToolbar.toggled(toolbarExpanded)
         applyToolbar()
     }
 
     /** 展开/折叠时同步浮窗高度，避免固定 params 高度挤压视频或裁掉工具条。 */
     private fun applyToolbar() {
         toolbar.visibility = if (toolbarExpanded) View.VISIBLE else View.GONE
-        toolbarToggle.text = if (toolbarExpanded) "⌃" else "⌄"
-        params.height = baseHeight + if (toolbarExpanded) toolbarPx else 0
+        toolbarToggle.text = MirrorToolbar.toggleLabel(toolbarExpanded)
+        params.height = baseHeight + MirrorToolbar.extraHeightPx(toolbarExpanded, toolbarPx)
         if (shown) wm.updateViewLayout(root, params)
     }
 
@@ -192,13 +201,6 @@ class FloatingMirrorWindow(
         qualityButton.text = MirrorToolbar.qualityLabel(maxSize)
     }
 
-    private fun moveWindow(rawX: Float, rawY: Float) {
-        // 边界夹取：浮窗至少保留 56dp 在屏幕内。
-        params.x = (startX + (rawX - dragX).toInt()).coerceIn(-(width - grab), screenW - grab)
-        params.y = (startY + (rawY - dragY).toInt()).coerceIn(0, screenH - grab)
-        if (shown) wm.updateViewLayout(root, params)
-    }
-
     private fun point(x: Float, y: Float): ScrcpyControl.Point? =
         ScrcpyControl.mapPoint(x, y, touchLayer.width, touchLayer.height, videoWidth, videoHeight)
 
@@ -210,7 +212,8 @@ class FloatingMirrorWindow(
         if (passthrough || !controlAvailable) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { dragX = event.rawX; dragY = event.rawY; startX = params.x; startY = params.y }
-                MotionEvent.ACTION_MOVE -> moveWindow(event.rawX, event.rawY)
+                MotionEvent.ACTION_MOVE -> dragHelper.dragBy(startX, startY, (event.rawX - dragX).toInt(), (event.rawY - dragY).toInt())
+                MotionEvent.ACTION_UP -> dragHelper.persist()
             }
             return true
         }

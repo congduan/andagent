@@ -23,10 +23,11 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
+import android.hardware.display.DisplayManager
+import com.dc.andagent.ui.FloatingDragHelper
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -118,6 +119,15 @@ class CameraOverlayService : Service() {
     private var session: CameraCaptureSession? = null
     private var previewSurface: Surface? = null
     private var generation = 0
+    private var dragHelper: FloatingDragHelper? = null
+    private var bufferWidth = 0
+    private var bufferHeight = 0
+    private var sensorOrientation = 90
+    private val rotationListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+        override fun onDisplayRemoved(displayId: Int) = Unit
+        override fun onDisplayChanged(displayId: Int) { if (displayId == android.view.Display.DEFAULT_DISPLAY) main.post { reapplyPreviewTransform() } }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -130,6 +140,7 @@ class CameraOverlayService : Service() {
             cameraThread = HandlerThread("camera-overlay").apply { start() }
             cameraHandler = Handler(cameraThread.looper)
             windows = getSystemService(WINDOW_SERVICE) as WindowManager
+            getSystemService(DisplayManager::class.java).registerDisplayListener(rotationListener, main)
         } catch (e: Exception) {
             fail("前台服务启动失败: ${e.message ?: e.javaClass.simpleName}")
         }
@@ -184,26 +195,13 @@ class CameraOverlayService : Service() {
         return frame
     }
 
-    /** 预览变换：等比缩放（center-crop 避免拉伸）+ 传感器旋转补偿 + 前摄水平镜像。 */
-    private fun applyPreviewTransform(view: TextureView, bufferW: Int, bufferH: Int, rotationDeg: Int, mirror: Boolean) {
-        main.post {
-            if (view.width <= 0 || view.height <= 0 || bufferW <= 0 || bufferH <= 0) return@post
-            val vw = view.width.toFloat(); val vh = view.height.toFloat()
-            val bw = bufferW.toFloat(); val bh = bufferH.toFloat()
-            val rotated = rotationDeg == 90 || rotationDeg == 270
-            val dispW = if (rotated) bh else bw
-            val dispH = if (rotated) bw else bh
-            // TextureView 默认把缓冲拉伸铺满视图；矩阵先把视图坐标映射回缓冲坐标，
-            // 再等比缩放（铺满裁切）→ 绕缓冲中心旋转 → 居中，最后在显示空间做前摄镜像。
-            val scale = maxOf(vw / dispW, vh / dispH)
-            view.setTransform(android.graphics.Matrix().apply {
-                postScale(bw / vw, bh / vh)
-                postScale(scale, scale, bw / 2f, bh / 2f)
-                if (rotationDeg != 0) postRotate(rotationDeg.toFloat(), bw / 2f, bh / 2f)
-                postTranslate(vw / 2f - bw / 2f, vh / 2f - bh / 2f)
-                if (mirror) postScale(-1f, 1f, vw / 2f, vh / 2f)
-            })
-        }
+    /** Reapply after surface, layout, or display rotation changes. Buffer dimensions are the Camera2 output size. */
+    private fun reapplyPreviewTransform() {
+        val view = texture ?: return
+        if (!view.isAvailable || view.width <= 0 || view.height <= 0 || bufferWidth <= 0 || bufferHeight <= 0) return
+        val transform = previewTransform(view.width, view.height, bufferWidth, bufferHeight,
+            sensorOrientation, displayRotationDegrees(), spec.camera == "front")
+        view.setTransform(android.graphics.Matrix().apply { setValues(transform.values) })
     }
 
     /** 默认显示屏旋转角（服务无 Activity，经 DisplayManager 取默认屏）。 */
@@ -246,31 +244,38 @@ class CameraOverlayService : Service() {
             topMargin = dp(com.dc.andagent.ui.OverlayChrome.HEADER_DP)
         })
         frame.addView(headerRow, FrameLayout.LayoutParams(-1, dp(com.dc.andagent.ui.OverlayChrome.HEADER_DP), Gravity.TOP))
-        var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
-        headerRow.title.setOnTouchListener { _: View, event: MotionEvent ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { downX = event.rawX; downY = event.rawY; startX = layout?.x ?: 0; startY = layout?.y ?: 0; true }
-                MotionEvent.ACTION_MOVE -> {
-                    layout?.let {
-                        val dm = resources.displayMetrics
-                        // 边界夹取：浮窗至少保留 56dp 在屏幕内，标题栏始终可抓取。
-                        val grab = dp(56)
-                        it.x = (startX + (event.rawX - downX).toInt()).coerceIn(-(it.width - grab), dm.widthPixels - grab)
-                        it.y = (startY + (event.rawY - downY).toInt()).coerceIn(0, dm.heightPixels - grab)
-                        windows.updateViewLayout(frame, it)
-                        spec = spec.copy(
-                            x = (it.x / dm.density).toInt().coerceIn(-2000, 2000),
-                            y = (it.y / dm.density).toInt().coerceIn(-2000, 2000))
-                    }
-                    true
-                }
-                else -> true
+        headerRow.elevation = dp(12).toFloat()
+        // Overlay windows may start at an edge or under a cutout; keep the chrome controls in safe bounds.
+        frame.setOnApplyWindowInsetsListener { view, insets ->
+            // Type.systemBars()/getInsets(int) 是 API 30+ 接口；minSdk 26 的旧系统直接返回原 insets（无安全区 padding，不崩溃）。
+            if (Build.VERSION.SDK_INT >= 30) {
+                val safe = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+                view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
             }
+            insets
         }
+        frame.requestApplyInsets()
+        val resize = android.widget.TextView(this).apply {
+            text = "◢"; textSize = 23f; gravity = Gravity.CENTER
+            setTextColor(com.dc.andagent.ui.OverlayChrome.TEXT)
+            setBackgroundColor(com.dc.andagent.ui.OverlayChrome.HEADER_BG)
+            elevation = dp(16).toFloat()
+            contentDescription = "调整相机浮窗大小"
+        }
+        frame.addView(resize, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.END))
         val params = WindowManager.LayoutParams(dp(spec.widthDp), dp(spec.heightDp), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.START; x = dp(spec.x); y = dp(spec.y)
         }
+        dragHelper = FloatingDragHelper(this, windows, frame, params, "camera_${spec.camera}",
+            minHeightDp = 120, onChange = {
+                val dm = resources.displayMetrics
+                spec = spec.copy(widthDp = (params.width / dm.density).toInt().coerceIn(160, 1000),
+                    heightDp = (params.height / dm.density).toInt().coerceIn(120, 1000),
+                    x = (params.x / dm.density).toInt().coerceIn(-2000, 2000),
+                    y = (params.y / dm.density).toInt().coerceIn(-2000, 2000))
+                texture?.post { reapplyPreviewTransform() }
+            }).also { it.restore(); it.bindDrag(headerRow.title); it.bindResize(resize) }
         windows.addView(frame, params)
         com.dc.andagent.ui.OverlayChrome.enter(frame)
         root = frame; texture = preview; layout = params
@@ -279,8 +284,8 @@ class CameraOverlayService : Service() {
 
     /** 系统浮窗与应用内模式共用：surface 就绪/变化时打开相机，销毁时释放。 */
     private fun previewListener() = object : TextureView.SurfaceTextureListener {
-        override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) { openWhenReady() }
-        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) { openWhenReady() }
+        override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) { reapplyPreviewTransform(); openWhenReady() }
+        override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) { reapplyPreviewTransform(); openWhenReady() }
         override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean { cameraHandler.post { closeCamera() }; return true }
         override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
     }
@@ -316,8 +321,10 @@ class CameraOverlayService : Service() {
                 val targetRatio = if (rotation == 90 || rotation == 270) 1.0 / viewRatio else viewRatio
                 val size = sizes?.groupBy { kotlin.math.abs(it.width.toDouble() / it.height - targetRatio) }
                     ?.minByOrNull { it.key }?.value?.minByOrNull { kotlin.math.abs(it.width.toLong() * it.height - width.toLong() * height) }
-                surfaceTexture.setDefaultBufferSize(size?.width ?: width, size?.height ?: height)
-                applyPreviewTransform(view, size?.width ?: width, size?.height ?: height, rotation, camera == "front")
+                bufferWidth = size?.width ?: width; bufferHeight = size?.height ?: height
+                sensorOrientation = manager.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+                surfaceTexture.setDefaultBufferSize(bufferWidth, bufferHeight)
+                main.post { reapplyPreviewTransform() }
                 val surface = Surface(surfaceTexture)
                 previewSurface = surface
                 manager.openCamera(id, object : CameraDevice.StateCallback() {
@@ -362,6 +369,8 @@ class CameraOverlayService : Service() {
             val parent = r.parent as? ViewGroup
             if (parent != null) parent.removeView(r) else runCatching { windows.removeViewImmediate(r) }
         }
+        getSystemService(DisplayManager::class.java).unregisterDisplayListener(rotationListener)
+        dragHelper = null
         root = null; texture = null; layout = null
         if (::cameraHandler.isInitialized) { cameraHandler.post { closeCamera(); cameraThread.quitSafely() } }
         if (instance === this) instance = null

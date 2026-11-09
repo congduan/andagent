@@ -45,7 +45,8 @@ class WifiExtToolsTest {
         assertEquals(14, WifiChannels.channelOf(2484))
         assertEquals(36, WifiChannels.channelOf(5180))
         assertEquals(5, WifiChannels.channelOf(5975))
-        assertNull(WifiChannels.channelOf(2417)) // 非法 2.4G 间隔
+        assertEquals(2, WifiChannels.channelOf(2417)) // ch2：2412..2472 内 5MHz 间隔，roundtrip 成立
+        assertNull(WifiChannels.channelOf(2410)) // 真·非法间隔（2410-2407=3，非 5 倍数且低于首信道）
         assertNull(WifiChannels.channelOf(60_000))
     }
 
