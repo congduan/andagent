@@ -189,6 +189,9 @@ export const TOOL_META: Record<string, ToolMeta> = {
   usb_serial_write: { label: "写入串口", labelEn: "Write serial", icon: "plug" },
   usb_serial_close: { label: "关闭串口", labelEn: "Close serial", icon: "plug" },
   usb_serial_capture: { label: "抓取串口日志", labelEn: "Capture serial log", icon: "download" },
+  // R123 ①: ESP32 烧录（icon 用现有取值；esp_flash 破坏性，触发确认闸）。
+  esp_flash: { label: "ESP32 烧录", labelEn: "ESP32 flash", icon: "download", destructive: true },
+  esp_monitor: { label: "ESP32 监视器", labelEn: "ESP32 monitor", icon: "monitor" },
   usb_midi: { label: "USB MIDI", labelEn: "USB MIDI", icon: "music" },
   // R113: 蜂窝深度（全部只读）
   cell_info: { label: "基站信号诊断", labelEn: "Cell signal diagnostics", icon: "antenna" },

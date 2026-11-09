@@ -9,7 +9,9 @@ const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "sign
   // R115: ISO-DEP/FeliCa 要先等用户贴卡（最长 60s）再逐条传输，超 65s 默认预算。
   "nfc_iso_dep_info", "nfc_iso_dep_transceive", "nfc_felica_info", "nfc_felica_transceive", "nfc_felica_read_blocks",
   // R122: eSIM 下载走运营商 SM-DP+ 全流程，LPA 回调最长 180s。
-  "esim_download"]);
+  "esim_download",
+  // R123 ①: 大镜像 ROM 烧录前置擦除慢（40s×MB），默认 65s 预算会杀掉，放宽到 30min。
+  "esp_flash"]);
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
  *

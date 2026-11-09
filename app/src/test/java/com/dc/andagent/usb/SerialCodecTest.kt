@@ -31,4 +31,30 @@ class SerialCodecTest {
         assertArrayEquals(byteArrayOf(0x80.toByte(), 0x25, 0, 0, 2, 2, 7),
             SerialCodec.cdcLineCoding(9600, 7, 2, "even"))
     }
+
+    // ---- R123 ①: DTR/RTS 控制线 value（对照 /tmp/usbserial-src 四驱动）----
+    @Test fun cdcLineStateDtrRtsBits() {
+        assertEquals(0x3, SerialCodec.cdcLineState(true, true))   // DTR+RTS asserted
+        assertEquals(0x1, SerialCodec.cdcLineState(true, false))  // 仅 DTR
+        assertEquals(0x2, SerialCodec.cdcLineState(false, true))  // 仅 RTS
+        assertEquals(0x0, SerialCodec.cdcLineState(false, false))
+    }
+    @Test fun ch34xModemInvertedBits() {
+        assertEquals((0x20 or 0x40).inv(), SerialCodec.ch34xModem(true, true))
+        assertEquals(0x20.inv(), SerialCodec.ch34xModem(true, false))
+        assertEquals(0x40.inv(), SerialCodec.ch34xModem(false, true))
+        assertEquals(0.inv(), SerialCodec.ch34xModem(false, false))
+    }
+    @Test fun cp21xxMhsValue() {
+        assertEquals(0x303, SerialCodec.cp21xxMhs(true, true))
+        assertEquals(0x301, SerialCodec.cp21xxMhs(true, false))
+        assertEquals(0x302, SerialCodec.cp21xxMhs(false, true))
+        assertEquals(0x300, SerialCodec.cp21xxMhs(false, false))
+    }
+    @Test fun ftdiModemCtrlValue() {
+        assertEquals(0x0303, SerialCodec.ftdiModemCtrl(true, true))
+        assertEquals(0x0301, SerialCodec.ftdiModemCtrl(true, false))
+        assertEquals(0x0302, SerialCodec.ftdiModemCtrl(false, true))
+        assertEquals(0x0300, SerialCodec.ftdiModemCtrl(false, false))
+    }
 }

@@ -70,6 +70,23 @@ object SerialCodec {
         require(bits in 7..8 && stops in 1..2)
         return bits or (parityCode(parity) shl 8) or (if (stops == 2) 0x1000 else 0)
     }
+
+    // ---- DTR/RTS 控制线（对照 mik3y/usb-serial-for-android master，值为 controlTransfer 的 wValue）----
+    /** CDC-ACM SET_CONTROL_LINE_STATE(0x22)：bit0=DTR，bit1=RTS（布尔约定 True=asserted）。 */
+    fun cdcLineState(dtr: Boolean, rts: Boolean): Int =
+        (if (rts) 0x2 else 0) or (if (dtr) 0x1 else 0)
+
+    /** CH34x 0xa4：SCL_DTR=0x20、SCL_RTS=0x40，整体按位取反。 */
+    fun ch34xModem(dtr: Boolean, rts: Boolean): Int =
+        ((if (dtr) 0x20 else 0) or (if (rts) 0x40 else 0)).inv()
+
+    /** CP210x SET_MHS(0x07)：DTR 0x101/0x100，RTS 0x202/0x200。 */
+    fun cp21xxMhs(dtr: Boolean, rts: Boolean): Int =
+        (if (dtr) 0x101 else 0x100) or (if (rts) 0x202 else 0x200)
+
+    /** FTDI MODEM_CONTROL(0x01)：DTR 0x0101/0x0100，RTS 0x0202/0x0200。 */
+    fun ftdiModemCtrl(dtr: Boolean, rts: Boolean): Int =
+        (if (dtr) 0x0101 else 0x0100) or (if (rts) 0x0202 else 0x0200)
 }
 
 interface UsbSerialPort {
@@ -80,6 +97,8 @@ interface UsbSerialPort {
     fun setBaud(baud: Int, dataBits: Int, stopBits: Int, parity: String)
     fun read(buf: ByteArray, timeoutMs: Int): Int
     fun write(buf: ByteArray): Int
+    /** 同时设置 DTR/RTS 控制线；布尔约定 True=asserted（active-low 电路把线拉低）。 */
+    fun setDtrRts(dtr: Boolean, rts: Boolean)
     fun close()
 }
 
@@ -145,10 +164,12 @@ class CdcAcmPort(device: UsbDevice) : BaseSerialPort(device) {
             .firstOrNull { it.interfaceClass == UsbConstants.USB_CLASS_COMM && it.interfaceSubclass == 2 }
             ?: iface
         claim(controlInterface)
-        control(0x21, 0x22, 3, controlInterface.id)
+        control(0x21, 0x22, SerialCodec.cdcLineState(true, true), controlInterface.id)
     }
     override fun setBaud(baud: Int, dataBits: Int, stopBits: Int, parity: String) =
         control(0x21, 0x20, 0, controlInterface.id, SerialCodec.cdcLineCoding(baud, dataBits, stopBits, parity))
+    override fun setDtrRts(dtr: Boolean, rts: Boolean) =
+        control(0x21, 0x22, SerialCodec.cdcLineState(dtr, rts), controlInterface.id)
 }
 
 class Ch34xPort(device: UsbDevice) : BaseSerialPort(device) {
@@ -163,7 +184,7 @@ class Ch34xPort(device: UsbDevice) : BaseSerialPort(device) {
         controlIn(0x95, 0x0706, 0, intArrayOf(-1, -1))
         control(0x40, 0xa1, 0x501f, 0xd90a)
         setRate(9600)
-        control(0x40, 0xa4, (0x20 or 0x40).inv(), 0)
+        control(0x40, 0xa4, SerialCodec.ch34xModem(true, true), 0)
         controlIn(0x95, 0x0706, 0, intArrayOf(-1, -1))
     }
     private fun setRate(baud: Int) {
@@ -174,6 +195,8 @@ class Ch34xPort(device: UsbDevice) : BaseSerialPort(device) {
         val lcr = SerialCodec.ch34xLcr(dataBits, stopBits, parity)
         setRate(baud); control(0x40, 0x9a, 0x2518, lcr)
     }
+    override fun setDtrRts(dtr: Boolean, rts: Boolean) =
+        control(0x40, 0xa4, SerialCodec.ch34xModem(dtr, rts), 0)
 }
 
 class Cp21xxPort(device: UsbDevice) : BaseSerialPort(device) {
@@ -182,7 +205,7 @@ class Cp21xxPort(device: UsbDevice) : BaseSerialPort(device) {
         super.open(connection, iface)
         portIndex = (0 until device.interfaceCount).indexOfFirst { device.getInterface(it) == iface }
         control(0x41, 0x00, 1, portIndex)
-        control(0x41, 0x07, 0x303, portIndex)
+        control(0x41, 0x07, SerialCodec.cp21xxMhs(true, true), portIndex)
         // Match upstream's no-flow-control payload, with DTR and RTS asserted.
         val flow = ByteArray(16); flow[0] = 1; flow[4] = 0x40
         control(0x41, 0x13, 0, portIndex, flow)
@@ -192,6 +215,8 @@ class Cp21xxPort(device: UsbDevice) : BaseSerialPort(device) {
         control(0x41, 0x1e, 0, portIndex, SerialCodec.cp21xxBaud(baud))
         control(0x41, 0x03, config, portIndex)
     }
+    override fun setDtrRts(dtr: Boolean, rts: Boolean) =
+        control(0x41, 0x07, SerialCodec.cp21xxMhs(dtr, rts), portIndex)
     override fun close() { if (connectionReady()) runCatching { control(0x41, 0x00, 0, portIndex) }; super.close() }
 }
 
@@ -203,7 +228,7 @@ class FtdiPort(device: UsbDevice) : BaseSerialPort(device) {
         portIndex = (0 until device.interfaceCount).indexOfFirst { device.getInterface(it) == iface }
         val port = portIndex + 1
         control(0x40, 0, 0, port)
-        control(0x40, 1, 0x303, port)
+        control(0x40, 1, SerialCodec.ftdiModemCtrl(true, true), port)
         control(0x40, 2, 0, port)
         val raw = connection.rawDescriptors ?: throw IOException("FTDI 设备描述符不可用")
         if (raw.size < 14) throw IOException("FTDI 设备描述符过短")
@@ -217,6 +242,8 @@ class FtdiPort(device: UsbDevice) : BaseSerialPort(device) {
         control(0x40, 3, value, index)
         control(0x40, 4, config, portIndex + 1)
     }
+    override fun setDtrRts(dtr: Boolean, rts: Boolean) =
+        control(0x40, 1, SerialCodec.ftdiModemCtrl(dtr, rts), portIndex + 1)
     override fun read(buf: ByteArray, timeoutMs: Int): Int {
         val raw = ByteArray(buf.size + 2)
         val n = super.read(raw, timeoutMs)

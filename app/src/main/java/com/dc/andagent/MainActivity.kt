@@ -215,6 +215,8 @@ import com.dc.andagent.tools.HARDWARE_STATUS_TOOLS
 import com.dc.andagent.tools.BtUsbExtTool
 import com.dc.andagent.tools.SerialTool
 import com.dc.andagent.tools.USB_SERIAL_TOOLS
+import com.dc.andagent.tools.EspFlashTool
+import com.dc.andagent.tools.ESP_FLASH_TOOLS
 import com.dc.andagent.tools.BT_USB_EXT_TOOLS
 import com.dc.andagent.tools.BtHidTool
 import com.dc.andagent.tools.BT_HID_TOOLS
@@ -640,6 +642,8 @@ class MainActivity : ComponentActivity() {
         // R122: 蓝牙 HID 设备模式（本机作键盘/鼠标注入到已配对目标，API 28+）。
         tools.putAll(BT_HID_TOOLS.associateWith { BtHidTool(appContext, it) })
         tools.putAll(USB_SERIAL_TOOLS.associateWith { SerialTool(appContext, it) })
+        // R123 ①: ESP32 ROM bootloader 烧录（复用 USB_SERIAL_TOOLS 的已打开串口）。
+        tools.putAll(ESP_FLASH_TOOLS.associateWith { EspFlashTool(appContext, it) })
         // R120: 本地 VPN（VpnService，纯应用权限）：DNS ads 拦截 + 分应用分流 + 流量统计 + pcap 诊断。
         tools.putAll(VPN_TOOLS.associateWith { VpnTool(appContext, permissionBroker, it) })
         // R113: 蜂窝深度（CellInfo/RSRP 诊断、requestNetworkScan 邻区扫描、5G NR 频段/带宽、流量配额）。

@@ -22,13 +22,17 @@ import java.util.concurrent.ConcurrentHashMap
 
 val USB_SERIAL_TOOLS = listOf("usb_serial_open", "usb_serial_read", "usb_serial_write", "usb_serial_close", "usb_serial_capture")
 
-private data class SerialSession(val deviceId: Int, val port: UsbSerialPort) {
+internal data class SerialSession(val deviceId: Int, val port: UsbSerialPort) {
     val lock = Any()
 }
 
-private object SerialSessions {
+internal object SerialSessions {
     val sessions = ConcurrentHashMap<String, SerialSession>()
 }
+
+/** 供 EspFlashTools 复用同一份会话表（单点持有），不另开设备。 */
+internal fun espSession(handle: String): SerialSession =
+    SerialSessions.sessions[handle] ?: throw IllegalArgumentException("handle 不存在或已关闭")
 
 class SerialTool(private val context: Context, override val name: String) : Tool {
     override val description: String = when (name) {
@@ -46,6 +50,8 @@ class SerialTool(private val context: Context, override val name: String) : Tool
             "data_bits" to intParam("数据位，默认 8"),
             "stop_bits" to intParam("停止位，默认 1"),
             "parity" to strParam("none|odd|even|mark|space，默认 none"),
+            "dtr" to boolParam("DTR 控制线是否 asserted，默认 true（ESP32 烧录：DTR=IO0）"),
+            "rts" to boolParam("RTS 控制线是否 asserted，默认 true（ESP32 烧录：RTS=EN）"),
         )
         "usb_serial_read" -> schemaOf("handle" to strParam("open 返回的 handle"), "timeout_ms" to intParam("等待毫秒，默认 1000，1..60000"), "max_bytes" to intParam("最大字节数，默认 4096，1..65536"), required = listOf("handle"))
         "usb_serial_write" -> schemaOf("handle" to strParam("open 返回的 handle"), "data_hex" to strParam("要发送的十六进制字节"), "data_text" to strParam("要发送的 UTF-8 文本；与 data_hex 二选一"), required = listOf("handle"))
@@ -87,9 +93,11 @@ class SerialTool(private val context: Context, override val name: String) : Tool
         val bits = args.intArg("data_bits") ?: 8
         val stops = args.intArg("stop_bits") ?: 1
         val parity = args.strArg("parity") ?: "none"
+        val dtr = args.boolArg("dtr") != false
+        val rts = args.boolArg("rts") != false
         val connection = usb.openDevice(device) ?: return "ERROR: UsbManager.openDevice 失败；确认授权后重试"
         val port = SerialDeviceKind.create(device, kind)
-        try { port.open(connection, iface); port.setBaud(baud, bits, stops, parity) }
+        try { port.open(connection, iface); port.setBaud(baud, bits, stops, parity); port.setDtrRts(dtr, rts) }
         catch (e: Exception) { runCatching { port.close() }; runCatching { connection.close() }; throw e }
         val handle = UUID.randomUUID().toString()
         SerialSessions.sessions[handle] = SerialSession(device.deviceId, port)
@@ -101,7 +109,7 @@ class SerialTool(private val context: Context, override val name: String) : Tool
             put("inMaxPacketSize", port.readEndpoint.maxPacketSize); put("outMaxPacketSize", port.writeEndpoint.maxPacketSize)
         }.toString()
     }
-    private fun session(args: JsonObject): SerialSession = SerialSessions.sessions[args.strArg("handle") ?: ""] ?: throw IllegalArgumentException("handle 不存在或已关闭")
+    private fun session(args: JsonObject): SerialSession = espSession(args.strArg("handle") ?: "")
     private fun read(args: JsonObject): String {
         val session = session(args)
         val timeout = (args.intArg("timeout_ms") ?: 1000).also { require(it in 1..60000) }
