@@ -24,6 +24,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.io.File
 import java.security.KeyPair
+import java.util.concurrent.ConcurrentHashMap
 
 /** 注册进 MainActivity 工具表的 ADB 工具族（R100 ② 7 个 + R103 scrcpy 2 个 + 配对 1 个 + R122 adb_input）。 */
 val ADB_TOOLS = listOf(
@@ -69,6 +70,8 @@ object AdbSessionHub {
     private val liveSince = LinkedHashMap<String, Long>()
     private val pairings = LinkedHashMap<String, String?>()
     private val lock = Any()
+    /** R127：per-target pull 串行闸（见 [withPullSerial]），按 host 归一。 */
+    private val pullGates = ConcurrentHashMap<String, Any>()
     @Volatile private var ctx: Context? = null
 
     fun init(context: Context) {
@@ -251,6 +254,21 @@ object AdbSessionHub {
         }
         c.close()
         null
+    }
+
+    /**
+     * R127：同一 target 的并发 pull 串行化（**排队等待**，不拒绝第二个请求）。
+     *
+     * 对齐 R125 教训与真机实录「并行拉取相互干扰」：分块路径复用固定临时前缀
+     * /data/local/tmp/andagent_part_*，两个并发 pull 会互相覆盖彼此的分块文件。
+     * AdbClient 自身的 lock 只覆盖单次 `sync:` 流，跨「stat→split→N 次 RECV→rm」
+     * 的多步序列必须由工具层串行化。按 host 归一，使 "host" 与 "host:port" 引用
+     * 落到同一把闸；`computeIfAbsent` 原子取锁避免竞态产生两把不同的锁。
+     */
+    fun <T> withPullSerial(ref: String, block: () -> T): T {
+        val host = (registry.resolve(ref)?.host ?: ref).lowercase()
+        val gate = pullGates.computeIfAbsent(host) { Any() }
+        return synchronized(gate) { block() }
     }
 
     /**
@@ -495,12 +513,22 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         )
         val cmd = built.command ?: return built.error ?: "ERROR: 构造输入命令失败"
         val c = AdbSessionHub.client(target) ?: return noTarget(target)
-        val out = c.openStream(cmd)
+        // Codex review 必修 3：input 命令本身无 stdout，openStream 在「非零退出」时只在
+        // 尾部附 [exit code: n]、在「ACK 后 EOF」时可能返回空串——两种形态都曾被当成
+        // 普通输出虚报成功。追加 `&& echo` 完成标记（复用 doScreencap/AdbChunkPull 在
+        // 真机已实证的形态），标记缺失或带退出码即如实报 ERROR。
+        val out = c.openStream("(" + cmd + ") && echo " + AdbInputCodec.DONE_MARK)
+        val ok = AdbInputCodec.outputOk(out)
         // R121f：ACK 8s 快速失败时连接已被 adbd 抛弃，主动重置以便下次重建。
         val reset = AdbSessionHub.resetStalled(out, c)
+        if (!ok && !reset) {
+            return "ERROR: input 命令未确认执行成功（目标机退出码非零或连接提前断开）；" +
+                "command=${cmd.take(300)}\n--- output ---\n${out.take(500)}"
+        }
         return buildString {
             appendLine("target=$target")
             appendLine("command=${cmd.take(300)}")
+            if (!ok && reset) appendLine("status=UNKNOWN：连接被重置，命令是否生效未知，请重试或adb_shell验证")
             append("--- output ---\n$out")
             if (reset) append("\n连接已重置，请直接重试（会重建连接）")
         }
@@ -508,6 +536,11 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
 
     private fun doScreencap(args: JsonObject): String {
         val target = args.strArg("target") ?: return "ERROR: 缺少 target"
+        // R127：分块路径复用共享临时前缀，screencap 内部也走 syncPull，一并纳入串行闸。
+        return AdbSessionHub.withPullSerial(target) { screencapLocked(target) }
+    }
+
+    private fun screencapLocked(target: String): String {
         val c = AdbSessionHub.client(target) ?: return noTarget(target)
         val remote = "/data/local/tmp/andagent_sc_${System.currentTimeMillis()}.png"
         // screencap 无 stdout：追加 echo 让 openStream 能凭输出判定命令真实完成，
@@ -515,13 +548,13 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         val shot = c.openStream("screencap -p $remote && echo SC_OK")
         if (shot.startsWith("ERROR")) return "ERROR: screencap 执行失败：$shot"
         return when (val r = c.syncPull(remote, SCREENCAP_MAX_BYTES)) {
-            is AdbClient.AdbSyncResult.Pulled -> screencapResult(context, target, remote, r.bytes)
+            is AdbClient.AdbSyncResult.Pulled -> screencapResult(context, target, remote, r.bytes, r.evidence)
             is AdbClient.AdbSyncResult.Failed -> {
                 // R125 fallback：部分 OEM adbd（荣耀/华为实测）在 TLS 连接上拒绝 sync:
                 // 服务——改走 shell base64 通道（MAX_OUTPUT_BYTES 已 256KB，单命令拿全）。
                 val b64 = c.openStream("base64 -w 0 $remote")
                 if (b64.startsWith("ERROR")) {
-                    return "ERROR: 拉取截图失败：sync=${r.reason}；shell 回退也失败：$b64"
+                    return "ERROR: 拉取截图失败：sync=${r.reason}${if (r.evidence.isNotEmpty()) "；${r.evidence}" else ""}；shell 回退也失败：$b64"
                 }
                 runCatching {
                     screencapResult(context, target, remote, android.util.Base64.decode(b64.trim(), android.util.Base64.NO_WRAP or android.util.Base64.DEFAULT))
@@ -531,7 +564,13 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         }
     }
 
-    private fun screencapResult(context: Context, target: String, remote: String, bytes: ByteArray): String {
+    private fun screencapResult(
+        context: Context,
+        target: String,
+        remote: String,
+        bytes: ByteArray,
+        evidence: String = "",
+    ): String {
         runCatching { AdbSessionHub.client(target)?.openStream("rm -f $remote") }
         val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
         val json = Json.parseToJsonElement(devtoolsScreenshotJson(context, base64)).jsonObject
@@ -540,11 +579,17 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             put("target", target)
             put("remotePath", remote)
             put("bytes", bytes.size)
+            if (evidence.isNotEmpty()) put("evidence", evidence)
         }.toString()
     }
 
     private fun doPull(args: JsonObject): String {
         val target = args.strArg("target") ?: return "ERROR: 缺少 target"
+        // R127：同 target 并发 pull 串行化（排队），保护共享分块临时前缀。
+        return AdbSessionHub.withPullSerial(target) { pullLocked(args, target) }
+    }
+
+    private fun pullLocked(args: JsonObject, target: String): String {
         val remote = args.strArg("remote_path") ?: return "ERROR: 缺少 remote_path"
         AdbToolRules.validateRemotePath(remote)?.let { return "ERROR: $it" }
         val maxBytes = AdbToolRules.maxMb(args.intArg("max_mb")).toLong() * 1_048_576
@@ -558,9 +603,16 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
                 if (dir !in listOf("downloads", "app_private")) return "ERROR: dir 只能是 downloads 或 app_private"
                 val saved = runCatching { saveBytes(name, r.bytes, dir) }
                     .getOrElse { return "ERROR: 保存失败：${it.message}" }
-                "savedPath=$saved\nbytes=${r.bytes.size}\nremote=$remote\ntarget=$target"
+                buildString {
+                    append("savedPath=$saved\nbytes=${r.bytes.size}\nremote=$remote\ntarget=$target")
+                    // 分块诊断（大文件分块模式文案 + 逐块留痕）由结果携带，工具层只统一追加。
+                    if (r.evidence.isNotEmpty()) append("\n${r.evidence}")
+                }
             }
-            is AdbClient.AdbSyncResult.Failed -> "ERROR: 拉取失败：${r.reason}"
+            is AdbClient.AdbSyncResult.Failed -> buildString {
+                append("ERROR: 拉取失败：${r.reason}")
+                if (r.evidence.isNotEmpty()) append("\n${r.evidence}")
+            }
             is AdbClient.AdbSyncResult.Pushed -> "ERROR: 拉取返回意外结果"
         }
     }

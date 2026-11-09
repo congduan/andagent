@@ -279,4 +279,94 @@ class AdbToolRulesTest {
         assertFalse(AdbToolRules.isShellAckStall("ERROR: ADB shell 执行失败：未连接：请先调用 connect()"))
         assertFalse(AdbToolRules.isShellAckStall("hello world"))
     }
+
+    // ---- R122: adb_input 纯 shell 命令构造 ---------------------------------
+    @Test
+    fun adbInputBuildsTapSwipeAndDragCommands() {
+        assertEquals(
+            "input tap 100 200",
+            AdbInputCodec.build("tap", 100, 200, null, null, null, null, null).command,
+        )
+        // duration_ms 缺省 300
+        assertEquals(
+            "input swipe 10 20 30 40 300",
+            AdbInputCodec.build("swipe", 10, 20, 30, 40, null, null, null).command,
+        )
+        assertEquals(
+            "input draganddrop 1 2 3 4 800",
+            AdbInputCodec.build("drag", 1, 2, 3, 4, 800, null, null).command,
+        )
+        assertNotNull(AdbInputCodec.build("TAP", 1, 2, null, null, null, null, null).command)
+    }
+
+    @Test
+    fun adbInputRejectsMissingCoordsAndBadAction() {
+        assertNull(AdbInputCodec.build("tap", null, 2, null, null, null, null, null).command)
+        assertNotNull(AdbInputCodec.build("tap", null, 2, null, null, null, null, null).error)
+        assertNull(AdbInputCodec.build("swipe", 1, 2, null, 4, null, null, null).command)
+        assertNull(AdbInputCodec.build("zoom", 1, 2, 3, 4, null, null, null).command)
+        assertNull(AdbInputCodec.build(null, 1, 2, 3, 4, null, null, null).command)
+        assertNotNull(AdbInputCodec.build("swipe", 1, 2, 3, 4, -1, null, null).error)
+    }
+
+    @Test
+    fun adbInputKeyeventValidatesKeycodeRange() {
+        assertEquals("input keyevent 66", AdbInputCodec.build("key", null, null, null, null, null, 66, null).command)
+        assertEquals("input keyevent 0", AdbInputCodec.build("key", null, null, null, null, null, 0, null).command)
+        assertEquals("input keyevent 65535", AdbInputCodec.build("key", null, null, null, null, null, 65535, null).command)
+        assertNull(AdbInputCodec.build("key", null, null, null, null, null, 65536, null).command)
+        assertNull(AdbInputCodec.build("key", null, null, null, null, null, -1, null).command)
+        assertNull(AdbInputCodec.build("key", null, null, null, null, null, null, null).command)
+    }
+
+    @Test
+    fun adbInputTextEscapesSingleQuotesAndSpaces() {
+        assertEquals("'abc'", AdbInputCodec.shellSingleQuote("abc"))
+        assertEquals("'it'\\''s'", AdbInputCodec.shellSingleQuote("it's"))
+        assertEquals(
+            "input text 'hello%sworld'",
+            AdbInputCodec.build("text", null, null, null, null, null, null, "hello world").command,
+        )
+        assertEquals(
+            "input text 'a'\\''b%sc'",
+            AdbInputCodec.build("text", null, null, null, null, null, null, "a'b c").command,
+        )
+    }
+
+    @Test
+    fun adbInputTextRejectsNonAsciiPercentAndOverlong() {
+        assertNull(AdbInputCodec.build("text", null, null, null, null, null, null, "中文").command)
+        assertNull(AdbInputCodec.build("text", null, null, null, null, null, null, "a\nb").command)
+        assertNull(AdbInputCodec.build("text", null, null, null, null, null, null, "100%s").command)
+        assertNull(AdbInputCodec.build("text", null, null, null, null, null, null, "x".repeat(201)).command)
+        assertNull(AdbInputCodec.build("text", null, null, null, null, null, null, "").command)
+        assertTrue(AdbInputCodec.build("text", null, null, null, null, null, null, "中文").error!!.contains("ASCII"))
+    }
+
+    @Test
+    fun adbInputCommandIsInjectionSafeAgainstShellMetacharacters() {
+        assertEquals("'a'\\''b'", AdbInputCodec.shellSingleQuote("a'b"))
+        val cmd = AdbInputCodec.build(
+            "text", null, null, null, null, null, null, "a'; rm -rf /; echo '",
+        ).command!!
+        assertTrue(cmd.startsWith("input text '"))
+        assertTrue(cmd.endsWith("'"))
+        assertTrue(cmd.contains("rm%s-rf"))  // 文本内容保留（空格按 AOSP 要求转 %s）
+        assertTrue(cmd.contains(";"))       // shell 元字符只是文本，未被解释
+        assertTrue(cmd.contains("'\\''"))   // 每个单引号都被结束重启转义
+    }
+
+    @Test
+    fun adbInputOutputOkRequiresDoneMarkerAndRejectsFailureShapes() {
+        // 真实完成：无失败形态 + 带完成标记。
+        assertTrue(AdbInputCodec.outputOk(AdbInputCodec.DONE_MARK))
+        // 空串（ACK 后 EOF，Codex review 必修 3）→ 未确认成功。
+        assertFalse(AdbInputCodec.outputOk(""))
+        // 非零退出标记（AdbClient 尾附）→ 失败。
+        assertFalse(AdbInputCodec.outputOk("[exit code: 1]"))
+        // 有标记但带退出码 → 失败。
+        assertFalse(AdbInputCodec.outputOk("${AdbInputCodec.DONE_MARK}\n[exit code: 2]"))
+        // ERROR 前缀（连接失败）→ 失败。
+        assertFalse(AdbInputCodec.outputOk("ERROR: 连接失败"))
+    }
 }

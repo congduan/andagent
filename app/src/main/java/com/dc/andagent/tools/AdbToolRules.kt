@@ -216,3 +216,80 @@ object AdbToolRules {
     fun isShellAckStall(result: String): Boolean =
         result.contains("8 秒内未收到目标确认") || result.contains("ADB shell 无响应")
 }
+
+/**
+ * R122：`adb_input` 的纯 shell 命令构造（纯 JVM，脱离 Android 可单测）。
+ *
+ * 协议事实（AOSP frameworks/base/cmds/input/src/com/android/commands/input/Input.java）：
+ *  - `input text` 的参数在设备侧 shell 里会被按空格切分，空格必须编码为 `%s`（源码
+ *    sendText 用 `%` 作转义符，遇到 `s` 还原成空格）；
+ *  - `input text` 走 KeyCharacterMap.VIRTUAL_KEYBOARD，非 ASCII（中文/emoji）注入不可靠，
+ *    故明确拒绝，不假装成功；
+ *  - `input tap/swipe/draganddrop/keyevent` 的坐标/时长/keycode 都是纯数字，校验后直接透传。
+ *
+ * text 统一用单引号包裹并把内部单引号按 `'\''` 结束重启转义（对齐
+ * AdbScrcpyToolSpec.buildServerPushCommands 的单引号安全注释），shell 元字符不会被解释。
+ */
+object AdbInputCodec {
+    const val DEFAULT_DURATION_MS = 300
+    private val ACTIONS = setOf("tap", "swipe", "key", "text", "drag")
+
+    /**
+     * Codex review 必修 3：`input` 命令本身无 stdout，openStream 在非零退出时只在尾部附
+     * `[exit code: n]`（AdbClient.kt:280），在「ACK 后 EOF」时可能返回**空串**——只看输出
+     * 内容会把失败当成功。解法与 AdbChunkPull.shellDone 同构：命令追加 `&& echo MARK`
+     * 完成标记（真实跑完才输出），判定 = 无失败形态 + 带标记。
+     */
+    const val DONE_MARK = "AA_INPUT_CMD_DONE"
+
+    fun outputOk(output: String): Boolean =
+        !output.trimStart().startsWith("ERROR") &&
+            !Regex("""\[exit code: (\d+)]\s*$""").containsMatchIn(output.takeLast(120)) &&
+            output.contains(DONE_MARK)
+
+    data class Built(val command: String?, val error: String?)
+
+    /** 用单引号包裹任意文本：内部单引号以 `'\''` 结束重启，杜绝 shell 注入。 */
+    fun shellSingleQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+    fun build(
+        action: String?,
+        x: Int?, y: Int?, x2: Int?, y2: Int?,
+        durationMs: Int?, keycode: Int?, text: String?,
+    ): Built {
+        val a = action?.trim()?.lowercase()
+        if (a == null || a !in ACTIONS) return Built(null, "ERROR: action 仅支持 tap|swipe|key|text|drag")
+        return when (a) {
+            "tap" -> {
+                if (x == null || y == null) return Built(null, "ERROR: action=tap 需要 x 与 y")
+                Built("input tap $x $y", null)
+            }
+            "swipe", "drag" -> {
+                if (x == null || y == null || x2 == null || y2 == null) {
+                    return Built(null, "ERROR: action=$a 需要 x/y/x2/y2")
+                }
+                val d = durationMs ?: DEFAULT_DURATION_MS
+                if (d < 0) return Built(null, "ERROR: duration_ms 必须 >= 0")
+                val sub = if (a == "drag") "draganddrop" else "swipe"
+                Built("input $sub $x $y $x2 $y2 $d", null)
+            }
+            "key" -> {
+                if (keycode == null) return Built(null, "ERROR: action=key 需要 keycode")
+                if (keycode !in 0..65535) return Built(null, "ERROR: keycode 必须在 0..65535")
+                Built("input keyevent $keycode", null)
+            }
+            "text" -> {
+                if (text.isNullOrEmpty()) return Built(null, "ERROR: action=text 需要 text")
+                if (text.length > 200) return Built(null, "ERROR: text 过长（上限 200 字符）")
+                if (text.any { it.code !in 0x20..0x7E }) {
+                    return Built(null, "ERROR: text 仅支持可打印 ASCII（AOSP input text 对中文/emoji 等非 ASCII 不可靠，请改用剪贴板）")
+                }
+                if (text.contains('%')) {
+                    return Built(null, "ERROR: text 不能含 %（AOSP input text 以 % 作转义符，空格会自动转成 %s）；如需空格直接写空格")
+                }
+                Built("input text " + shellSingleQuote(text.replace(" ", "%s")), null)
+            }
+            else -> Built(null, "ERROR: 未知 action")
+        }
+    }
+}

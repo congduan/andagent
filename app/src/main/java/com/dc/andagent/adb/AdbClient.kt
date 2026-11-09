@@ -395,8 +395,36 @@ class AdbClient(
         }
     }
 
-    /** 拉取远程文件（SYNC RECV）；maxBytes 为大小上限。 */
+    /**
+     * 拉取远程文件（SYNC RECV）；maxBytes 为大小上限。
+     *
+     * R127：真机 OEM adbd 在数 MB+ 的 SYNC DATA 上提前断流（小文件正常、大文件失败）。
+     * 先走原始单次 RECV（成功/小文件/健康大文件路径完全不变），仅当命中「流提前关闭」
+     * 失败、且 shell `stat` 判出文件超过 [AdbChunkPull.CHUNK_THRESHOLD_BYTES] 时，委托
+     * [AdbChunkPull.chunked] 走设备侧 split→逐块 RECV→拼接→清理的分块路径。尺寸探测
+     * 失败一律 fail-open 回退原始结果，不给小文件的可用路径引入额外依赖。
+     */
     fun syncPull(remotePath: String, maxBytes: Long): AdbSyncResult = synchronized(lock) {
+        val direct = syncPullSingle(remotePath, maxBytes)
+        if (direct is AdbSyncResult.Failed && AdbChunkPull.isLargeSyncEarlyClose(direct.reason)) {
+            val size = AdbChunkPull.parseSize(openStream(AdbChunkPull.sizeCmd(remotePath)))
+            if (size != null && AdbChunkPull.shouldChunk(size)) {
+                AdbChunkPull.chunked(
+                    remotePath = remotePath,
+                    size = size,
+                    maxBytes = maxBytes,
+                    port = object : AdbChunkPull.Port {
+                        override fun shell(cmd: String): String = openStream(cmd)
+                        // 分块自身必须走原始单次 RECV，避免递归触发分块判定。
+                        override fun pullSingle(path: String, cap: Long): AdbSyncResult = syncPullSingle(path, cap)
+                    },
+                )
+            } else direct
+        } else direct
+    }
+
+    /** 原始单次 SYNC RECV（不含分块判定）；调用方须已持有 [lock]。 */
+    private fun syncPullSingle(remotePath: String, maxBytes: Long): AdbSyncResult =
         runCatching {
             val s = SyncStream()
             try {
@@ -435,7 +463,6 @@ class AdbClient(
                 s.close()
             }
         }.getOrElse { e -> AdbSyncResult.Failed(e.message ?: e.javaClass.simpleName) }
-    }
 
     /** 推送本地字节到远程（SYNC SEND）；返回写入字节数。 */
     fun syncPush(
@@ -479,11 +506,15 @@ class AdbClient(
         }.getOrElse { e -> AdbSyncResult.Failed(e.message ?: e.javaClass.simpleName) }
     }
 
-    /** SYNC 结果：拉取字节 / 推送字节数 / 失败原因。 */
+    /**
+     * SYNC 结果：拉取字节 / 推送字节数 / 失败原因。
+     * R127：[Pulled]/[Failed] 可携带 evidence（分块模式逐块留痕），默认值保证既有
+     * 调用方（`r.bytes` / `r.reason` / exhaustive `when`）零改动。
+     */
     sealed class AdbSyncResult {
-        data class Pulled(val bytes: ByteArray) : AdbSyncResult()
+        data class Pulled(val bytes: ByteArray, val evidence: String = "") : AdbSyncResult()
         data class Pushed(val bytes: Long) : AdbSyncResult()
-        data class Failed(val reason: String) : AdbSyncResult()
+        data class Failed(val reason: String, val evidence: String = "") : AdbSyncResult()
     }
 
     /** 单个 "sync:" 流：管理 OPEN/WRTE/OKAY/CLSE 与 SYNC 包跨帧累积。 */

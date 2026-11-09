@@ -108,11 +108,16 @@ export const TOOL_META: Record<string, ToolMeta> = {
   // R100 ③: 无线调试配对码配对（配对本身无损，destructive=false，与 Kotlin AdbTool.destructive 对齐）
   adb_pair: { label: "ADB 无线配对", labelEn: "ADB wireless pairing", icon: "lock" },
   adb_pair_qr: { label: "ADB 扫码配对", labelEn: "ADB QR pairing", icon: "lock" },
-  // R100 ③: ADB 通道 scrcpy 投屏 / 录制（工具名与 Kotlin AdbScrcpyToolSpec.NAMES 对齐；adb_input 无 Kotlin 注册已移除）
+  // R100 ③: ADB 通道 scrcpy 投屏 / 录制（工具名与 Kotlin AdbScrcpyToolSpec.NAMES 对齐）
   adb_screencast: { label: "ADB 投屏截图", labelEn: "ADB screencast", icon: "image" },
   adb_record: { label: "ADB 投屏录制", labelEn: "ADB record", icon: "video", destructive: true },
   adb_mirror_start: { label: "ADB 浮窗投屏", labelEn: "ADB mirror", icon: "video" },
   adb_mirror_stop: { label: "停止浮窗投屏", labelEn: "Stop ADB mirror", icon: "video" },
+  // R122: 输入注入双通道（与 Kotlin destructive 对齐：bt_hid_send / adb_input 改变目标状态）
+  adb_input: { label: "ADB 注入输入", labelEn: "ADB input", icon: "keyboard", destructive: true },
+  bt_hid_register: { label: "注册蓝牙 HID", labelEn: "Register BT HID", icon: "bluetooth" },
+  bt_hid_send: { label: "发送 HID 输入", labelEn: "Send HID input", icon: "keyboard", destructive: true },
+  bt_hid_unregister: { label: "注销蓝牙 HID", labelEn: "Unregister BT HID", icon: "bluetooth" },
   // R101: devtools_errors（只返回 error 级 console）
   devtools_errors: { label: "页面错误", labelEn: "Page errors", icon: "bug" },
   screen_capture: { label: "屏幕截图", labelEn: "Screenshot", icon: "image" },

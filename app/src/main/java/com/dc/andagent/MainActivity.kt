@@ -216,6 +216,8 @@ import com.dc.andagent.tools.BtUsbExtTool
 import com.dc.andagent.tools.SerialTool
 import com.dc.andagent.tools.USB_SERIAL_TOOLS
 import com.dc.andagent.tools.BT_USB_EXT_TOOLS
+import com.dc.andagent.tools.BtHidTool
+import com.dc.andagent.tools.BT_HID_TOOLS
 import com.dc.andagent.tools.VpnTool
 import com.dc.andagent.tools.VPN_TOOLS
 import com.dc.andagent.tools.CellularTool
@@ -635,6 +637,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(HARDWARE_STATUS_TOOLS.associateWith { HardwareStatusTool(appContext, permissionBroker, it) })
         // R86: 蓝牙扩展刀（BLE 外设广播、A2DP 媒体路由、标准 GATT 电量、USB 拓扑、USB MIDI）。
         tools.putAll(BT_USB_EXT_TOOLS.associateWith { BtUsbExtTool(appContext, permissionBroker, it) })
+        // R122: 蓝牙 HID 设备模式（本机作键盘/鼠标注入到已配对目标，API 28+）。
+        tools.putAll(BT_HID_TOOLS.associateWith { BtHidTool(appContext, it) })
         tools.putAll(USB_SERIAL_TOOLS.associateWith { SerialTool(appContext, it) })
         // R120: 本地 VPN（VpnService，纯应用权限）：DNS ads 拦截 + 分应用分流 + 流量统计 + pcap 诊断。
         tools.putAll(VPN_TOOLS.associateWith { VpnTool(appContext, permissionBroker, it) })
