@@ -913,6 +913,55 @@ class FileSearchTool(
 /* file_list                                                           */
 /* ------------------------------------------------------------------ */
 
+/**
+ * R111: file_list 行。fromFs 区分文件系统扫描（true）与 MediaStore 查询（false），
+ * 供 [filterGhostEntries] 做幽灵条目去重（顶层 internal，纯函数可 JVM 单测）。
+ */
+internal data class FileListRow(
+    val name: String,
+    val path: String,
+    val size: Long,
+    val modified: Long,
+    val directory: Boolean,
+    val fromFs: Boolean,
+)
+
+/** R111: 归一外部存储路径——MediaStore 用 /sdcard/…，文件系统用 /storage/emulated/0/…，统一去掉存储根前缀。 */
+internal fun ghostNormalizedPath(path: String): String {
+    val p = path.replace('\\', '/')
+    return when {
+        p.startsWith("/storage/emulated/0/") -> p.removePrefix("/storage/emulated/0/")
+        p.startsWith("/sdcard/") -> p.removePrefix("/sdcard/")
+        p.startsWith("/mnt/sdcard/") -> p.removePrefix("/mnt/sdcard/")
+        else -> p.trimStart('/')
+    }
+}
+
+/**
+ * R111: file_list 幽灵条目去重（纯函数）：
+ * 1) 按归一化 path 分组，同 path 冲突时保留 size>0 的那行（真实文件）；
+ * 2) 全为 0 时保留文件系统行（directory 标志优先）；
+ * 3) MediaStore 行 size=0 且 modified≤0（1970/epoch）且同名文件系统行存在时丢弃该幽灵行。
+ */
+internal fun filterGhostEntries(rows: List<FileListRow>): List<FileListRow> {
+    val groups = LinkedHashMap<String, MutableList<FileListRow>>()
+    rows.forEach { r -> groups.getOrPut(ghostNormalizedPath(r.path)) { mutableListOf() }.add(r) }
+
+    return groups.map { (_, group) ->
+        val fsNames = group.filter { it.fromFs }.map { it.name }.toSet()
+        // 丢弃被同名文件系统行覆盖的 epoch 幽灵 MediaStore 行
+        val visible = group.filterNot { r ->
+            !r.fromFs && r.size == 0L && r.modified <= 0L && r.name in fsNames
+        }.ifEmpty { group }
+
+        val sized = visible.filter { it.size > 0 }
+        if (sized.isNotEmpty())
+            sized.sortedWith(compareByDescending<FileListRow> { it.fromFs }.thenByDescending { it.size }).first()
+        else
+            visible.sortedWith(compareByDescending<FileListRow> { it.fromFs }.thenByDescending { it.directory }).first()
+    }
+}
+
 class FileListTool(
     private val context: Context,
     private val permissions: PermissionBroker,
@@ -935,14 +984,15 @@ class FileListTool(
         val prefix = listOf(root, subdir)
             .filter { it.isNotBlank() }
             .joinToString("/")
-        val hits = LinkedHashMap<String, Row>()
+        // R111: 两路先收集成 List 再过 filterGhostEntries 归一去重（旧 key 不同必然重复）。
+        val rows = mutableListOf<FileListRow>()
 
         if (Build.VERSION.SDK_INT >= 29) {
-            runCatching { queryMediaStore(prefix, hits) }
+            runCatching { queryMediaStore(prefix, rows) }
         }
-        runCatching { queryFileSystem(root, subdir, hits) }
+        runCatching { queryFileSystem(root, subdir, rows) }
 
-        val items = hits.values.sortedByDescending { it.modified }.take(100)
+        val items = filterGhostEntries(rows).sortedByDescending { it.modified }.take(100)
         if (items.isEmpty()) return "目录 $prefix/ 为空或无读取权限"
         return buildJsonObject {
             put("dir", "/sdcard/$prefix/")
@@ -962,15 +1012,7 @@ class FileListTool(
         }.toString()
     }
 
-    private data class Row(
-        val name: String,
-        val path: String,
-        val size: Long,
-        val modified: Long,
-        val directory: Boolean,
-    )
-
-    private fun queryMediaStore(prefix: String, hits: MutableMap<String, Row>) {
+    private fun queryMediaStore(prefix: String, rows: MutableList<FileListRow>) {
         val collection = MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
         val projection = arrayOf(
             MediaStore.MediaColumns.DISPLAY_NAME,
@@ -989,22 +1031,24 @@ class FileListTool(
             val iSize = c.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
             val iDate = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_MODIFIED)
             val iRel = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
-            while (c.moveToNext() && hits.size < 300) {
+            var count = 0
+            while (c.moveToNext() && count++ < 300) {
                 val name = c.getString(iName) ?: continue
                 val rel = c.getString(iRel) ?: "$prefix/"
                 val path = "/sdcard/$rel$name"
-                hits[path] = Row(
+                rows += FileListRow(
                     name = name,
                     path = path,
                     size = c.getLong(iSize),
                     modified = c.getLong(iDate) * 1000,
                     directory = false,
+                    fromFs = false,
                 )
             }
         }
     }
 
-    private fun queryFileSystem(root: String, subdir: String, hits: MutableMap<String, Row>) {
+    private fun queryFileSystem(root: String, subdir: String, rows: MutableList<FileListRow>) {
         val base = File(
             Environment.getExternalStoragePublicDirectory(root),
             subdir,
@@ -1013,15 +1057,9 @@ class FileListTool(
         runCatching {
             base.listFiles()?.take(500)?.forEach { file ->
                 if (file.isDirectory) {
-                    hits.putIfAbsent(
-                        file.absolutePath,
-                        Row(file.name + "/", file.absolutePath, 0, file.lastModified(), true),
-                    )
+                    rows += FileListRow(file.name + "/", file.absolutePath, 0, file.lastModified(), true, true)
                 } else {
-                    hits.putIfAbsent(
-                        file.absolutePath,
-                        Row(file.name, file.absolutePath, file.length(), file.lastModified(), false),
-                    )
+                    rows += FileListRow(file.name, file.absolutePath, file.length(), file.lastModified(), false, true)
                 }
             }
         }

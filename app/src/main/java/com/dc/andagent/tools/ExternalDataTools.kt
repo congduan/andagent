@@ -55,6 +55,18 @@ object SafTreeStore {
     }
 }
 
+/**
+ * R111: SAF 目录树选择的可复用结果。saf_tree_pick 工具与 otg_request(saf) 共用
+ * [ExternalDataTool.pickTree]；拆出结构化结果让调用方能直接拿到 root URI，同时
+ * 不改变 saf_tree_pick 工具自身的对外文本输出格式。
+ */
+internal sealed class TreePickResult {
+    /** 授权成功：uri 为可直接使用的 tree URI；text 为原工具输出文本（保持旧格式）。 */
+    data class Granted(val uri: String, val text: String) : TreePickResult()
+    /** 取消 / 超时 / 失败：text 为原工具输出文本（CANCELLED: / ERROR: 开头）。 */
+    data class Rejected(val text: String) : TreePickResult()
+}
+
 class ExternalDataTool(
     private val context: Context,
     private val permissions: PermissionBroker,
@@ -280,11 +292,21 @@ class ExternalDataTool(
 
     /* ------------------------------ SAF trees ---------------------------- */
 
-    private fun safTreePick(): String {
+    private fun safTreePick(): String = when (val outcome = pickTree()) {
+        is TreePickResult.Granted -> outcome.text
+        is TreePickResult.Rejected -> outcome.text
+    }
+
+    /**
+     * R111: SAF 目录树选择的可复用实现，供 saf_tree_pick 工具与 otg_request(saf) 共用。
+     * 成功时 Granted 携带 tree URI（可直接喂给 otg_transfer / otg_file_ops 的 root），
+     * 失败时 Rejected 携带原样错误/取消文本，saf_tree_pick 的对外输出格式不变。
+     */
+    internal fun pickTree(): TreePickResult {
         val id = "tree_${java.util.UUID.randomUUID()}"
         val latch = CountDownLatch(1)
         if (!FilePickResultBridge.begin(id, FilePickResultBridge.Kind.TREE, latch))
-            return "ERROR: 目录选择器不可用或已有选择请求进行中"
+            return TreePickResult.Rejected("ERROR: 目录选择器不可用或已有选择请求进行中")
         try {
             FilePickResultBridge.launcher?.invoke(id, "", false, true)
                 ?: FilePickResultBridge.fail(id, "目录选择器不可用")
@@ -295,10 +317,10 @@ class ExternalDataTool(
         val failure = FilePickResultBridge.failures[id]
         val uri = FilePickResultBridge.results[id]?.firstOrNull()
         FilePickResultBridge.finish(id)
-        if (!ok) return "ERROR: 目录选择超时（120s）"
-        if (failure != null) return "ERROR: $failure"
-        if (uri == null) return "CANCELLED: 用户取消了目录选择"
-        return "WRITTEN: 已获得目录树的持久授权：$uri"
+        if (!ok) return TreePickResult.Rejected("ERROR: 目录选择超时（120s）")
+        if (failure != null) return TreePickResult.Rejected("ERROR: $failure")
+        if (uri == null) return TreePickResult.Rejected("CANCELLED: 用户取消了目录选择")
+        return TreePickResult.Granted(uri, "WRITTEN: 已获得目录树的持久授权：$uri")
     }
 
     private fun safTreeList(args: JsonObject): String {
