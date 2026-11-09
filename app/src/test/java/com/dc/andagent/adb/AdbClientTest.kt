@@ -37,6 +37,7 @@ class AdbClientTest {
                     val cnxn = AdbProtocol.readMessage(inp)
                     assertEquals(A_CNXN, cnxn.command)
                     assertEquals(A_VERSION, cnxn.arg0)
+                    assertEquals("host::features=shell_v2\u0000", String(cnxn.data))
                     // 2) AUTH TOKEN
                     AdbProtocol.writeMessage(out, AdbMessage(A_AUTH, ADB_AUTH_TOKEN, 0, token))
                     // 3) 客户端签名 → JDK 公钥验签
@@ -354,6 +355,35 @@ class AdbClientTest {
     private fun cnxnFrame() = AdbMessage(A_CNXN, A_VERSION, MAX_DATA, ByteArray(0))
 
     @Test
+    fun shellV2SelectedFromPeerFeaturesAndDecoded() {
+        val localId = 1
+        val packet = byteArrayOf(1, 3, 0, 0, 0) + "hi\n".toByteArray() +
+            byteArrayOf(2, 4, 0, 0, 0) + "warn".toByteArray() +
+            byteArrayOf(3, 1, 0, 0, 0, 7)
+        val frames = frameBytes(
+            AdbMessage(A_CNXN, A_VERSION, MAX_DATA, "device::features=shell_v2\u0000".toByteArray()),
+            AdbMessage(A_OKAY, SERVER_ID, localId, ByteArray(0)),
+            AdbMessage(A_WRTE, SERVER_ID, localId, packet.copyOfRange(0, 8)),
+            AdbMessage(A_WRTE, SERVER_ID, localId, packet.copyOfRange(8, packet.size)),
+            AdbMessage(A_CLSE, SERVER_ID, localId, ByteArray(0)),
+        )
+        val fake = ScriptedTransport(ByteArrayInputStream(frames))
+        val client = AdbClient(transport = fake)
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+        assertEquals("hi\nwarn\n[exit code: 7]", client.openStream("echo hi"))
+    }
+
+    @Test
+    fun shellOpenEofReportsFrameSequence() {
+        val fake = ScriptedTransport(ByteArrayInputStream(frameBytes(cnxnFrame())))
+        val client = AdbClient(transport = fake)
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+        val result = client.openStream("echo hi")
+        assertTrue(result.startsWith("ERROR"))
+        assertTrue(result.contains("帧序列：") && result.contains("TX OPEN"))
+    }
+
+    @Test
     fun openStreamFastFailsWithGuidanceWhenNoAckInWindow() {
         val fake = ScriptedTransport(SilentInputStream(frameBytes(cnxnFrame()), 10))
         // 注入 80ms 窗口：纯 JVM 单测不必真等 8s，行为与 8s 默认窗口完全一致。
@@ -366,6 +396,7 @@ class AdbClientTest {
 
         assertTrue("应快速失败，实际=$result", result.startsWith("ERROR"))
         assertTrue("缺少『8 秒内未收到目标确认』", result.contains("8 秒内未收到目标确认"))
+        assertTrue("缺少帧序列", result.contains("OPEN sent@") && result.contains("TX OPEN"))
         assertTrue("缺少①熄屏/锁屏引导", result.contains("熄屏"))
         assertTrue("缺少②被其它 adb 客户端占用引导", result.contains("其它 adb 客户端"))
         assertTrue("缺少③无线调试页退出引导", result.contains("无线调试"))

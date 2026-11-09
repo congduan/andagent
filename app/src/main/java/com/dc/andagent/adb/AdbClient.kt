@@ -1,5 +1,6 @@
 package com.dc.andagent.adb
 
+import com.dc.andagent.BuildConfig
 import java.io.ByteArrayOutputStream
 import java.io.EOFException
 import java.io.IOException
@@ -33,6 +34,8 @@ class AdbClient(
     private var input: InputStream? = null
     private var output: OutputStream? = null
     private var nextLocalId = 1
+    private var peerFeatures: Set<String> = emptySet()
+    private val recentFrames = ArrayDeque<String>()
     /** 单条 TCP 连接上的流是锁步协议：所有对外操作串行化，避免并发工具调用互相踩帧。 */
     private val lock = Any()
 
@@ -50,7 +53,9 @@ class AdbClient(
             input = transport.inputStream()
             output = transport.outputStream()
 
-            write(AdbMessage(A_CNXN, A_VERSION, MAX_DATA, "host::\u0000".toByteArray()))
+            peerFeatures = emptySet()
+            recentFrames.clear()
+            write(AdbMessage(A_CNXN, A_VERSION, MAX_DATA, (AdbFeatures.hostBanner() + "\u0000").toByteArray()))
             when (val r = handshake()) {
                 is Handshake.Connected -> {
                     // 握手期可能把读超时调到 AUTH_WAIT_MS；连上后放宽，避免长 shell/传输被连接超时误杀。
@@ -94,7 +99,10 @@ class AdbClient(
                 else Handshake.Error(e.message ?: "读取超时")
             }
             when (msg.command) {
-                A_CNXN -> return Handshake.Connected
+                A_CNXN -> {
+                    peerFeatures = AdbFeatures.parseBanner(msg.data)
+                    return Handshake.Connected
+                }
                 A_AUTH -> when (msg.arg0) {
                     ADB_AUTH_TOKEN -> {
                         when {
@@ -135,7 +143,9 @@ class AdbClient(
         runCatching {
             if (input == null) error("未连接：请先调用 connect()")
             val localId = nextLocalId++
-            write(AdbMessage(A_OPEN, localId, 0, "shell:$command\u0000".toByteArray()))
+            val v2 = AdbFeatures.useShellV2(peerFeatures)
+            write(AdbMessage(A_OPEN, localId, 0, (AdbFeatures.shellService(command, v2) + "\u0000").toByteArray()))
+            val openAt = System.currentTimeMillis()
 
             // A_OPEN 后的 ACK 快速失败：正常 adbd 毫秒级回 OKAY/WRTE/CLSE。
             // 8s 内三无（目标熄屏锁屏、被其它 adb 客户端占用、无线调试页已退出）
@@ -146,7 +156,10 @@ class AdbClient(
             val savedTimeout = SESSION_TIMEOUT_MS
             runCatching { transport.setReadTimeout(1_000) }
             val out = ByteArrayOutputStream()
+            val err = ByteArrayOutputStream()
+            val decoder = if (v2) ShellV2Decoder() else null
             var total = 0L
+            var exitCode: Int? = null
             try {
                 while (true) {
                     if (!gotAck && System.currentTimeMillis() > ackDeadline) {
@@ -154,7 +167,8 @@ class AdbClient(
                             "ADB shell 无响应（8 秒内未收到目标确认）。最常见原因：" +
                                 "①目标手机熄屏/锁屏（亮屏解锁后重试）；" +
                                 "②目标机正被其它 adb 客户端（PC adb 等）占用——adbd 同一时间只服务一个无线客户端；" +
-                                "③目标机「无线调试」页已退出导致端口失效——重新进入该页查看当前端口并 adb_connect 重连。"
+                                "③目标机「无线调试」页已退出导致端口失效——重新进入该页查看当前端口并 adb_connect 重连。" +
+                                " 帧序列：OPEN sent@$openAt; no OKAY/WRTE/CLSE by ${System.currentTimeMillis()}; ${frameSummary()}"
                         )
                     }
                     val msg = try {
@@ -163,6 +177,7 @@ class AdbClient(
                         if (!gotAck) continue // ACK 窗口内继续轮询 deadline
                         throw e
                     } catch (e: EOFException) {
+                        if (!gotAck) error("ADB shell OPEN 后连接关闭")
                         break // 对端关闭 = 流结束
                     }
                     when (msg.command) {
@@ -172,9 +187,18 @@ class AdbClient(
                         }
                         A_WRTE -> {
                             if (!gotAck) { gotAck = true; runCatching { transport.setReadTimeout(savedTimeout) } }
-                            total += msg.data.size
-                            val room = MAX_OUTPUT_BYTES - out.size()
-                            if (room > 0) out.write(msg.data, 0, minOf(room, msg.data.size))
+                            val chunks = decoder?.feed(msg.data) ?: listOf(ShellV2Decoder.Chunk(1, msg.data))
+                            for (chunk in chunks) {
+                                when (chunk.id) {
+                                    1, 2 -> {
+                                        total += chunk.data.size
+                                        val sink = if (chunk.id == 2) err else out
+                                        val room = MAX_OUTPUT_BYTES - out.size() - err.size()
+                                        if (room > 0) sink.write(chunk.data, 0, minOf(room, chunk.data.size))
+                                    }
+                                    3 -> if (chunk.data.size == 1) exitCode = chunk.data[0].toInt() and 255
+                                }
+                            }
                             // 每个 WRTE 都要回 A_OKAY（arg0=本地 id，arg1=对端 id）；对端已关时忽略写失败。
                             runCatching { write(AdbMessage(A_OKAY, localId, msg.arg0, ByteArray(0))) }
                         }
@@ -192,9 +216,12 @@ class AdbClient(
                 // 长读（CLSE 先到、EOF、fast-fail、post-ACK 超时这几条路径原本漏恢复）。
                 runCatching { transport.setReadTimeout(savedTimeout) }
             }
-            clipUtf8(out.toByteArray(), MAX_OUTPUT_BYTES, total)
+            val text = clipUtf8(out.toByteArray() + err.toByteArray(), MAX_OUTPUT_BYTES, total)
+            if (exitCode != null && exitCode != 0) "$text\n[exit code: $exitCode]" else text
         }.getOrElse { e ->
-            "ERROR: ADB shell 执行失败：${e.message ?: e.javaClass.simpleName}"
+            val message = e.message ?: e.javaClass.simpleName
+            "ERROR: ADB shell 执行失败：$message" +
+                if ("帧序列：" in message || recentFrames.isEmpty()) "" else " 帧序列：${frameSummary()}"
         }
     }
 
@@ -479,12 +506,25 @@ class AdbClient(
 
     private fun write(msg: AdbMessage) {
         val out = output ?: error("输出流不可用")
+        traceFrame("TX", msg)
         out.write(AdbProtocol.encode(msg))
         out.flush()
     }
 
     private fun read(): AdbMessage =
-        AdbProtocol.readMessage(input ?: error("输入流不可用"))
+        AdbProtocol.readMessage(input ?: error("输入流不可用")).also { traceFrame("RX", it) }
+
+    private fun traceFrame(direction: String, msg: AdbMessage) {
+        if (msg.command !in setOf(A_OPEN, A_OKAY, A_WRTE, A_CLSE)) return
+        val name = String(byteArrayOf(msg.command.toByte(), (msg.command ushr 8).toByte(),
+            (msg.command ushr 16).toByte(), (msg.command ushr 24).toByte()), Charsets.US_ASCII)
+        val line = "${System.currentTimeMillis()} $direction $name arg0=${msg.arg0} arg1=${msg.arg1} len=${msg.data.size}"
+        recentFrames.addLast(line)
+        if (recentFrames.size > 32) recentFrames.removeFirst()
+        if (BuildConfig.DEBUG) runCatching { android.util.Log.d("AdbClientFrames", line) }
+    }
+
+    private fun frameSummary(): String = recentFrames.takeLast(8).joinToString(" | ")
 
     /** 粗粒度存活判断；底层连接假活由下一次读超时兜底。 */
     fun isAlive(): Boolean = transport.isAlive()
