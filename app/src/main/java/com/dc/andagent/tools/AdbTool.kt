@@ -623,18 +623,21 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
                 if (r.evidence.isNotEmpty()) append("\n${r.evidence}")
                 // R129 fallback：OEM adbd（荣耀实测）TLS 下 sync: 服务被拒——
                 // shell base64 回退（256KB 输出窗口内单命令拿全；超限提示用户用
-                // adb_pull 的分块路径或目标机手动复制到 Download）。
+                // adb_pull 的分块路径或目标机手动复制到 Download）。落到与正常路径
+                // 相同的目录（name/dir 语义复用）。
+                val name = runCatching {
+                    AdbToolRules.safeName(args.strArg("filename") ?: remote.substringAfterLast('/'))
+                }.getOrElse { remote.substringAfterLast('/') }
+                val dir = args.strArg("dir") ?: "downloads"
                 val cleaned = c.openStream("base64 \"$remote\"")
                 if (!cleaned.startsWith("ERROR")) {
                     val b64 = cleaned.filter { !it.isWhitespace() }
                     if (b64.isNotEmpty() && b64.all { it in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" }) {
                         runCatching {
                             val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
-                            val fallback = File(local)
-                            fallback.parentFile?.mkdirs()
-                            fallback.writeBytes(bytes)
-                            append("\n✅ shell 回退成功：${fallback.absolutePath}（${bytes.size} 字节，经 base64 通道）")
-                        }.getOrElse { append("\nshell 回退解码失败：${it.message}") }
+                            val saved = saveBytes(name, bytes, dir)
+                            append("\n✅ shell 回退成功：$saved（${bytes.size} 字节，经 base64 通道）")
+                        }.getOrElse { append("\nshell 回退解码/保存失败：${it.message}") }
                     } else {
                         append("\nshell 回退输出非 base64（可能是权限拒绝信息），前 120 字符：${cleaned.take(120)}")
                     }
