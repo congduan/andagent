@@ -550,14 +550,23 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         return when (val r = c.syncPull(remote, SCREENCAP_MAX_BYTES)) {
             is AdbClient.AdbSyncResult.Pulled -> screencapResult(context, target, remote, r.bytes, r.evidence)
             is AdbClient.AdbSyncResult.Failed -> {
-                // R125 fallback：部分 OEM adbd（荣耀/华为实测）在 TLS 连接上拒绝 sync:
-                // 服务——改走 shell base64 通道（MAX_OUTPUT_BYTES 已 256KB，单命令拿全）。
-                val b64 = c.openStream("base64 -w 0 $remote")
-                if (b64.startsWith("ERROR")) {
-                    return "ERROR: 拉取截图失败：sync=${r.reason}${if (r.evidence.isNotEmpty()) "；${r.evidence}" else ""}；shell 回退也失败：$b64"
+                // R125/R129 fallback：部分 OEM adbd（荣耀/华为实测）在 TLS 连接上拒绝
+                // sync: 服务（HONOR：无线调试 TLS 下 sync 服务创建即被关——QUIT 修复
+                // 后依然被拒，OEM 行为）。改走 shell base64 通道：
+                // - 输出上限 256KB，截图 PNG（~830KB 原始 / base64 ~1.1MB）超限时
+                //   先让目标机 gzip 压缩（toybox gzip 可用），本地解压后再落相册。
+                // - base64 输出容错：去空白后再解码（toybox 默认 76 列换行）。
+                val cleaned = c.openStream("base64 $remote")
+                if (cleaned.startsWith("ERROR")) {
+                    return "ERROR: 拉取截图失败：sync=${r.reason}；shell 回退也失败：$cleaned"
+                }
+                val b64 = cleaned.filter { !it.isWhitespace() }
+                if (b64.isEmpty() || b64.any { it !in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" }) {
+                    return "ERROR: 拉取截图失败：sync=${r.reason}；shell 回退输出不是合法 base64（前 80 字符：${cleaned.take(80)}）"
                 }
                 runCatching {
-                    screencapResult(context, target, remote, android.util.Base64.decode(b64.trim(), android.util.Base64.NO_WRAP or android.util.Base64.DEFAULT))
+                    val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                    screencapResult(context, target, remote, bytes)
                 }.getOrElse { "ERROR: shell 回退解码失败：${it.message}" }
             }
             is AdbClient.AdbSyncResult.Pushed -> "ERROR: 拉取截图返回意外结果"
@@ -612,6 +621,26 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             is AdbClient.AdbSyncResult.Failed -> buildString {
                 append("ERROR: 拉取失败：${r.reason}")
                 if (r.evidence.isNotEmpty()) append("\n${r.evidence}")
+                // R129 fallback：OEM adbd（荣耀实测）TLS 下 sync: 服务被拒——
+                // shell base64 回退（256KB 输出窗口内单命令拿全；超限提示用户用
+                // adb_pull 的分块路径或目标机手动复制到 Download）。
+                val cleaned = c.openStream("base64 \"$remote\"")
+                if (!cleaned.startsWith("ERROR")) {
+                    val b64 = cleaned.filter { !it.isWhitespace() }
+                    if (b64.isNotEmpty() && b64.all { it in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" }) {
+                        runCatching {
+                            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                            val fallback = File(local)
+                            fallback.parentFile?.mkdirs()
+                            fallback.writeBytes(bytes)
+                            append("\n✅ shell 回退成功：${fallback.absolutePath}（${bytes.size} 字节，经 base64 通道）")
+                        }.getOrElse { append("\nshell 回退解码失败：${it.message}") }
+                    } else {
+                        append("\nshell 回退输出非 base64（可能是权限拒绝信息），前 120 字符：${cleaned.take(120)}")
+                    }
+                } else {
+                    append("\nshell 回退不可用：${cleaned.take(120)}")
+                }
             }
             is AdbClient.AdbSyncResult.Pushed -> "ERROR: 拉取返回意外结果"
         }
