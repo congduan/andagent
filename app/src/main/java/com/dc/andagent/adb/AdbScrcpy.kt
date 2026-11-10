@@ -206,6 +206,20 @@ class AdbScrcpySession(
                 runCatching { controlStream?.close() }
                 controlStream = null
             }
+            // R133b：自愈——server 进程死亡（启动即崩/jar 坏）时重试只会空转 10 次。
+            // 探测进程：pidfile 无内容或 ps 无 scrcpy 进程 → 重新 launch 一次（jar 由
+            // R133 的 serverPresent 尺寸校验+fold 解码保证完好）。
+            val pidAlive = runCatching {
+                val pid = client.openStream("cat ${AdbScrcpy.pidFilePath(id)} 2>/dev/null").trim()
+                if (pid.isEmpty()) false
+                else client.openStream("ps -A 2>/dev/null | grep -c \$pid").trim().toIntOrNull()?.let { it > 0 } ?: false
+            }.getOrDefault(false)
+            if (!pidAlive) {
+                runCatching {
+                    client.openStream(AdbScrcpy.buildServerCommand(id, maxSize, bitRate, fps, controlClient != null))
+                    Thread.sleep(500) // server listen 需要一点时间
+                }
+            }
             Thread.sleep(AdbScrcpy.CONNECT_RETRY_DELAY_MS)
         }
         // R132：失败时带回 server 日志与进程状态——scrcpy server 启动失败的原因
