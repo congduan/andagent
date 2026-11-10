@@ -200,6 +200,7 @@ class EspFlashCodecTest {
         private var pending = ByteArray(0)
         private val blocks = mutableListOf<ByteArray>()
         val receivedOps = mutableListOf<Pair<Int, Int>>()   // (op, 收到请求时的波特率)
+        val baudPayloads = mutableListOf<ByteArray>()       // CHANGE_BAUDRATE 的原始 payload
 
         override fun read(buf: ByteArray, timeoutMs: Int): Int {
             if (pending.isEmpty()) return 0
@@ -214,6 +215,7 @@ class EspFlashCodecTest {
             val op = payload[1].toInt() and 0xff
             val data = payload.copyOfRange(8, payload.size)
             receivedOps += op to baudProbe()
+            if (op == EspCmd.CHANGE_BAUDRATE) baudPayloads += data
             val resp = when (op) {
                 EspCmd.SYNC -> response(EspCmd.SYNC, value = 0x12345678)
                 EspCmd.CHANGE_BAUDRATE -> when (changeBaudMode) {
@@ -354,6 +356,11 @@ class EspFlashCodecTest {
 
         // 0x0F 请求在旧波特率上应答，后续 FLASH 命令在新波特率上收发
         assertTrue(serial.receivedOps.contains(EspCmd.CHANGE_BAUDRATE to 115200))
+        // payload=<II(new, old)> 8 字节（esptool change_baud 同构，ROM 读第一字）
+        val baudPayload = serial.baudPayloads.single()
+        assertEquals(8, baudPayload.size)
+        assertEquals(921600, EspFlashCodec.le32(baudPayload, 0))
+        assertEquals(115200, EspFlashCodec.le32(baudPayload, 4))
         assertTrue(serial.receivedOps.contains(EspCmd.FLASH_BEGIN to 921600))
         assertTrue(serial.receivedOps.any { it.first == EspCmd.FLASH_DATA && it.second == 921600 })
         assertTrue(serial.receivedOps.any { it.first == EspCmd.SPI_FLASH_MD5 && it.second == 921600 })
