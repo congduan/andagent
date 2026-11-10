@@ -1027,8 +1027,8 @@ const MEDIA_CONTEXT_GUIDE_EN = [
 const A2UI_GUIDE = [
   "结构化表单卡（```a2ui 围栏）：",
   "1. 需要用户多选、填写参数或确认选项时，输出 ```a2ui 围栏（合法 JSON）代替纯文字追问。",
-  '2. 顶层格式：{"title":"标题","submit_label":"提交","fields":[...]}；fields 必须是数组且非空。',
-  "3. 只能使用以下 catalog 组件：TEXT_INPUT（key,label,placeholder,prefill,required,max_length,validate 取 email|phone|regex,pattern）、NUMBER_SLIDER（min,max,step,default,prefill）、CHOICE（options 为字符串数组或 {value,label} 数组，multiple 可选，prefill）、DATE_PICK（prefill）、SWITCH（default,prefill）、BUTTON_GROUP（buttons）、CARD（title,text）、ROW/COLUMN（children 递归嵌套）、LABEL（text）。",
+  '2. 顶层格式：{"title":"标题","submit_label":"提交","fields":[...]}；fields 必须是数组且非空。当 fields 全为展示型字段（见第 3 条，无任何输入字段）时是纯展示卡，不渲染提交按钮与 submit_label；混合「展示+输入」时保留提交，提交 payload 只含输入字段值。',
+  "3. 只能使用以下 catalog 组件。输入字段（带 key、提交时收集值）：TEXT_INPUT（key,label,placeholder,prefill,required,max_length,validate 取 email|phone|regex,pattern）、NUMBER_SLIDER（min,max,step,default,prefill）、CHOICE（options 为字符串数组或 {value,label} 数组，multiple 可选，prefill）、DATE_PICK（prefill）、SWITCH（default,prefill）、BUTTON_GROUP（buttons）。只读展示字段（无 key、不参与提交，用于展示数据）：TEXT_DISPLAY（text，以 ``` 开头按等宽代码块显示，≤1000 字）、KV_LIST（items:[{k,v}]，≤32 项）、TABLE（headers/rows，≤8 列/50 行、单元格 ≤200 字）、IMAGE（src 仅接受 content:// 媒体图片经图片桥或 data:image/ base64，拒绝 http(s) 外链）、PROGRESS（value 0-100 钳制,detail 右侧小字）。布局/文本：CARD（title,text）、ROW/COLUMN（children 递归嵌套）、LABEL（text）。",
   "4. 每个字段 key 必须唯一；总节点数不超过 60；只适合 2-8 个字段的轻量表单，不要生成超大表单；ROW/COLUMN 最多嵌套 8 层。",
   "5. prefill 用作字段初始值；生成带预填的表单、或由 cron 定时任务唤起确认表单时，直接把 prefill 写进 JSON：TEXT_INPUT/DATE_PICK/单选 CHOICE 用 string，NUMBER_SLIDER 用 number，SWITCH 用 boolean，多选 CHOICE 用 string 数组；类型不匹配的 prefill 会被忽略。用户可照常修改，提交值以最终填写为准。",
   '6. 用户提交后，卡片会把表单值以 {"a2ui_submit":{...},"a2ui_title":"标题"} 回填到输入框；用户确认发送后你才会收到。收到后直接按其中的字段继续任务，不要重复追问。',
@@ -1036,6 +1036,10 @@ const A2UI_GUIDE = [
   "8. 示例：",
   "```a2ui",
   '{"title":"导出设置","submit_label":"提交","fields":[{"type":"TEXT_INPUT","key":"email","label":"接收邮箱","placeholder":"you@example.com","prefill":"me@example.com","required":true,"validate":"email"},{"type":"CHOICE","key":"format","label":"导出格式","options":["Markdown","PDF"],"prefill":"PDF"},{"type":"SWITCH","key":"include_images","label":"包含图片","default":true,"prefill":true}]}',
+  "```",
+  "· 纯展示卡（只读数据、无提交按钮）：",
+  "```a2ui",
+  '{"title":"设备状态","fields":[{"type":"KV_LIST","label":"设备","items":[{"k":"电量","v":"78%"},{"k":"温度","v":"34℃"}]},{"type":"PROGRESS","label":"同步进度","value":62,"detail":"62%"},{"type":"TEXT_DISPLAY","label":"最近日志","text":"2026-11-10 同步完成"}]}',
   "```",
   "9. cron a2ui 模板三例（kind=\"a2ui\" 时把整段 JSON 原样作 cron_create 的 payload；prefill 随触发日填入）：",
   "· 晨报（五组件齐全 + 多选 CHOICE 预填）：",
@@ -1055,8 +1059,8 @@ const A2UI_GUIDE = [
 const A2UI_GUIDE_EN = [
   "Structured form cards (```a2ui fence):",
   "1. When the user must pick options, fill in parameters, or confirm choices, output an ```a2ui fence with valid JSON instead of asking in plain text.",
-  '2. Top-level shape: {"title":"Title","submit_label":"Submit","fields":[...]}; fields must be a non-empty array.',
-  "3. Use only these catalog components: TEXT_INPUT (key,label,placeholder,prefill,required,max_length,validate as email|phone|regex,pattern), NUMBER_SLIDER (min,max,step,default,prefill), CHOICE (options as a string array or {value,label} array, optional multiple, prefill), DATE_PICK (prefill), SWITCH (default,prefill), BUTTON_GROUP (buttons), CARD (title,text), ROW/COLUMN (nested children), LABEL (text).",
+  '2. Top-level shape: {"title":"Title","submit_label":"Submit","fields":[...]}; fields must be a non-empty array. When every field is a display field (see #3, no input field at all) the card is a pure display card: no submit button and no submit_label are rendered; a mixed display+input card keeps the submit and its payload contains only input field values.',
+  "3. Use only these catalog components. Input fields (have a key, values collected on submit): TEXT_INPUT (key,label,placeholder,prefill,required,max_length,validate as email|phone|regex,pattern), NUMBER_SLIDER (min,max,step,default,prefill), CHOICE (options as a string array or {value,label} array, optional multiple, prefill), DATE_PICK (prefill), SWITCH (default,prefill), BUTTON_GROUP (buttons). Read-only display fields (no key, never submitted, for showing data): TEXT_DISPLAY (text; leading ``` renders as a monospace code block, <=1000 chars), KV_LIST (items:[{k,v}], <=32), TABLE (headers/rows, <=8 cols/50 rows, cells <=200 chars), IMAGE (src accepts only content:// media images via the image bridge or data:image/ base64; http(s) links rejected), PROGRESS (value clamped 0-100, detail as small right-side text). Layout/text: CARD (title,text), ROW/COLUMN (nested children), LABEL (text).",
   "4. Every field key must be unique; keep the total node count at or below 60; use this only for lightweight forms of 2-8 fields, never huge forms; ROW/COLUMN nesting is limited to 8 levels.",
   "5. prefill sets a field's initial value; write it directly into the JSON when emitting a pre-filled form or a cron-triggered confirmation form: a string for TEXT_INPUT/DATE_PICK/single CHOICE, a number for NUMBER_SLIDER, a boolean for SWITCH, and a string array for multiple CHOICE. A prefill with a mismatched type is ignored. The user can still edit it; the submitted value is whatever they finally leave.",
   '6. After the user submits, the card fills {"a2ui_submit":{...},"a2ui_title":"Title"} into the composer; you receive it only after the user presses send. Then continue the task using those fields and do not ask again.',
@@ -1064,6 +1068,10 @@ const A2UI_GUIDE_EN = [
   "8. Example:",
   "```a2ui",
   '{"title":"Export settings","submit_label":"Submit","fields":[{"type":"TEXT_INPUT","key":"email","label":"Email","placeholder":"you@example.com","prefill":"me@example.com","required":true,"validate":"email"},{"type":"CHOICE","key":"format","label":"Format","options":["Markdown","PDF"],"prefill":"PDF"},{"type":"SWITCH","key":"include_images","label":"Include images","default":true,"prefill":true}]}',
+  "```",
+  "· Pure display card (read-only data, no submit button):",
+  "```a2ui",
+  '{"title":"Device status","fields":[{"type":"KV_LIST","label":"Device","items":[{"k":"Battery","v":"78%"},{"k":"Temp","v":"34C"}]},{"type":"PROGRESS","label":"Sync","value":62,"detail":"62%"},{"type":"TEXT_DISPLAY","label":"Last log","text":"2026-11-10 sync complete"}]}',
   "```",
   "9. Three cron a2ui templates (use the JSON verbatim as cron_create's payload when kind=\"a2ui\"; fill prefill for the trigger day):",
   "· Morning briefing (all five components + multi-select CHOICE prefill):",
@@ -1168,6 +1176,38 @@ function userMessageContent(text: string, images: ChatImage[]): UserMessage["con
   return parts as unknown as UserMessage["content"];
 }
 
+/**
+ * R136: 成功的 adb_screencap 结果自带 thumbnailBase64，自动补一张纯展示
+ * IMAGE a2ui 卡（无提交按钮）。返回 ```a2ui 围栏文本，由 toUiMessages 作为
+ * 合成 text part 注入对话流；非 screencap / 失败 / 无图则返回 null。
+ */
+export function screencapImageFence(toolName: string, resultText: string, isError: boolean): string | null {
+  if (isError || toolName !== "adb_screencap") return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(resultText);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object") return null;
+  const rec = data as Record<string, unknown>;
+  const b64 =
+    typeof rec.thumbnailBase64 === "string" && rec.thumbnailBase64
+      ? rec.thumbnailBase64
+      : typeof rec.base64 === "string"
+        ? rec.base64
+        : "";
+  if (!b64) return null;
+  const mime =
+    typeof rec.thumbnailMime === "string" && rec.thumbnailMime.startsWith("image/")
+      ? rec.thumbnailMime
+      : "image/png";
+  const src = `data:${mime};base64,${b64}`;
+  if (src.length > 500 * 1024) return null; // 对齐 IMAGE 字段的 base64 上限
+  const spec = { title: "截图预览", fields: [{ type: "IMAGE", label: "屏幕截图", src }] };
+  return "```a2ui\n" + JSON.stringify(spec) + "\n```";
+}
+
 /** 供测试直接校验快照状态映射。 */
 export function toUiMessages(messages: PiMessage[], draft: Draft | null): ThreadMessageLike[] {
   const results = new Map<string, { text: string; isError: boolean }>();
@@ -1242,6 +1282,30 @@ export function toUiMessages(messages: PiMessage[], draft: Draft | null): Thread
     };
     const durationMs = (message as { durationMs?: number }).durationMs;
     if (durationMs !== undefined) custom.durationMs = durationMs;
+
+    // R136: adb_screencap 成功 → 自动出一张纯展示 IMAGE a2ui 卡（替代/补足
+    // 现有缩略图路径，既有 ToolCard 缩略图保留不动）。toUiMessages 是纯投影，
+    // 天然幂等；injected 保证同一 toolResult 只注入一次，不重复出卡。
+    // 「如已有路径则保留」：模型自己已输出 a2ui/IMAGE 卡时不再注入。
+    const injected = new Set<string>();
+    for (const part of message.content) {
+      if (part.type !== "toolCall" || part.name !== "adb_screencap") continue;
+      const result = results.get(part.id);
+      if (!result || injected.has(part.id)) continue;
+      const fence = screencapImageFence(part.name, result.text, result.isError);
+      if (!fence) continue;
+      const hasOwnImageCard = message.content.some(
+        (p) =>
+          p.type === "text" &&
+          typeof p.text === "string" &&
+          p.text.includes("```a2ui") &&
+          p.text.includes('"IMAGE"'),
+      );
+      if (hasOwnImageCard) continue;
+      parts.push({ type: "text", text: fence } as UiPart);
+      injected.add(part.id);
+    }
+
     // 完成态不显式给 status：让 assistant-ui 按「最后一条 + 线程 running」自动推断，
     // 否则写死 complete 会压住自动状态，工具执行完等下一段回复时就没有等待指示。
     ui.push({

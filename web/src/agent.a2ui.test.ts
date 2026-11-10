@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { AgentEngine } from "./agent";
+import { AgentEngine, screencapImageFence, toUiMessages } from "./agent";
 import { DEFAULT_SETTINGS } from "./bridge";
 
 // R105: the cron a2ui consumption loop — inbox -> consumeA2uiForms() ->
@@ -51,5 +51,86 @@ describe("AgentEngine · cron a2ui form injection", () => {
     expect(engine.isRunning).toBe(true);
     engine.appendA2uiForm(FENCE);
     expect(messagesOf(engine)).toHaveLength(0);
+  });
+});
+
+// R136: adb_screencap 成功结果 → 自动出一张纯展示 IMAGE a2ui 卡。
+describe("AgentEngine · R136 screencap → IMAGE a2ui 卡", () => {
+  const screencapResult = JSON.stringify({
+    savedPath: "/sdcard/Pictures/AndAgent/shot.png",
+    thumbnailBase64: "iVBORw0KGgoAAAANSUhEUg==",
+    thumbnailMime: "image/png",
+    width: 1080,
+    height: 2400,
+  });
+
+  const assistant = (content: unknown[]) =>
+    ({
+      role: "assistant",
+      content,
+      usage: { input: 1, output: 1 },
+      stopReason: "toolUse",
+      timestamp: 1000,
+    }) as never;
+
+  const toolResult = (text: string, isError: boolean) =>
+    ({
+      role: "toolResult",
+      toolCallId: "sc1",
+      toolName: "adb_screencap",
+      content: [{ type: "text", text }],
+      isError,
+      timestamp: 1001,
+    }) as never;
+
+  const screencapCall = { type: "toolCall", id: "sc1", name: "adb_screencap", arguments: { target: "127.0.0.1:5555" } };
+  const imageTextParts = (ui: ReturnType<typeof toUiMessages>) => {
+    const last = ui[ui.length - 1] as unknown as UiMsg;
+    return last.content.filter((p) => p.type === "text" && p.text?.includes('"IMAGE"'));
+  };
+
+  it("screencapImageFence 从成功结果生成纯展示 IMAGE 围栏", () => {
+    const fence = screencapImageFence("adb_screencap", screencapResult, false);
+    expect(fence).toBeTruthy();
+    expect(fence).toContain("```a2ui");
+    expect(fence).toContain('"IMAGE"');
+    expect(fence).toContain("data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==");
+    const json = JSON.parse(fence!.replace(/```a2ui\n|\n```/g, ""));
+    expect(json.fields).toHaveLength(1);
+    expect(json.fields[0].type).toBe("IMAGE");
+  });
+
+  it("screencapImageFence 拒绝非 screencap / 失败 / 无图，兼容裸 base64", () => {
+    expect(screencapImageFence("get_time", screencapResult, false)).toBeNull();
+    expect(screencapImageFence("adb_screencap", screencapResult, true)).toBeNull();
+    expect(screencapImageFence("adb_screencap", "not json", false)).toBeNull();
+    expect(screencapImageFence("adb_screencap", JSON.stringify({ savedPath: "x" }), false)).toBeNull();
+    expect(screencapImageFence("adb_screencap", JSON.stringify({ base64: "AAAA" }), false)).toContain('"IMAGE"');
+  });
+
+  it("toUiMessages 为 screencap 成功自动注入一张 IMAGE a2ui 卡", () => {
+    const ui = toUiMessages([assistant([screencapCall]), toolResult(screencapResult, false)], null);
+    expect(imageTextParts(ui)).toHaveLength(1);
+    expect(imageTextParts(ui)[0].text).toContain("```a2ui");
+  });
+
+  it("失败结果不注入；模型已有 IMAGE a2ui 卡时保留且不重复出卡", () => {
+    const failed = toUiMessages(
+      [assistant([screencapCall]), toolResult("ERROR: timeout", true)],
+      null,
+    );
+    expect(imageTextParts(failed)).toHaveLength(0);
+
+    const ownCard = '```a2ui\n{"fields":[{"type":"IMAGE","src":"data:image/png;base64,AAAA"}]}\n```';
+    const withOwn = toUiMessages(
+      [
+        assistant([{ type: "text", text: ownCard }, screencapCall]),
+        toolResult(screencapResult, false),
+      ],
+      null,
+    );
+    // 仍是模型自己那张，注入器不再重复出卡。
+    expect(imageTextParts(withOwn)).toHaveLength(1);
+    expect(imageTextParts(withOwn)[0].text).toBe(ownCard);
   });
 });

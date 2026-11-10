@@ -903,7 +903,10 @@ describe("A2uiCard", () => {
 
 // R136: 只读展示字段（TEXT_DISPLAY / KV_LIST / TABLE / IMAGE / PROGRESS）。
 describe("A2uiCard · R136 展示型字段", () => {
-  beforeEach(() => localStorage.setItem("andagent.language", "zh"));
+  beforeEach(() => {
+    cleanup(); // 清理并行参考用例可能遗留的 DOM，避免跨 describe 的 <img> 污染计数
+    localStorage.setItem("andagent.language", "zh");
+  });
   afterEach(() => cleanup());
 
   const show = (fields: unknown[], extra: Record<string, unknown> = {}) =>
