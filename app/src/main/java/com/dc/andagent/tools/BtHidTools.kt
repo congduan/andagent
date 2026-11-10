@@ -269,11 +269,20 @@ private object BtHidRuntime {
             // 交错），此时迟到 close 不会发生、abandonRound 也不管 proxy → Binder 泄漏。
             // 兜底：abandonRound 后复查 holder，仍有 proxy 就用本轮局部 adapter 显式 close
             // （与 onServiceConnected 的 close 幂等：closeProfileProxy 对同一实例重复调用安全）。
-            abandonRound()
-            holder.proxy?.let {
-                runCatching { adapter.closeProfileProxy(BluetoothProfile.HID_DEVICE, it) }
+            // R134b：第二轮等待（再 15s）——Android 14+ 蓝牙服务懒加载/后台限流下
+            // 首个 15s 不够的案例存在；迟到回调凭 gen 检查仍会写入 holder 并 countDown
+            // （此时 latch 已归零无妨，直接检查 holder）。第二轮仍空才真正放弃。
+            if (!proxyLatch.await(15, TimeUnit.SECONDS) && holder.proxy == null) {
+                abandonRound()
+                holder.proxy?.let {
+                    runCatching { adapter.closeProfileProxy(BluetoothProfile.HID_DEVICE, it) }
+                }
+                return "ERROR: 获取 BluetoothHidDevice proxy 超时（30s）——请保持 AndAgent 在前台、重启手机蓝牙后重试一次；若仍超时，重启手机后试"
             }
-            return "ERROR: 获取 BluetoothHidDevice proxy 超时（15s）——请重启手机蓝牙后重试一次；若仍超时，重启手机后试（Android 14+ 蓝牙服务懒加载可能需要冷启动）"
+            // 第二轮期间迟到回调已写入 holder（gen 校验在回调内已放行本轮）
+            holder.proxy?.let { proxy ->
+                if (gen == BtHidRegistry.generation) proxyLatch.countDown()
+            }
         }
         // 本轮 proxy 全程由局部 holder 持有，绝不先写 BtHidRegistry。
         val hid = holder.proxy as? BluetoothHidDevice
