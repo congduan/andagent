@@ -190,10 +190,16 @@ class EspFlashCodecTest {
     }
 
     // ---------- 脚本化 fake 串口 ----------
-    private class ScriptedEspSerial(private val mode: Mode) : EspSerialIo {
+    private class ScriptedEspSerial(
+        private val mode: Mode,
+        private val changeBaudMode: ChangeBaudMode = ChangeBaudMode.OK,
+        private val baudProbe: () -> Int = { 0 },
+    ) : EspSerialIo {
         enum class Mode { ESP32_MAGIC, ESP32_S3_CHIPID, FLASH_BEGIN_STATUS_ERROR }
+        enum class ChangeBaudMode { OK, FAIL }
         private var pending = ByteArray(0)
         private val blocks = mutableListOf<ByteArray>()
+        val receivedOps = mutableListOf<Pair<Int, Int>>()   // (op, 收到请求时的波特率)
 
         override fun read(buf: ByteArray, timeoutMs: Int): Int {
             if (pending.isEmpty()) return 0
@@ -207,8 +213,13 @@ class EspFlashCodecTest {
             val payload = EspFlashCodec.slipDecode(frame)
             val op = payload[1].toInt() and 0xff
             val data = payload.copyOfRange(8, payload.size)
+            receivedOps += op to baudProbe()
             val resp = when (op) {
                 EspCmd.SYNC -> response(EspCmd.SYNC, value = 0x12345678)
+                EspCmd.CHANGE_BAUDRATE -> when (changeBaudMode) {
+                    ChangeBaudMode.OK -> response(EspCmd.CHANGE_BAUDRATE)
+                    ChangeBaudMode.FAIL -> response(EspCmd.CHANGE_BAUDRATE, body = byteArrayOf(1, 0x05))
+                }
                 EspCmd.GET_SECURITY_INFO -> when (mode) {
                     Mode.ESP32_S3_CHIPID -> {
                         val info = ByteArray(20).also { EspFlashCodec.putLe32(it, 12, 9) } // chip_id=9 → S3
@@ -225,11 +236,7 @@ class EspFlashCodecTest {
                 }
                 EspCmd.SPI_FLASH_MD5 -> {
                     val size = EspFlashCodec.le32(data, 4)
-                    val total = blocks.sumOf { it.size }
-                    val all = ByteArray(total)
-                    var pos = 0
-                    for (b in blocks) { b.copyInto(all, pos); pos += b.size }
-                    val image = all.copyOfRange(0, size)
+                    val image = burned(size)
                     response(EspCmd.SPI_FLASH_MD5,
                         body = EspFlashCodec.md5Hex(image).toByteArray(Charsets.US_ASCII) + byteArrayOf(0, 0))
                 }
@@ -237,6 +244,15 @@ class EspFlashCodecTest {
             }
             pending += resp
             return frame.size
+        }
+
+        /** 取回已烧录的前 size 字节（拼接所有 FLASH_DATA 块）。 */
+        fun burned(size: Int): ByteArray {
+            val total = blocks.sumOf { it.size }
+            val all = ByteArray(total)
+            var pos = 0
+            for (b in blocks) { b.copyInto(all, pos); pos += b.size }
+            return all.copyOfRange(0, size)
         }
 
         private fun response(opRet: Int, value: Int = 0, body: ByteArray = byteArrayOf(0, 0)): ByteArray {
@@ -294,5 +310,95 @@ class EspFlashCodecTest {
                 { _, _ -> }, { }).flash(ByteArray(1024), 0x10000, 4 * 1024 * 1024)
         }
         assertTrue(ex.message!!.contains("失败"))
+    }
+
+    // ---------- CHANGE_BAUDRATE 切速 / ELF 自动转换（R123②） ----------
+    /** 最小 32 位 LSB ELF：ELF 头(52) + phnum×32 program header + 段数据。 */
+    private fun buildMinimalElf(entry: Int, loads: List<Pair<Int, ByteArray>>): ByteArray {
+        val ehsize = 52
+        val phoff = ehsize
+        val dataOff = phoff + loads.size * 32
+        val b = ByteArray(dataOff + loads.sumOf { it.second.size })
+        b[0] = 0x7F; b[1] = 'E'.code.toByte(); b[2] = 'L'.code.toByte(); b[3] = 'F'.code.toByte()
+        b[4] = 1; b[5] = 1; b[6] = 1                       // ELFCLASS32 / ELFDATA2LSB
+        EspFlashCodec.putLe32(b, 0x18, entry)              // e_entry
+        EspFlashCodec.putLe32(b, 0x1C, phoff)              // e_phoff
+        EspFlashCodec.putLe16(b, 0x2A, 32)                 // e_phentsize
+        EspFlashCodec.putLe16(b, 0x2C, loads.size)         // e_phnum
+        var off = dataOff
+        loads.forEachIndexed { i, (addr, data) ->
+            val p = phoff + i * 32
+            EspFlashCodec.putLe32(b, p + 0, 1)             // PT_LOAD
+            EspFlashCodec.putLe32(b, p + 4, off)           // p_offset
+            EspFlashCodec.putLe32(b, p + 8, addr)          // p_vaddr
+            EspFlashCodec.putLe32(b, p + 12, addr)         // p_paddr (LMA)
+            EspFlashCodec.putLe32(b, p + 16, data.size)    // p_filesz
+            EspFlashCodec.putLe32(b, p + 20, data.size)    // p_memsz
+            data.copyInto(b, off)
+            off += data.size
+        }
+        return b
+    }
+
+    @Test fun flashChangeBaudrateSwitchesAfterSyncAndRestores() {
+        var currentBaud = 115200
+        val baudCalls = mutableListOf<Int>()
+        val serial = ScriptedEspSerial(ScriptedEspSerial.Mode.ESP32_MAGIC,
+            baudProbe = { currentBaud })
+        val r = EspFlasher(
+            serial,
+            { _, _ -> }, { },
+            setBaud = { b -> baudCalls += b; currentBaud = b },
+            initialBaud = 115200,
+        ).flash(ByteArray(1024) { (it % 7).toByte() }, 0x10000, 4 * 1024 * 1024, baud = 921600)
+
+        // 0x0F 请求在旧波特率上应答，后续 FLASH 命令在新波特率上收发
+        assertTrue(serial.receivedOps.contains(EspCmd.CHANGE_BAUDRATE to 115200))
+        assertTrue(serial.receivedOps.contains(EspCmd.FLASH_BEGIN to 921600))
+        assertTrue(serial.receivedOps.any { it.first == EspCmd.FLASH_DATA && it.second == 921600 })
+        assertTrue(serial.receivedOps.any { it.first == EspCmd.SPI_FLASH_MD5 && it.second == 921600 })
+        // setBaud：先切 921600，MD5 校验后恢复 115200
+        assertEquals(listOf(921600, 115200), baudCalls)
+        assertEquals(921600, r.baud)
+        assertEquals("bin", r.source)
+        assertTrue("切速成功仍应 MD5 校验通过", r.verified)
+    }
+
+    @Test fun flashBaudrateSwitchFailureDegradesWithoutFailingFlash() {
+        var currentBaud = 115200
+        val baudCalls = mutableListOf<Int>()
+        val serial = ScriptedEspSerial(ScriptedEspSerial.Mode.ESP32_MAGIC,
+            changeBaudMode = ScriptedEspSerial.ChangeBaudMode.FAIL,
+            baudProbe = { currentBaud })
+        val r = EspFlasher(
+            serial,
+            { _, _ -> }, { },
+            setBaud = { b -> baudCalls += b; currentBaud = b },
+            initialBaud = 115200,
+        ).flash(ByteArray(1024) { (it % 7).toByte() }, 0x10000, 4 * 1024 * 1024, baud = 921600)
+
+        // 切速失败降级：全部命令仍在原波特率收发，从未真正切到 921600
+        assertTrue(serial.receivedOps.all { it.second == 115200 })
+        assertTrue(baudCalls.none { it == 921600 })
+        assertTrue(baudCalls.contains(115200))
+        assertEquals(115200, r.baud)
+        assertEquals("bin", r.source)
+        assertTrue(r.warning!!.contains("baud 切换失败已降级"))
+        assertTrue("降级后烧录仍应成功", r.verified)
+    }
+
+    @Test fun flashElfInputReturnsSourceElfAndBurnsConvertedImage() {
+        // 最小 ELF：单个 RAM 段（0x3FF80000, 4B）→ ESP32 扩展头镜像
+        val elf = buildMinimalElf(0x40080934, listOf(0x3FF80000 to byteArrayOf(1, 2, 3, 4)))
+        val converted = EspImage.fromElf(elf).toBinary(EspChip("ESP32", null))
+        val serial = ScriptedEspSerial(ScriptedEspSerial.Mode.ESP32_MAGIC)
+        val r = EspFlasher(serial, { _, _ -> }, { })
+            .flash(elf, 0x10000, 4 * 1024 * 1024)
+
+        assertEquals("elf", r.source)
+        assertEquals(converted.size, r.bytes)
+        assertArrayEquals(converted, serial.burned(converted.size))
+        assertEquals(0xE9, converted[0].toInt() and 0xff)   // 烧的是 ESP image 而非裸 ELF
+        assertTrue(r.verified)
     }
 }

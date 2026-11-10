@@ -258,6 +258,8 @@ data class EspFlashResult(
     val verified: Boolean,
     val elapsedMs: Long,
     val warning: String?,
+    val baud: Int?,        // 实际生效烧录波特率（切速成功=目标 baud，降级/未切=initialBaud）
+    val source: String,    // "elf"（ELF 自动转 ESP image）| "bin"（原样烧录）
 )
 
 private data class EspReply(val value: Int, val body: ByteArray)
@@ -297,19 +299,47 @@ class EspFlasher(
     private val io: EspSerialIo,
     private val control: (Boolean, Boolean) -> Unit,
     private val sleepMs: (Long) -> Unit,
+    private val setBaud: ((Int) -> Unit)? = null,   // 切换串口波特率（android 侧在 session.lock 下 applyBaud）
+    private val initialBaud: Int? = null,           // open 时波特率（结束后恢复）
 ) {
     private val slip = SlipReader()
 
     /** 全流程：返回结构化结果供工具层拼 JSON。 */
-    fun flash(image: ByteArray, offset: Int, flashSizeBytes: Int): EspFlashResult {
+    fun flash(image: ByteArray, offset: Int, flashSizeBytes: Int, baud: Int? = null): EspFlashResult {
         val start = System.nanoTime()
         connect()
         val chip = detectChip()
-        val warning = if (chip.name == "UNKNOWN") "未知芯片，按 ESP32 家族流程继续" else null
+        var warning = if (chip.name == "UNKNOWN") "未知芯片，按 ESP32 家族流程继续" else null
         val isEsp8266 = chip.name == "ESP8266"
         val extended = !isEsp8266 && chip.name != "ESP32"
 
-        val aligned = EspFlashCodec.alignImage(image, offset)
+        // ELF 自动转 ESP image：detectChip 之后按芯片选镜像 flavor（source=elf）；否则原样（source=bin）。
+        val (bin, source) = if (EspImage.isElf(image)) {
+            EspImage.fromElf(image).toBinary(chip) to "elf"
+        } else {
+            image to "bin"
+        }
+
+        // CHANGE_BAUDRATE：SYNC 已在 connect() 成功，命令应答在旧波特率，收到响应后才切本端。
+        // baud 为 null/≤0、与 initialBaud 相同、或没注入 setBaud/initialBaud 时行为与现状完全一致（不切速）。
+        var effectiveBaud = initialBaud
+        val targetBaud = baud?.takeIf { it > 0 && it != initialBaud && setBaud != null && initialBaud != null }
+        if (targetBaud != null) {
+            try {
+                checkCommand(EspCmd.CHANGE_BAUDRATE, EspFlashCodec.packI(targetBaud))
+                setBaud!!(targetBaud)
+                sleepMs(50)
+                effectiveBaud = targetBaud
+            } catch (e: Exception) {
+                // 切速失败（命令被拒 EspFlashException 或本端 setBaud 异常）：降级回原波特率继续烧，
+                // 不因此失败整个烧录。
+                initialBaud?.let { runCatching { setBaud!!(it) } }
+                effectiveBaud = initialBaud
+                warning = listOfNotNull(warning, "baud 切换失败已降级").joinToString("；")
+            }
+        }
+
+        val aligned = EspFlashCodec.alignImage(bin, offset)
         val data = aligned.data
         val alignedOffset = aligned.offset
 
@@ -356,10 +386,19 @@ class EspFlasher(
         val got = String(reply.data, Charsets.US_ASCII).lowercase()
         val verified = got == expected
 
+        // FLASH_END/MD5 校验完成后恢复 open 时波特率（恢复失败不抛，仅 warning）。
+        if (effectiveBaud != initialBaud) {
+            initialBaud?.let { orig ->
+                if (runCatching { setBaud!!(orig) }.isFailure) {
+                    warning = listOfNotNull(warning, "恢复原波特率失败").joinToString("；")
+                }
+            }
+        }
+
         applyReset(EspReset.hardReset())
         val elapsedMs = (System.nanoTime() - start) / 1_000_000
         return EspFlashResult(chip.name, chip.chipId, null, offset, data.size, numBlocks,
-            expected, verified, elapsedMs, warning)
+            expected, verified, elapsedMs, warning, effectiveBaud, source)
     }
 
     /** 芯片识别：GET_SECURITY_INFO(chip_id) → 12B(S2) → READ_REG magic → 未知但继续。 */
