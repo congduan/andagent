@@ -711,4 +711,322 @@ describe("A2uiCard", () => {
     expect(detail.a2ui_submit).toEqual({ confirm: "delete", reason: "清理旧备份" });
     stop();
   });
+
+  // R136: read-only display fields (TEXT_DISPLAY / KV_LIST / TABLE / IMAGE /
+  // PROGRESS). They never carry a key, never enter VALUE_TYPES, and never
+  // participate in value collection, broken detection or the submit payload.
+
+  it("R136 TEXT_DISPLAY renders read-only text and a monospace code block", () => {
+    const spec = {
+      fields: [
+        { type: "TEXT_DISPLAY", label: "设备信息", text: "型号 Pixel\n电量 82%" },
+        { type: "TEXT_DISPLAY", text: "```js\nconst x = 1;\n```" },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect(screen.getByText("设备信息")).toBeTruthy();
+    expect(screen.getByText(/型号 Pixel/)).toBeTruthy();
+    expect(document.querySelector(".a2ui-text-display")).toBeTruthy();
+    expect(document.querySelector(".a2ui-text-display-code")).toBeTruthy();
+    expect(document.querySelector(".a2ui-submit")).toBeNull();
+  });
+
+  it("R136 TEXT_DISPLAY clips text longer than 1000 characters", () => {
+    render(
+      <A2uiCard
+        code={JSON.stringify({ fields: [{ type: "TEXT_DISPLAY", text: "x".repeat(1200) }] })}
+      />,
+    );
+    const el = document.querySelector(".a2ui-text-display") as HTMLElement;
+    expect(el.textContent).toHaveLength(1000);
+  });
+
+  it("R136 KV_LIST renders a two-column key/value grid and caps items at 32", () => {
+    const items = Array.from({ length: 40 }, (_, index) => ({ k: `k${index}`, v: `v${index}` }));
+    render(
+      <A2uiCard
+        code={JSON.stringify({ fields: [{ type: "KV_LIST", label: "状态", items }] })}
+      />,
+    );
+    expect(screen.getByText("状态")).toBeTruthy();
+    expect(screen.getByText("k0")).toBeTruthy();
+    expect(screen.getByText("v0")).toBeTruthy();
+    expect(document.querySelectorAll(".a2ui-kv-row")).toHaveLength(32);
+    expect(screen.queryByText("k39")).toBeNull();
+  });
+
+  it("R136 KV_LIST clips k/v strings to 200 characters", () => {
+    render(
+      <A2uiCard
+        code={JSON.stringify({
+          fields: [{ type: "KV_LIST", items: [{ k: "a".repeat(250), v: "b".repeat(250) }] }],
+        })}
+      />,
+    );
+    expect((document.querySelector(".a2ui-kv-key") as HTMLElement).textContent).toHaveLength(200);
+    expect((document.querySelector(".a2ui-kv-val") as HTMLElement).textContent).toHaveLength(200);
+  });
+
+  it("R136 TABLE renders headers/cells, caps rows at 50 and columns at 8", () => {
+    const headers = Array.from({ length: 10 }, (_, index) => `H${index}`);
+    const rows = Array.from({ length: 60 }, (_, row) =>
+      Array.from({ length: 10 }, (_, col) => `R${row}C${col}`),
+    );
+    render(
+      <A2uiCard
+        code={JSON.stringify({ fields: [{ type: "TABLE", label: "文件列表", headers, rows }] })}
+      />,
+    );
+    expect(screen.getByText("文件列表")).toBeTruthy();
+    expect(screen.getByText("H0")).toBeTruthy();
+    expect(screen.getByText("R0C0")).toBeTruthy();
+    expect(document.querySelectorAll(".a2ui-table thead th")).toHaveLength(8);
+    expect(document.querySelectorAll(".a2ui-table tbody tr")).toHaveLength(50);
+    expect(document.querySelectorAll(".a2ui-table tbody tr:first-child td")).toHaveLength(8);
+  });
+
+  it("R136 TABLE pads short rows and truncates long rows to the header column count", () => {
+    render(
+      <A2uiCard
+        code={JSON.stringify({
+          fields: [{ type: "TABLE", headers: ["A", "B", "C"], rows: [["1"], ["1", "2", "3", "4", "5"]] }],
+        })}
+      />,
+    );
+    const trs = document.querySelectorAll(".a2ui-table tbody tr");
+    expect(trs).toHaveLength(2);
+    expect(trs[0].querySelectorAll("td")).toHaveLength(3);
+    expect((trs[0].querySelectorAll("td")[1] as HTMLElement).textContent).toBe("");
+    expect(trs[1].querySelectorAll("td")).toHaveLength(3);
+    expect((trs[1].querySelectorAll("td")[2] as HTMLElement).textContent).toBe("3");
+  });
+
+  it("R136 IMAGE rejects http(s):// src and degrades to a placeholder", () => {
+    const { unmount } = render(
+      <A2uiCard
+        code={JSON.stringify({ fields: [{ type: "IMAGE", label: "截图", src: "http://evil.example/x.png" }] })}
+      />,
+    );
+    expect(screen.getByText("截图")).toBeTruthy();
+    expect(screen.getByText("图片不可用")).toBeTruthy();
+    expect(document.querySelector("img.a2ui-image")).toBeNull();
+    unmount();
+    render(
+      <A2uiCard
+        code={JSON.stringify({ fields: [{ type: "IMAGE", src: "https://cdn.example/a.jpg" }] })}
+      />,
+    );
+    expect(screen.getByText("图片不可用")).toBeTruthy();
+    expect(document.querySelector("img.a2ui-image")).toBeNull();
+  });
+
+  it("R136 IMAGE renders allowed data:image and content:// sources", () => {
+    const data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+    const content = "content://com.example.provider/image/42";
+    render(
+      <A2uiCard
+        code={JSON.stringify({
+          fields: [
+            { type: "IMAGE", label: "预览", src: data },
+            { type: "IMAGE", src: content },
+          ],
+        })}
+      />,
+    );
+    const imgs = document.querySelectorAll("img.a2ui-image") as NodeListOf<HTMLImageElement>;
+    expect(imgs).toHaveLength(2);
+    expect(imgs[0].getAttribute("src")).toBe(data);
+    expect(imgs[1].getAttribute("src")).toBe(content);
+    expect(screen.getByText("预览")).toBeTruthy();
+    expect(screen.queryByText("图片不可用")).toBeNull();
+  });
+
+  it("R136 PROGRESS clamps value to 0-100 and falls back to 0 for a non-number", () => {
+    const spec = {
+      fields: [
+        { type: "PROGRESS", label: "下载", value: 150, detail: "已完成" },
+        { type: "PROGRESS", label: "上传", value: "abc" },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect(screen.getByText("下载")).toBeTruthy();
+    expect(screen.getByText("已完成")).toBeTruthy();
+    const fills = document.querySelectorAll(".a2ui-progress-fill") as NodeListOf<HTMLElement>;
+    expect(fills).toHaveLength(2);
+    expect(fills[0].style.width).toBe("100%");
+    expect(fills[1].style.width).toBe("0%");
+  });
+
+  it("R136 a pure display card renders no submit button and no warning", () => {
+    const spec = {
+      title: "设备概览",
+      fields: [
+        { type: "TEXT_DISPLAY", text: "在线" },
+        { type: "KV_LIST", items: [{ k: "电量", v: "82%" }] },
+        { type: "TABLE", headers: ["文件", "大小"], rows: [["a.txt", "1KB"]] },
+        { type: "IMAGE", src: "http://x/y.png" },
+        { type: "PROGRESS", value: 42, detail: "42%" },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect(screen.getByText("设备概览")).toBeTruthy();
+    expect(document.querySelector(".a2ui-submit")).toBeNull();
+    expect(document.querySelector(".a2ui-actions")).toBeNull();
+    expect(document.querySelector(".a2ui-warning")).toBeNull();
+    expect(document.querySelector(".a2ui-broken")).toBeNull();
+  });
+
+  it("R136 a mixed card keeps submit and its payload contains only input keys", () => {
+    const { handler, stop } = captureFill();
+    const spec = {
+      title: "导出",
+      fields: [
+        { type: "TEXT_DISPLAY", text: "说明文字" },
+        { type: "KV_LIST", items: [{ k: "格式", v: "PDF" }] },
+        { type: "TABLE", headers: ["列"], rows: [["值"]] },
+        { type: "IMAGE", src: "data:image/png;base64,AAAA" },
+        { type: "PROGRESS", value: 100, detail: "done" },
+        { type: "TEXT_INPUT", key: "email", label: "邮箱" },
+        { type: "SWITCH", key: "notify", label: "通知", default: false },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    expect(document.querySelector(".a2ui-submit")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/邮箱/), { target: { value: "a@b.com" } });
+    fireEvent.click(screen.getByText("提交"));
+    expect(handler).toHaveBeenCalledTimes(1);
+    const detail = JSON.parse(handler.mock.calls[0][0].detail as string);
+    expect(detail.a2ui_submit).toEqual({ email: "a@b.com", notify: false });
+    stop();
+  });
+});
+
+// R136: 只读展示字段（TEXT_DISPLAY / KV_LIST / TABLE / IMAGE / PROGRESS）。
+describe("A2uiCard · R136 展示型字段", () => {
+  beforeEach(() => localStorage.setItem("andagent.language", "zh"));
+  afterEach(() => cleanup());
+
+  const show = (fields: unknown[], extra: Record<string, unknown> = {}) =>
+    render(<A2uiCard code={JSON.stringify({ fields, ...extra })} />);
+
+  it("TEXT_DISPLAY 渲染只读文本并 clip 到 1000 字；``` 开头按等宽代码块", () => {
+    show([
+      { type: "TEXT_DISPLAY", label: "说明", text: "电池 78% · 温度 34℃" },
+      { type: "TEXT_DISPLAY", label: "原始日志", text: "```log\nline1\nline2" },
+      { type: "TEXT_DISPLAY", label: "超长", text: "字".repeat(1200) },
+    ]);
+    expect(screen.getByText("电池 78% · 温度 34℃")).toBeTruthy();
+    const code = document.querySelector("pre.a2ui-text-display-code");
+    expect(code).toBeTruthy();
+    expect(code!.textContent).toContain("```log");
+    const longNode = document.querySelectorAll(".a2ui-text-display")[2];
+    expect(longNode.textContent!.length).toBe(1000); // 复用 MAX_REGEX_INPUT clip
+    expect(document.querySelector("input")).toBeNull();
+    expect(document.querySelector(".a2ui-submit")).toBeNull();
+  });
+
+  it("KV_LIST 左键右值两列渲染，clip 到 32 项", () => {
+    const items = Array.from({ length: 40 }, (_, i) => ({ k: `键${i}`, v: `值${i}` }));
+    show([{ type: "KV_LIST", label: "设备信息", items }]);
+    expect(screen.getByText("键0")).toBeTruthy();
+    expect(screen.getByText("值0")).toBeTruthy();
+    expect(document.querySelectorAll(".a2ui-kv-row")).toHaveLength(32);
+    expect(screen.queryByText("键32")).toBeNull();
+    expect(screen.queryByText("键39")).toBeNull();
+  });
+
+  it("TABLE 渲染 headers/rows，clip 列/行/单元格并支持横向滚动容器", () => {
+    const headers = Array.from({ length: 10 }, (_, i) => `列${i}`);
+    // Keep the JSON well under the 100KB MAX_CODE guard: only the first cell
+    // is oversized (to exercise the 200-char clip); the rest stay short so
+    // 60 rows x 10 columns still fit and exercise the row/column caps.
+    const rows = Array.from({ length: 60 }, (_, r) =>
+      headers.map((_, c) => (r === 0 && c === 0 ? "x".repeat(250) : `${r}-${c}`)),
+    );
+    show([{ type: "TABLE", label: "传感器", headers, rows }]);
+    expect(document.querySelector(".a2ui-table-wrap")).toBeTruthy();
+    expect(document.querySelectorAll(".a2ui-table thead th")).toHaveLength(8);
+    expect(document.querySelectorAll(".a2ui-table tbody tr")).toHaveLength(50);
+    expect(document.querySelector(".a2ui-table tbody td")!.textContent!.length).toBe(200);
+    expect(screen.queryByText("列9")).toBeNull();
+  });
+
+  it("IMAGE 只接受 data:image/ 与 content:// 媒体图片，拒绝 http(s)/内联/相对路径", () => {
+    const dataSrc = "data:image/png;base64,iVBORw0KGgo=";
+    const contentSrc = "content://media/external/images/42";
+    show([
+      { type: "IMAGE", label: "截图", src: dataSrc },
+      { type: "IMAGE", label: "相册", src: contentSrc },
+      { type: "IMAGE", label: "https 外链", src: "https://example.com/a.png" },
+      { type: "IMAGE", label: "http 外链", src: "http://example.com/a.png" },
+      { type: "IMAGE", label: "内联 SVG", src: "data:image/svg+xml,<svg onload=1>" },
+      { type: "IMAGE", label: "非图片", src: "data:text/html;base64,PHNjcmlwdD4=" },
+      { type: "IMAGE", label: "相对路径", src: "/local/foo.png" },
+    ]);
+    const imgs = document.querySelectorAll("img.a2ui-image");
+    expect(imgs).toHaveLength(2);
+    expect(imgs[0].getAttribute("src")).toBe(dataSrc);
+    expect(imgs[1].getAttribute("src")).toBe(contentSrc);
+    expect(document.querySelectorAll(".a2ui-image-fallback")).toHaveLength(5);
+  });
+
+  it("PROGRESS 钳制 value 到 0-100，detail 作为右侧小字", () => {
+    show([
+      { type: "PROGRESS", label: "下载", value: 150, detail: "已完成" },
+      { type: "PROGRESS", label: "电量", value: -20 },
+    ]);
+    const fills = document.querySelectorAll<HTMLElement>(".a2ui-progress-fill");
+    expect(fills).toHaveLength(2);
+    expect(fills[0].style.width).toBe("100%");
+    expect(fills[1].style.width).toBe("0%");
+    expect(screen.getByText("已完成")).toBeTruthy();
+    expect(document.querySelectorAll(".a2ui-progress-detail")).toHaveLength(1);
+  });
+
+  it("纯展示卡（全展示字段）不渲染提交区，submit_label 也忽略", () => {
+    show(
+      [
+        { type: "TEXT_DISPLAY", text: "设备在线" },
+        { type: "KV_LIST", items: [{ k: "电量", v: "78%" }] },
+        { type: "PROGRESS", value: 62 },
+      ],
+      { title: "设备状态", submit_label: "确认" },
+    );
+    expect(screen.getByText("设备状态")).toBeTruthy();
+    expect(screen.getByText("设备在线")).toBeTruthy();
+    expect(document.querySelector(".a2ui-submit")).toBeNull();
+    expect(document.querySelector(".a2ui-actions")).toBeNull();
+    expect(screen.queryByText("确认")).toBeNull();
+  });
+
+  it("混合卡保留提交，payload 只含输入字段值", () => {
+    const { handler, stop } = captureFill();
+    show([
+      { type: "KV_LIST", label: "只读", items: [{ k: "k", v: "v" }] },
+      { type: "PROGRESS", value: 50 },
+      { type: "TEXT_INPUT", key: "name", label: "名称" },
+      { type: "NUMBER_SLIDER", key: "count", label: "数量", min: 0, max: 10, default: 3 },
+    ]);
+    expect(document.querySelector(".a2ui-submit")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/名称/), { target: { value: "abc" } });
+    fireEvent.click(screen.getByText("提交"));
+    expect(handler).toHaveBeenCalledTimes(1);
+    const detail = JSON.parse(handler.mock.calls[0][0].detail as string);
+    expect(detail.a2ui_submit).toEqual({ name: "abc", count: 3 });
+    stop();
+  });
+
+  it("超限 items>32 / rows>50 走 clip 防御，整卡不报废、不触发 broken", () => {
+    const items = Array.from({ length: 40 }, (_, i) => ({ k: `k${i}`, v: `v${i}` }));
+    const rows = Array.from({ length: 60 }, (_, i) => [`r${i}`]);
+    show([
+      { type: "KV_LIST", label: "键值", items },
+      { type: "TABLE", label: "表格", headers: ["A"], rows },
+    ]);
+    expect(document.querySelector(".a2ui-error")).toBeNull();
+    expect(document.querySelector(".a2ui-broken")).toBeNull();
+    expect(document.querySelectorAll(".a2ui-kv-row")).toHaveLength(32);
+    expect(document.querySelectorAll(".a2ui-table tbody tr")).toHaveLength(50);
+    expect(document.querySelector(".a2ui-submit")).toBeNull();
+  });
 });

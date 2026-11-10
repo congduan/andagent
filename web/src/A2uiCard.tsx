@@ -23,6 +23,15 @@ const MAX_CODE = 100 * 1024;
 const MAX_PATTERN = 100;
 const MAX_REGEX_INPUT = 1000;
 
+// R136: read-only display fields. These caps are applied by clipping (never
+// by rejecting the whole card), mirroring the existing clip/parse defenses.
+const MAX_DISPLAY_TEXT = 1000;
+const MAX_KV_ITEMS = 32;
+const MAX_TABLE_HEADERS = 8;
+const MAX_TABLE_ROWS = 50;
+const MAX_TABLE_CELL = 200;
+const MAX_IMAGE_BASE64 = 500 * 1024; // 500KB of base64 text
+
 const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 // Reject patterns with nested/adjacent quantifiers (e.g. `(a+)+`, `a++`,
@@ -57,6 +66,12 @@ const KNOWN_TYPES = new Set([
   "ROW",
   "COLUMN",
   "LABEL",
+  // R136: read-only data-display fields (no key, no value, never submitted).
+  "TEXT_DISPLAY",
+  "KV_LIST",
+  "TABLE",
+  "IMAGE",
+  "PROGRESS",
 ]);
 
 const VALUE_TYPES = new Set([
@@ -89,8 +104,8 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function clip(value: string): string {
-  return value.length > MAX_LABEL ? value.slice(0, MAX_LABEL) : value;
+function clip(value: string, max: number = MAX_LABEL): string {
+  return value.length > max ? value.slice(0, max) : value;
 }
 
 function finiteNumber(value: unknown, fallback: number): number {
@@ -304,8 +319,23 @@ function requiredIsUnsatisfiable(node: RawNode): boolean {
   return false;
 }
 
+// R136: IMAGE src allowlist. Only content:// (Android media) and inlined
+// data:image/...;base64 payloads may reach an <img>; http(s)://, non-base64
+// inline data (e.g. data:image/svg+xml,<svg onload=...>), and every other
+// scheme are rejected for privacy/security — no remote fetch, no inline SVG.
+// Oversized text is clipped (truncated) rather than rejected, matching the
+// clip philosophy. The bridge-based content:// import is intentionally not
+// required here: the brief accepts a direct <img src> with the content URI.
+const DATA_IMAGE_RE = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
+function safeImageSrc(raw: string): string {
+  const src = clip(raw, MAX_IMAGE_BASE64);
+  if (src.startsWith("content://")) return src;
+  if (DATA_IMAGE_RE.test(src)) return src;
+  return "";
+}
+
 export function A2uiCard({ code }: { code: string }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const reactId = useId().replace(/[^a-zA-Z0-9]/g, "");
   const spec = useMemo(() => parseSpec(code), [code]);
   const keyPlan = useMemo(() => {
@@ -369,6 +399,20 @@ export function A2uiCard({ code }: { code: string }) {
     });
     return isBroken;
   }, [spec, keyPlan]);
+
+  // R136: a card whose visible fields contain no input (VALUE_TYPES) field is
+  // a pure display card — there is nothing to collect, so the submit area is
+  // not rendered. Mixed cards (display + input) keep the submit, and submit
+  // still collects only VALUE_TYPES fields, so display fields never enter the
+  // payload. Unknown/layout-only cards also become pure display cards.
+  const hasInputField = useMemo(() => {
+    if (!spec.ok) return false;
+    let found = false;
+    walkValues(spec.fields, 1, (node) => {
+      if (VALUE_TYPES.has(text(node.type)) && text(node.key)) found = true;
+    });
+    return found;
+  }, [spec]);
 
   const setValue = (key: string, value: unknown) => {
     if (!key) return;
@@ -732,6 +776,124 @@ export function A2uiCard({ code }: { code: string }) {
           </div>
         );
 
+      // R136: read-only display fields. No key, no value, never validated or
+      // submitted. All data is clipped to the caps declared above.
+      case "TEXT_DISPLAY": {
+        const label = clip(text(node.label));
+        const body = clip(text(node.text), MAX_DISPLAY_TEXT);
+        const isCode = body.startsWith("```");
+        return (
+          <div className="a2ui-field a2ui-field-display" key={path}>
+            {label ? <div className="a2ui-label">{label}</div> : null}
+            {isCode ? (
+              <pre className="a2ui-text-display a2ui-text-display-code">{body}</pre>
+            ) : (
+              <div className="a2ui-text-display">{body}</div>
+            )}
+          </div>
+        );
+      }
+
+      case "KV_LIST": {
+        const label = clip(text(node.label));
+        const items = Array.isArray(node.items) ? node.items.slice(0, MAX_KV_ITEMS) : [];
+        return (
+          <div className="a2ui-field a2ui-field-display" key={path}>
+            {label ? <div className="a2ui-label">{label}</div> : null}
+            <div className="a2ui-kv">
+              {items.map((item, index) => {
+                if (!isRecord(item)) return null;
+                return (
+                  <div className="a2ui-kv-row" key={`${path}-kv-${index}`}>
+                    <div className="a2ui-kv-key">{clip(text(item.k))}</div>
+                    <div className="a2ui-kv-val">{clip(text(item.v))}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      }
+
+      case "TABLE": {
+        const label = clip(text(node.label));
+        const headers = (Array.isArray(node.headers) ? node.headers : [])
+          .slice(0, MAX_TABLE_HEADERS)
+          .map((header) => clip(text(header), MAX_TABLE_CELL));
+        const sourceRows = (Array.isArray(node.rows) ? node.rows : []).slice(0, MAX_TABLE_ROWS);
+        // Column count is defined by headers (capped at 8). With no headers,
+        // fall back to the widest row (also capped). Short rows are padded with
+        // empty cells, long rows are truncated — always tolerated, never fatal.
+        const columnCount = headers.length ||
+          Math.min(
+            MAX_TABLE_HEADERS,
+            sourceRows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0),
+          );
+        const rows = sourceRows.map((row) => {
+          const cells = Array.isArray(row) ? row : [];
+          return Array.from({ length: columnCount }, (_, index) =>
+            clip(text(cells[index]), MAX_TABLE_CELL),
+          );
+        });
+        return (
+          <div className="a2ui-field a2ui-field-display" key={path}>
+            {label ? <div className="a2ui-label">{label}</div> : null}
+            <div className="a2ui-table-wrap">
+              <table className="a2ui-table">
+                {headers.length ? (
+                  <thead>
+                    <tr>{headers.map((header, index) => <th key={`${path}-th-${index}`}>{header}</th>)}</tr>
+                  </thead>
+                ) : null}
+                <tbody>
+                  {rows.map((row, rowIndex) => (
+                    <tr key={`${path}-tr-${rowIndex}`}>
+                      {row.map((cell, cellIndex) => (
+                        <td key={`${path}-td-${rowIndex}-${cellIndex}`}>{cell}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      }
+
+      case "IMAGE": {
+        const label = clip(text(node.label));
+        const src = safeImageSrc(text(node.src));
+        return (
+          <div className="a2ui-field a2ui-field-display" key={path}>
+            {label ? <div className="a2ui-label">{label}</div> : null}
+            {src ? (
+              <img className="a2ui-image" src={src} alt={label || "image"} />
+            ) : (
+              <div className="a2ui-image-fallback a2ui-label a2ui-degraded">
+                {language === "en" ? "Image unavailable" : "图片不可用"}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      case "PROGRESS": {
+        const label = clip(text(node.label));
+        const value = clampNumber(finiteNumber(node.value, 0), 0, 100);
+        const detail = clip(text(node.detail));
+        return (
+          <div className="a2ui-field a2ui-field-display" key={path}>
+            {label ? <div className="a2ui-label">{label}</div> : null}
+            <div className="a2ui-progress-head">
+              <div className="a2ui-progress-track">
+                <div className="a2ui-progress-fill" style={{ width: `${value}%` }} />
+              </div>
+              {detail ? <span className="a2ui-progress-detail">{detail}</span> : null}
+            </div>
+          </div>
+        );
+      }
+
       default:
         // Unknown catalog entry: read-only label, warning shown once at the bottom.
         return (
@@ -764,16 +926,18 @@ export function A2uiCard({ code }: { code: string }) {
           {broken ? (
             <div className="a2ui-warning a2ui-broken">{t("a2uiBrokenCard")}</div>
           ) : null}
-          <div className="a2ui-actions">
-            <button
-              type="button"
-              className="a2ui-submit"
-              disabled={broken}
-              onClick={submit}
-            >
-              {submitLabel || t("a2uiSubmit")}
-            </button>
-          </div>
+          {hasInputField ? (
+            <div className="a2ui-actions">
+              <button
+                type="button"
+                className="a2ui-submit"
+                disabled={broken}
+                onClick={submit}
+              >
+                {submitLabel || t("a2uiSubmit")}
+              </button>
+            </div>
+          ) : null}
         </>
       )}
     </div>

@@ -20,6 +20,30 @@ export const IMAGE_EDIT_OPS = [
   "flip", "rotate_free", "text_draw", "gaussian_blur", "vignette", "auto_enhance",
 ] as const;
 
+/**
+ * R136: a2ui 只读展示字段 catalog —— 与 A2uiCard.tsx 的 5 种展示型渲染对齐。
+ * 供模型/工具描述引用：列出字段形态、上限与提交语义（中英对照，沿用
+ * A2UI_GUIDE 的编号/要点风格）。展示型字段不带 key、不进 VALUE_TYPES，
+ * 因此永不参与值收集 / broken 判定 / submit payload。
+ */
+export const A2UI_DISPLAY_GUIDE = [
+  "a2ui 展示型字段（只读，catalog-only，不进提交 payload）：",
+  "· TEXT_DISPLAY{type,label?,text}：只读文本区，text 截 1000 字符；以三个反引号开头按等宽代码块渲染。",
+  "· KV_LIST{type,label?,items:[{k,v}]}：两列键值网格，items 最多 32 条，k/v 各截 200 字符。",
+  "· TABLE{type,label?,headers:[string],rows:[[string]]}：表格，headers 最多 8 列、rows 最多 50 行、单元格截 200 字符；容器横向可滚动，行比表头短补空、长截断。",
+  "· IMAGE{type,label?,src}：仅接受 content:// 或 data:image/ 开头（文本上限 500KB）；http(s):// 一律拒绝并降级为『图片不可用』占位；宽 100% 自适应圆角。",
+  "· PROGRESS{type,label?,value:number,detail?}：value 钳制 0-100（非数字回退 0），进度条 + detail 右侧小字。",
+  "语义：fields 全为展示型时无提交按钮（纯展示卡不渲染 broken 警告）；混合卡提交 payload 只含输入字段（TEXT_INPUT/NUMBER_SLIDER/CHOICE/DATE_PICK/SWITCH/BUTTON_GROUP）的 key。",
+  "",
+  "a2ui display-only fields (read-only, catalog-only, never in the submit payload):",
+  "· TEXT_DISPLAY{type,label?,text}: read-only text; text clipped to 1000 chars; a leading code fence renders as a monospace code block.",
+  "· KV_LIST{type,label?,items:[{k,v}]}: two-column key/value grid; items capped at 32, k/v clipped to 200 chars each.",
+  "· TABLE{type,label?,headers:[string],rows:[[string]]}: headers capped at 8 columns, rows at 50, cells clipped to 200 chars; horizontally scrollable; short rows padded with empty cells, long rows truncated.",
+  "· IMAGE{type,label?,src}: only content:// or data:image/ prefixes (500KB text cap); http(s):// is always rejected and degrades to an \"Image unavailable\" placeholder; 100% width, rounded.",
+  "· PROGRESS{type,label?,value:number,detail?}: value clamped to 0-100 (non-number falls back to 0); progress bar with small detail text on the right.",
+  "Semantics: when every field is display-only there is no submit button (a pure display card shows no broken warning); for mixed cards the submit payload contains only the keys of input fields (TEXT_INPUT/NUMBER_SLIDER/CHOICE/DATE_PICK/SWITCH/BUTTON_GROUP).",
+].join("\n");
+
 export const EXTRA_TOOL_DEFS = [
   { name: "tts_to_file", description: "用系统 TTS 将文本合成为 WAV 音频文件，返回可用 ```audio 围栏展示的本地路径。", parameters: { type: "object", properties: { text: { type: "string", description: "待合成文本，最多 4000 字符" }, rate: { type: "number", description: "语速倍率 0.5..2.0，默认 1.0" } }, required: ["text"] } },
   { name: "live_start", description: "循环执行 JS。循环体内用 andagent.tool(name, JSON.stringify(args)) 获取设备数据，andagent.kv.get/set 跨 tick 保存状态，live.result(data) 提交本轮结果。每 tick 最多 500ms；结果最多 16KB。", parameters: { type: "object", properties: { name: { type: "string" }, code: { type: "string" }, interval_ms: { type: "integer", description: "默认 1000，最小 200" }, consumer: { type: "string", enum: ["dialog", "overlay", "kv"] } }, required: ["name", "code"] } },
@@ -141,7 +165,7 @@ export const EXTRA_TOOL_DEFS = [
   { name: "devtools_console", description: "读取指定页面的 console 输出（log/warn/error 与未捕获异常）。从 attach 起实时监听 Runtime + Log 域，Log.enable 会补发页面加载期报错，无需先用 devtools_eval 制造输出；按 error/warn/log 分组返回，错误带行号。", parameters: { type: "object", properties: { page: { type: "string" }, lines: { type: "integer" } }, required: [] } },
   { name: "devtools_errors", description: "只返回指定页面的 error 级 console/异常（含加载期报错，带行号）。用于「生成网页→嵌入→查错→修」工作流里的加载失败排查。", parameters: { type: "object", properties: { page: { type: "string" }, lines: { type: "integer" } }, required: [] } },
   { name: "devtools_screenshot", description: "截取指定页面当前画面为 PNG 存入相册 Pictures/AndAgent；缩略图由工具卡片展示。", parameters: { type: "object", properties: { page: { type: "string" } }, required: [] } },
-  { name: "cron_create", description: "创建定时任务：按时间表自动跑 JS 脚本 / shell 命令 / 通知 / a2ui 表单。schedule 支持 cron 五段表达式或 'daily 09:00' / 'every 30m' / 'weekly mon 09:00'。设备重启自动恢复；Android 12+ 首次需授予『闹钟和提醒』。", parameters: { type: "object", properties: { name: { type: "string", description: "任务名（唯一）" }, schedule: { type: "string", description: "cron 表达式或简化描述" }, kind: { type: "string", enum: ["script", "shell", "notify", "a2ui"] }, payload: { type: "string", description: "script=脚本名；shell=命令；notify=通知文本；a2ui=表单 JSON spec（fields 数组非空），解锁前台时渲染进对话，锁屏/后台降级通知" } }, required: ["name", "schedule", "kind", "payload"] } },
+  { name: "cron_create", description: "创建定时任务：按时间表自动跑 JS 脚本 / shell 命令 / 通知 / a2ui 表单。schedule 支持 cron 五段表达式或 'daily 09:00' / 'every 30m' / 'weekly mon 09:00'。设备重启自动恢复；Android 12+ 首次需授予『闹钟和提醒』。", parameters: { type: "object", properties: { name: { type: "string", description: "任务名（唯一）" }, schedule: { type: "string", description: "cron 表达式或简化描述" }, kind: { type: "string", enum: ["script", "shell", "notify", "a2ui"] }, payload: { type: "string", description: "script=脚本名；shell=命令；notify=通知文本；a2ui=表单 JSON spec（fields 数组非空），除输入字段外还支持 5 种只读展示字段 TEXT_DISPLAY/KV_LIST/TABLE/IMAGE/PROGRESS，全为展示字段时是纯展示卡无提交按钮；解锁前台时渲染进对话，锁屏/后台降级通知" } }, required: ["name", "schedule", "kind", "payload"] } },
   { name: "cron_list", description: "列出全部定时任务（id/名称/时间表/类型/启用状态/上次运行/下次运行）。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "cron_toggle", description: "启用/停用某个定时任务。", parameters: { type: "object", properties: { id: { type: "string" }, enabled: { type: "boolean" } }, required: ["id", "enabled"] } },
   { name: "cron_delete", description: "删除定时任务（需 confirm=true）。", parameters: { type: "object", properties: { id: { type: "string" }, confirm: { type: "boolean" } }, required: ["id"] } },

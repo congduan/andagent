@@ -3708,6 +3708,73 @@ button:disabled {
 .a2ui-row > * { flex: 1 1 180px; min-width: 0; }
 .a2ui-col { display: flex; flex-direction: column; gap: 10px; }
 .a2ui-degraded { font-style: italic; opacity: 0.75; }
+
+/* R136: read-only display fields — align to a2ui-card dark-theme tokens. */
+.a2ui-text-display {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--wash-1);
+  color: var(--text);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.a2ui-text-display-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+  overflow-x: auto;
+}
+.a2ui-kv { display: flex; flex-direction: column; gap: 4px; }
+.a2ui-kv-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--wash-1);
+  font-size: 13px;
+}
+.a2ui-kv-key { color: var(--muted); overflow-wrap: anywhere; }
+.a2ui-kv-val { color: var(--text); overflow-wrap: anywhere; }
+.a2ui-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 9px; }
+.a2ui-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.a2ui-table th, .a2ui-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+  overflow-wrap: anywhere;
+}
+.a2ui-table th { background: var(--wash-2); color: var(--muted); font-weight: 600; }
+.a2ui-table tr:last-child td { border-bottom: 0; }
+.a2ui-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.a2ui-image-fallback { padding: 8px 10px; }
+.a2ui-progress-head { display: flex; align-items: center; gap: 10px; }
+.a2ui-progress-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--wash-2);
+  overflow: hidden;
+}
+.a2ui-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.a2ui-progress-detail { flex: none; font-size: 12px; color: var(--muted); }
+
 .a2ui-warning {
   margin: 0 12px 10px;
   padding: 7px 9px;
