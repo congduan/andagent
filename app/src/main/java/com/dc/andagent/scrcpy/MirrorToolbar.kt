@@ -28,6 +28,6 @@ object MirrorToolbar {
     /** 显隐的可见反馈：展开显示向上箭头，折叠显示向下箭头。 */
     fun toggleLabel(expanded: Boolean): String = if (expanded) "⌃" else "⌄"
 
-    /** 展开时浮窗高度额外加一行工具条，折叠时（隐藏）不加高度。 */
+    /** 工具条浮层展开时占一行的高度，折叠时为 0（R137 起浮层覆盖视频底部，不再改变浮窗总高）。 */
     fun extraHeightPx(expanded: Boolean, toolbarPx: Int): Int = if (expanded) toolbarPx else 0
 }

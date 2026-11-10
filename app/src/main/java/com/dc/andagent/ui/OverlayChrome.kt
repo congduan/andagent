@@ -1,8 +1,10 @@
 package com.dc.andagent.ui
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewOutlineProvider
@@ -22,6 +24,17 @@ object OverlayChrome {
     val TEXT: Int = 0xFFE8EDF5.toInt()
     val TEXT_DIM: Int = 0xFFA7B7CA.toInt()  // 与桌面 widget 状态文字同源
     val ACCENT: Int = 0xFF7F9BFF.toInt()    // --accent
+
+    // ── R137 投屏浮窗扩展 token（新增颜色统一在此，避免散落硬编码）──
+    val STATUS_CONNECTED: Int = 0xFF4CAF50.toInt()      // 状态点：已连接
+    val STATUS_CONNECTING: Int = 0xFFFFC107.toInt()     // 状态点：连接中
+    val STATUS_DISCONNECTED: Int = 0xFFEF5350.toInt()   // 状态点：断开
+    val TOOLBAR_BG: Int = 0xE6101721.toInt()            // 工具条浮层 / badge 半透明深底
+    val CONNECTING_BG: Int = 0xF0121721.toInt()         // 连接状态层底
+    val DIVIDER: Int = 0x4DFFFFFF.toInt()               // 白 30%：header 分隔线 / 组间竖线
+    val RIPPLE_TINT: Int = 0x33FFFFFF.toInt()           // 触摸涟漪
+    val BUTTON_BG: Int = 0x1AFFFFFF.toInt()             // 按钮淡色圆/圆角底
+    val BORDER_IDLE: Int = 0xFF777777.toInt()           // 外描边：不可操控灰
     const val RADIUS_DP = 16
     const val HEADER_DP = 40
 
@@ -56,6 +69,27 @@ object OverlayChrome {
         view.scaleX = 0.92f; view.scaleY = 0.92f; view.alpha = 0f
         view.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(180)
             .setInterpolator(DecelerateInterpolator()).start()
+    }
+
+    /** 纯色圆角底（R137 工具条浮层 / badge 共用）。 */
+    fun roundedRect(context: Context, color: Int, radiusDp: Int): GradientDrawable = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(context, radiusDp).toFloat()
+    }
+
+    /** 触摸涟漪背景：淡色圆角/圆底 + 限定形状的涟漪（R137 投屏按钮）。 */
+    fun ripple(context: Context, radiusDp: Int, circle: Boolean = false): RippleDrawable {
+        val base = GradientDrawable().apply {
+            setColor(BUTTON_BG)
+            if (circle) shape = GradientDrawable.OVAL
+            else cornerRadius = dp(context, radiusDp).toFloat()
+        }
+        val mask = GradientDrawable().apply {
+            setColor(0xFFFFFFFF.toInt())
+            if (circle) shape = GradientDrawable.OVAL
+            else cornerRadius = dp(context, radiusDp).toFloat()
+        }
+        return RippleDrawable(ColorStateList.valueOf(RIPPLE_TINT), base, mask)
     }
 
     /** 统一标题栏：标题（可作拖拽把手）+ ✕ 关闭。高度由调用方用 HEADER_DP 控制。 */
