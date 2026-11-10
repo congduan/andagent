@@ -1,6 +1,6 @@
 # andagent 推进事项清单（ROADMAP-TODO）
 
-> 当前状态：版本 **0.31.0 / code 60**，v0.31.0 = R123 ESP32 烧录器（①核心 efb72cc + ②ELF 自动转换/CHANGE_BAUDRATE 257d767 + 收口 d3a4f3f），2026-11-10。
+> 当前状态：版本 **0.31.0 / code 60**，v0.31.0 = R123 ESP32 烧录器（①核心 efb72cc + ②ELF 自动转换/CHANGE_BAUDRATE 257d767 + 收口 d3a4f3f），2026-11-10。R139 相机预览旋转修复链收口：R139c 生命周期竞态修复 fad80e2（2026-11-11，Codex 三轮 review 后 APPROVE）。
 
 > 单一事实源：每项完成打 ✅ 并附 commit；新需求追加到对应优先级区。
 > 状态：TODO / DOING / ✅ / BLOCKED(原因)
@@ -8,6 +8,7 @@
 
 ## 🔴 P0 — 用户已报问题/半成品收尾
 
+- ✅ R139 相机浮窗预览旋转修复链（真机「画面转 90°/180°」三连）：R139 bc85e73（buffer 方向驱动）→ R139b 70723ec（唯一权威公式 cameraPreviewRotationDegrees + HAL 预旋转指纹 halPreRotates，sensor 代 0）→ **R139c fad80e2（2026-11-11 本轮收口：open/close 生命周期竞态）**——openRequestSeq 改单调递增令牌永不清零（closeCamera 不再触碰令牌：修「开启任务清掉自己的请求→旋屏漏重选 buffer 尺寸」与「旧纹理关闭任务误杀新请求」两竞态）、onSurfaceTextureDestroyed/onDestroy 主线程同步 invalidate、openCamera 前双复查令牌；CameraPreviewGeometryTest 重做为公式等价四象限断言 10/10；JVM 990 tests 0 failures + assembleDebug 绿；Codex review 三轮（2 必修→1 必修→APPROVE）。真机待测：前后摄旋屏 0/90/180/270 四向、快速开关浮窗、销毁后无幽灵相机。
 - ✅ 启动模型配置入口：首次启动引导、聊天顶部 / 未配置提示 / 设置入口，服务商预设、模型列表、工具调用测试、手动保存、无 Key 本地服务及中英文文案。代码在库（`web/src/ModelSetup.tsx`、`web/src/App.onboarding.test.tsx`，配置项后由 bf14e6e 并入共享设置头部）；无独立功能 commit 号可引。
 
 | # | 事项 | 状态 | 备注 |
