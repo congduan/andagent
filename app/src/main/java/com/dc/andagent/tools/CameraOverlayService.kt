@@ -122,8 +122,6 @@ class CameraOverlayService : Service() {
     private var dragHelper: FloatingDragHelper? = null
     private var bufferWidth = 0
     private var bufferHeight = 0
-    /** R139：选中 buffer 与视图方向不同向（需转 90° 补偿）。 */
-    @Volatile private var bufferNeedsTranspose = true
     private var sensorOrientation = 90
     private val rotationListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = Unit
@@ -210,10 +208,7 @@ class CameraOverlayService : Service() {
         val view = texture ?: return
         if (!view.isAvailable || view.width <= 0 || view.height <= 0 || bufferWidth <= 0 || bufferHeight <= 0) return
         val front = spec.camera == "front"
-        val rotation = if (bufferNeedsTranspose) {
-            // 转置 buffer：后置转 90；前置转 270（配合镜像语义与 Camera2Basic 一致）
-            if (front) 270 else 90
-        } else 0
+        val rotation = previewRotationForBuffer(bufferWidth, bufferHeight, view.width, view.height, sensorOrientation, front)
         val transform = previewTransform(view.width, view.height, bufferWidth, bufferHeight,
             rotation, 0, front)
         view.setTransform(android.graphics.Matrix().apply { setValues(transform.values) })
@@ -343,8 +338,8 @@ class CameraOverlayService : Service() {
                 // sensor/display 公式——现代设备的 StreamConfigurationMap 对
                 // SurfaceTexture 直接列出 w<h 的竖向条目（已含 90° 补偿），此时再转
                 // 90° 就多转（真机「画面转了 90 度」实锤）。横 buffer（w>h）配竖 view
-                // 才需要转 90；同向 buffer 转 0。
-                bufferNeedsTranspose = (bufferWidth > bufferHeight) != (width > height)
+                // 才需要转 90；同向 buffer 转 0。旋转角在 reapplyPreviewTransform 经
+                // previewRotationForBuffer 由实际 buffer/view 尺寸与 sensorOrientation 现算。
                 main.post { reapplyPreviewTransform() }
                 val surface = Surface(surfaceTexture)
                 previewSurface = surface

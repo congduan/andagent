@@ -99,4 +99,41 @@ class CameraPreviewGeometryTest {
             assertEquals(150f, center.second, 0.001f)
         }
     }
+
+    /** R139：需转置（buffer 方向 ≠ 视图方向）时旋转角取 sensorOrientation，back/front 同式。 */
+    @Test fun transposedBufferRotatesBySensorOrientationForBothLenses() {
+        // 横 buffer(1280x720) + 竖 view(300x400) + sensor90 back → 90
+        assertEquals(90, previewRotationForBuffer(1280, 720, 300, 400, 90, false))
+        assertEquals(90, previewRotationForBuffer(1280, 720, 300, 400, 90, true))
+        // 前置 sensor270 + 需转置 → 270；back/front 同式
+        assertEquals(270, previewRotationForBuffer(1280, 720, 300, 400, 270, true))
+        assertEquals(270, previewRotationForBuffer(1280, 720, 300, 400, 270, false))
+    }
+
+    /** R139 核心回归：前置 sensor=90 不再被硬编码成 270（旧代码 front 恒转 270 会颠倒 180°）。 */
+    @Test fun frontSensorNinetyRegressesToNinetyNotTwoSeventy() {
+        assertEquals(90, previewRotationForBuffer(1280, 720, 300, 400, 90, true))
+        // 竖 buffer(720x1280) + 横 view(400x300) 同样需转置
+        assertEquals(90, previewRotationForBuffer(720, 1280, 400, 300, 90, true))
+    }
+
+    /** 同向 buffer（现代设备的竖向条目）转 0，不再死套公式多转 90。 */
+    @Test fun alignedBufferDoesNotRotate() {
+        // 竖 buffer(720x1280) + 竖 view → 0
+        assertEquals(0, previewRotationForBuffer(720, 1280, 300, 400, 90, false))
+        // 横 buffer + 横 view → 0
+        assertEquals(0, previewRotationForBuffer(1280, 720, 400, 300, 90, false))
+        assertEquals(0, previewRotationForBuffer(720, 1280, 300, 400, 270, true))
+    }
+
+    /** 越界 sensor 经 %360 收敛（450→90、-270→90）；非正尺寸容错返回 0 且不抛。 */
+    @Test fun outOfRangeSensorClampsAndNonPositiveDimensionsReturnZero() {
+        assertEquals(90, previewRotationForBuffer(1280, 720, 300, 400, 450, false))
+        assertEquals(90, previewRotationForBuffer(1280, 720, 300, 400, -270, true))
+        assertEquals(0, previewRotationForBuffer(0, 720, 300, 400, 90, false))
+        assertEquals(0, previewRotationForBuffer(1280, 0, 300, 400, 90, false))
+        assertEquals(0, previewRotationForBuffer(1280, 720, 0, 400, 90, false))
+        assertEquals(0, previewRotationForBuffer(1280, 720, 300, 0, 90, false))
+        assertEquals(0, previewRotationForBuffer(-1, -1, 300, 400, 90, true))
+    }
 }
