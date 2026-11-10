@@ -103,11 +103,23 @@ object AdbScrcpyToolSpec {
     fun validateTarget(target: String?): String? =
         if (target.isNullOrBlank()) "ERROR: 缺少 target" else null
 
-    /** `ls -l` 输出判定 server jar 是否已在目标机（对齐 AdbScrcpySession.serverExists）。 */
+    /** scrcpy 2.7 server jar 最小合理体积（官方 release 71200B；留余量防 OEM 差异）。 */
+    const val SERVER_JAR_MIN_BYTES = 60_000
+
+    /**
+     * `ls -l` 输出判定 server jar 是否已在目标机且大小合理（R133：真实机案例——
+     * 0 字节残 jar 让「存在即跳过推送」放行 → server ClassNotFound 崩溃。现在要求
+     * ls -l 行含 andagent-scrcpy-server 且 size 字段 ≥ [SERVER_JAR_MIN_BYTES]）。
+     */
     fun serverPresent(lsOutput: String): Boolean =
         !lsOutput.startsWith("ERROR") &&
-            lsOutput.lineSequence().any {
-                it.trimStart().startsWith("-") && it.contains("andagent-scrcpy-server")
+            lsOutput.lineSequence().any { line ->
+                val t = line.trimStart()
+                if (!t.startsWith("-") || !t.contains("andagent-scrcpy-server")) return@any false
+                // ls -l: perms links owner group size date... name → size 是第 5 列
+                val cols = t.split(Regex("\\s+"))
+                val size = cols.getOrNull(4)?.toLongOrNull() ?: return@any false
+                size >= SERVER_JAR_MIN_BYTES
             }
 
     /**
@@ -125,7 +137,10 @@ object AdbScrcpyToolSpec {
             cmds += "printf %s '${base64.substring(off, end)}' >> $B64_TMP"
             off = end
         }
-        cmds += "base64 -d $B64_TMP > ${AdbScrcpy.SERVER_JAR_PATH} && rm -f $B64_TMP"
+        // R133：toybox base64 -d 对超长单行会中途截断（荣耀真机实锤：142KB 的无换行
+        // b64 只解出 97KB → ClassNotFound）。fold -w 76 先折行再解码规避该缺陷
+        // （toybox fold 支持 -w，Android 13 实测有 fold）。
+        cmds += "fold -w 76 $B64_TMP | base64 -d > ${AdbScrcpy.SERVER_JAR_PATH} && rm -f $B64_TMP"
         return cmds
     }
 

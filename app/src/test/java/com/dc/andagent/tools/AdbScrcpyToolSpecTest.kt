@@ -63,6 +63,13 @@ class AdbScrcpyToolSpecTest {
         assertFalse(AdbScrcpyToolSpec.serverPresent("ls: /data/local/tmp/...: No such file or directory"))
         assertFalse(AdbScrcpyToolSpec.serverPresent("ERROR: ADB shell 执行失败"))
         assertFalse(AdbScrcpyToolSpec.serverPresent("(空)"))
+        // R133：0 字节残 jar 必须视为不存在（真机案例：坏 jar 放行 → ClassNotFound）
+        assertFalse(
+            "0 字节残 jar 不算存在",
+            AdbScrcpyToolSpec.serverPresent(
+                "-rw-rw-rw- 1 shell shell 0 2026-11-09 22:44 andagent-scrcpy-server-v2.7.jar\n",
+            ),
+        )
     }
 
     @Test
