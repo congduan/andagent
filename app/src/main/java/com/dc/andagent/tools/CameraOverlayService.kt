@@ -166,8 +166,16 @@ class CameraOverlayService : Service() {
             intent?.getIntExtra("x", fallback.x) ?: fallback.x,
             intent?.getIntExtra("y", fallback.y) ?: fallback.y,
         ) }.getOrElse { fail(it.message ?: "参数无效"); return START_NOT_STICKY }
-        val cameraChanged = requested.camera != spec.camera
-        spec = requested
+        // R138：请求宽高 clamp 到屏幕物理范围（90% 屏宽/高），AI 传大参数不再溢出屏幕。
+        val dmClamp = resources.displayMetrics
+        val maxWdp = (dmClamp.widthPixels / dmClamp.density).toInt() * 90 / 100
+        val maxHdp = (dmClamp.heightPixels / dmClamp.density).toInt() * 90 / 100
+        val clamped = requested.copy(
+            widthDp = requested.widthDp.coerceAtMost(maxWdp),
+            heightDp = requested.heightDp.coerceAtMost(maxHdp),
+        )
+        val cameraChanged = clamped.camera != spec.camera
+        spec = clamped
         runCatching {
             if (inApp) {
                 // 应用内模式：TextureView 挂到宿主 content（decorView 叠加），不经 WindowManager。
