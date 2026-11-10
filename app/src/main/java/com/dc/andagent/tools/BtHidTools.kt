@@ -43,7 +43,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * API<28：直接在 [BtHidTool.execute] 返回明确的 unsupported，不触碰任何 API 28 类。
  */
-val BT_HID_TOOLS = listOf("bt_hid_register", "bt_hid_send", "bt_hid_unregister")
+val BT_HID_TOOLS = listOf("bt_hid_register", "bt_hid_status", "bt_hid_send", "bt_hid_unregister")
 
 /**
  * 三个工具实例共享的进程内单例。字段刻意只用低版本就存在的类型（BluetoothProfile /
@@ -92,6 +92,8 @@ class BtHidTool(private val context: Context, override val name: String) : Tool 
             "向已连接本机 HID 服务的目标设备注入输入报告（BluetoothHidDevice.sendReport）。target 填已配对设备的 MAC 或名称（模糊匹配）；type=key|key_down|key_up|text|mouse_move|mouse_click：key 按下后立即释放，key_down/key_up 分离按下与释放（key_up 发全零释放报告），text 逐字符按 HID Usage ID 键入（仅 ASCII，中文/emoji 会被拒绝），mouse_move 用相对位移 dx/dy(-127..127) 与 wheel，mouse_click=按键按下+释放两次报告。keycode 是 HID Keyboard/Keypad Usage ID（0x04-0xDF，如 a=0x04、Enter=0x28、方向键 0x4F-0x52、F1-F12=0x3A-0x45，报告字段 1 字节 0..255）；modifiers 为逗号分隔 ctrl/shift/alt/gui（及 rctrl/rshift/ralt/rgui 右修饰键）。发送前检查 getConnectionState/getConnectedDevices，未连接返回明确错误，不虚报成功。iOS/Windows/macOS 对 combo 报告兼容性不一，连上但无输入时可在对端蓝牙设置里选择「输入设备」用途。破坏性：改变目标设备输入状态。"
         "bt_hid_unregister" ->
             "注销本机蓝牙 HID 设备注册（BluetoothHidDevice.unregisterApp），断开当前 HID 连接并恢复本机 HID host 角色。未注册时如实说明。"
+        "bt_hid_status" ->
+            "查询蓝牙 HID 设备当前状态：proxy 绑定、SDP 注册（onAppStatusChanged 确认）、模式、已连接的 HID host 列表。bt_hid_register 返回「注册中」后用本工具确认结果。无参数。"
         else -> "蓝牙 HID 设备工具"
     }
 
@@ -113,6 +115,7 @@ class BtHidTool(private val context: Context, override val name: String) : Tool 
             required = listOf("target", "type"),
         )
         "bt_hid_unregister" -> schemaOf()
+        "bt_hid_status" -> schemaOf()
         else -> schemaOf()
     }
 
@@ -135,6 +138,73 @@ private object BtHidRuntime {
     // API 26/27 隔离边界是 BtHidTool.execute 的 SDK_INT>=28 检查——检查通过才进入本 object。
     @Volatile private var callbackRef: Any? = null
 
+    /** R135：proxy 晚到场景的待提交参数（bt_hid_status/send 惰性触发真正提交）。 */
+    private data class PendingSubmit(
+        val hid: android.bluetooth.BluetoothHidDevice,
+        val adapter: android.bluetooth.BluetoothAdapter,
+        val sdpName: String,
+        val mode: String,
+        val descriptor: ByteArray,
+        val gen: Long,
+    )
+    @Volatile private var pendingSubmit: PendingSubmit? = null
+
+    /**
+     * R135：确保 pendingSubmit 已真正提交 registerApp（惰性触发）。提交后等
+     * onAppStatusChanged 确认（短等待），成功返回 null，失败返回错误文案。
+     */
+    private fun ensureSubmitted(): String? {
+        val pending = pendingSubmit ?: return null
+        if (BtHidRegistry.registered) { pendingSubmit = null; return null }
+        val sdp = BluetoothHidDeviceAppSdpSettings(
+            pending.sdpName,
+            "AndAgent Bluetooth HID (${pending.mode})",
+            "AndAgent",
+            when (pending.mode) {
+                "keyboard" -> BluetoothHidDevice.SUBCLASS1_KEYBOARD
+                "mouse" -> BluetoothHidDevice.SUBCLASS1_MOUSE
+                else -> BluetoothHidDevice.SUBCLASS1_COMBO
+            },
+            pending.descriptor,
+        )
+        val qos = BluetoothHidDeviceAppQosSettings(
+            BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT,
+            800, 9, 0, 11250, BluetoothHidDeviceAppQosSettings.MAX,
+        )
+        val latch = CountDownLatch(1)
+        val ok = AtomicBoolean(false)
+        val cb = object : BluetoothHidDevice.Callback() {
+            override fun onAppStatusChanged(pluggedDevice: android.bluetooth.BluetoothDevice?, registered: Boolean) {
+                if (pending.gen != BtHidRegistry.generation) return
+                ok.set(registered)
+                BtHidRegistry.registered = registered
+                latch.countDown()
+            }
+            override fun onConnectionStateChanged(device: android.bluetooth.BluetoothDevice?, state: Int) {
+                if (pending.gen != BtHidRegistry.generation) return
+                if (device == null) return
+                if (state == BluetoothProfile.STATE_CONNECTED) BtHidRegistry.onConnected(device)
+                else if (state == BluetoothProfile.STATE_DISCONNECTED) BtHidRegistry.onDisconnected(device)
+            }
+            override fun onVirtualCableUnplug(device: android.bluetooth.BluetoothDevice?) {
+                if (pending.gen != BtHidRegistry.generation) return
+                device?.let { BtHidRegistry.onDisconnected(it) }
+            }
+        }
+        val accepted = runCatching { pending.hid.registerApp(sdp, null, qos, executor, cb) }.getOrDefault(false)
+        if (!accepted) {
+            pendingSubmit = null
+            return "registerApp 被系统拒绝（蓝牙栈未就绪或 HID device 角色被占用）"
+        }
+        latch.await(8, TimeUnit.SECONDS)
+        if (!ok.get()) {
+            return "registerApp 已提交但系统尚未确认（onAppStatusChanged 未到）；稍后再 bt_hid_status 查询"
+        }
+        pendingSubmit = null
+        callbackRef = cb
+        return null
+    }
+
     /** 本轮局部 proxy holder（必修 4）：listener.onServiceConnected 即便在 register
      *  超时返回后仍把迟到的 proxy 写进来，由迟到回调凭代际检查自行 close。 */
     private class ProxyHolder {
@@ -147,6 +217,7 @@ private object BtHidRuntime {
         synchronized(lifecycleLock) {
             when (name) {
                 "bt_hid_register" -> register(context, args)
+                "bt_hid_status" -> status()
                 "bt_hid_send" -> send(args)
                 "bt_hid_unregister" -> unregister()
                 else -> "ERROR: 未知工具 $name"
@@ -262,27 +333,29 @@ private object BtHidRuntime {
         }
         // R134：6s 超时对 Android 14+ 的模块化蓝牙栈偏紧（服务懒加载 + 后台限制
         // 后首次绑定常超 6s，Android 17/ColorOS 真机实证）。放宽到 15s。
-        if (!proxyLatch.await(15, TimeUnit.SECONDS)) {
-            // 超时：本轮作废并自增代际；迟到的 onServiceConnected 会凭 gen 不匹配自行 close
-            // 那个 proxy（必修 4c）。Codex review 必修 2：存在边界竞态——回调恰在 await 返回
-            // 超时前后写入 holder 并通过代际检查但尚未 countDown（或 countDown 与超时判定
-            // 交错），此时迟到 close 不会发生、abandonRound 也不管 proxy → Binder 泄漏。
-            // 兜底：abandonRound 后复查 holder，仍有 proxy 就用本轮局部 adapter 显式 close
-            // （与 onServiceConnected 的 close 幂等：closeProfileProxy 对同一实例重复调用安全）。
-            // R134b：第二轮等待（再 15s）——Android 14+ 蓝牙服务懒加载/后台限流下
-            // 首个 15s 不够的案例存在；迟到回调凭 gen 检查仍会写入 holder 并 countDown
-            // （此时 latch 已归零无妨，直接检查 holder）。第二轮仍空才真正放弃。
-            if (!proxyLatch.await(15, TimeUnit.SECONDS) && holder.proxy == null) {
-                abandonRound()
-                holder.proxy?.let {
-                    runCatching { adapter.closeProfileProxy(BluetoothProfile.HID_DEVICE, it) }
-                }
-                return "ERROR: 获取 BluetoothHidDevice proxy 超时（30s）——请保持 AndAgent 在前台、重启手机蓝牙后重试一次；若仍超时，重启手机后试"
+        // R135 混合异步：蓝牙栈绑定慢（Android 14+ 懒加载/后台限流，真机 30s+ 案例）
+        // 不再算失败。绑定完成前返回 PENDING；后台任务等 proxy 到达后自动完成注册。
+        // listener 保持存活（gen 不作废），迟到回调会写入 holder 并触发后台提交。
+        if (!proxyLatch.await(3, TimeUnit.SECONDS) && holder.proxy == null) {
+            executor.execute {
+                // 后台等绑定完成（最长 60s；getProfileProxy 慢但几乎总会到）。
+                // proxy 到达：写入 registry + 记录待提交参数；registerApp 的实际提交
+                // 由 bt_hid_status/bt_hid_send 的惰性检查触发（见 ensureSubmitted()）。
+                val got = proxyLatch.await(60, TimeUnit.SECONDS)
+                if (!got || gen != BtHidRegistry.generation) return@execute
+                val hidLate = holder.proxy as? BluetoothHidDevice ?: return@execute
+                runCatching { hidLate.getConnectedDevices().forEach { BtHidRegistry.onConnected(it) } }
+                BtHidRegistry.proxy = hidLate
+                BtHidRegistry.adapter = adapter
+                BtHidRegistry.mode = mode
+                BtHidRegistry.sdpName = sdpName
+                pendingSubmit = PendingSubmit(hidLate, adapter, sdpName, mode, descriptor, gen)
             }
-            // 第二轮期间迟到回调已写入 holder（gen 校验在回调内已放行本轮）
-            holder.proxy?.let { proxy ->
-                if (gen == BtHidRegistry.generation) proxyLatch.countDown()
-            }
+            return buildJsonObject {
+                put("status", "PENDING")
+                put("action", "register")
+                put("note", "蓝牙栈正在绑定 HID device 服务（Android 14+ 首次绑定可能需要 30-60 秒）。绑定完成后会自动完成注册——用 bt_hid_status 查询结果，status 返回 registered=true 即可用 bt_hid_send。保持 AndAgent 在前台可加速绑定。")
+            }.toString()
         }
         // 本轮 proxy 全程由局部 holder 持有，绝不先写 BtHidRegistry。
         val hid = holder.proxy as? BluetoothHidDevice
@@ -372,15 +445,27 @@ private object BtHidRuntime {
             abandonRound()
             return "ERROR: registerApp 被系统拒绝（蓝牙栈未就绪、权限不足或已有其他 App 占用 HID device 角色）"
         }
+        // R135：registerApp 被接受 = proxy 可用 + 提交完成。onAppStatusChanged 的
+        // registered=true 由回调异步置位（appRegistered），不再阻塞等待——5s 内未确认
+        // 也返回 OK（附 pending 提示），send/status 会以真实 registry 状态为准。
         val confirmed = appLatch.await(5, TimeUnit.SECONDS)
         if (!confirmed || !appRegistered.get()) {
-            runCatching { hid.unregisterApp() }
-            runCatching { adapter.closeProfileProxy(BluetoothProfile.HID_DEVICE, hid) }
-            abandonRound()
-            return "ERROR: HID 应用注册未完成（onAppStatusChanged 未确认 registered=true）；请确认蓝牙已开启且本机支持 HID device 角色后重试"
+            runCatching { hid.getConnectedDevices().forEach { BtHidRegistry.onConnected(it) } }
+            BtHidRegistry.proxy = hid
+            BtHidRegistry.adapter = adapter
+            BtHidRegistry.mode = mode
+            BtHidRegistry.sdpName = sdpName
+            return buildJsonObject {
+                put("status", "PENDING")
+                put("action", "register")
+                put("name", sdpName)
+                put("mode", mode)
+                put("registered", false)
+                put("note", "registerApp 已提交，等待系统确认（onAppStatusChanged）。用 bt_hid_status 查询；若长时间 registered=false，重启蓝牙后重新 bt_hid_register。")
+            }.toString()
         }
 
-        // 成功：才把本轮 adapter/proxy 写入 registry（必修 4）。
+        // 确认成功：写入 registry（必修 4：本轮 adapter/proxy 进 registry）。
         runCatching { hid.getConnectedDevices().forEach { BtHidRegistry.onConnected(it) } }
         BtHidRegistry.proxy = hid
         BtHidRegistry.adapter = adapter
@@ -402,6 +487,26 @@ private object BtHidRuntime {
             )
         }.toString()
     }
+
+    /* ------------------------------ status ------------------------------ */
+
+    /** R135：bt_hid_status——proxy/注册/连接全景，register PENDING 后的确认入口。 */
+    private fun status(): String = buildJsonObject {
+        ensureSubmitted()?.let { put("submitError", it) }
+        val hid = BtHidRegistry.proxy as? BluetoothHidDevice
+        put("proxyBound", hid != null)
+        put("registered", BtHidRegistry.registered)
+        put("mode", BtHidRegistry.mode ?: "")
+        put("sdpName", BtHidRegistry.sdpName ?: "")
+        val connected = if (hid != null) runCatching { hid.getConnectedDevices() }.getOrDefault(emptyList()) else emptyList()
+        put("connectedHosts", connected.joinToString(", ") { it.address + "(" + (it.name ?: "?") + ")" })
+        put("note", when {
+            hid == null -> "未绑定：蓝牙栈 proxy 不可用（未注册或绑定失败）——bt_hid_register 重新发起"
+            !BtHidRegistry.registered -> "proxy 已绑定但 SDP 注册未被系统确认（onAppStatusChanged 未到）；保持 AndAgent 在前台稍候，超过 1 分钟仍 false 则重启蓝牙重新 register"
+            connected.isEmpty() -> "注册完成：请在目标设备的系统蓝牙里连接本机 HID 服务（Android 作为 HID device 通常由目标发起），连接后即可 bt_hid_send"
+            else -> "就绪：可 bt_hid_send（target 填已连接的 host）"
+        })
+    }.toString()
 
     /* ------------------------------ unregister ---------------------------- */
 
@@ -428,8 +533,18 @@ private object BtHidRuntime {
         }
         val target = args.strArg("target") ?: return "ERROR: 缺少 target"
 
-        val hid = BtHidRegistry.proxy as? BluetoothHidDevice
-            ?: return "ERROR: 尚未注册蓝牙 HID 设备：先 bt_hid_register(name, mode)"
+        // R135：proxy 未绑定时惰性等待 20s（register PENDING 后台提交可能刚好完成）
+        ensureSubmitted()?.let { return "ERROR: HID 注册未完成：$it（bt_hid_status 查询状态）" }
+        val hid0 = BtHidRegistry.proxy as? BluetoothHidDevice
+            ?: run {
+                val deadline = System.currentTimeMillis() + 20_000
+                while (BtHidRegistry.proxy == null && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(500)
+                }
+                ensureSubmitted()
+                BtHidRegistry.proxy as? BluetoothHidDevice
+            }
+        val hid = hid0 ?: return "ERROR: 尚未注册蓝牙 HID 设备：先 bt_hid_register(name, mode)；若刚执行过 register 且返回 PENDING，用 bt_hid_status 查询结果"
         if (!BtHidRegistry.registered) {
             return "ERROR: HID 应用未注册完成（onAppStatusChanged 未确认），请重新 bt_hid_register"
         }
