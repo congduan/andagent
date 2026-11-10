@@ -116,17 +116,41 @@ class CameraOverlayService : Service() {
     @Volatile private var spec = CameraOverlaySpec("back", 480, 360, 0, 80)
     internal fun specSnapshot(): CameraOverlaySpec = spec
     private var device: CameraDevice? = null
+    /** R139b review 必修②（四轮 review 重设计）：相机开启请求令牌——单调递增永不清零，主线程
+     *  是唯一写者（openWhenReady 通过校验后 +1；主线程同步失效点 +1），@Volatile 保跨线程可见，
+     *  相机线程读。open 任务执行前比对入队时快照，不一致即任务已过期（三轮 review：布尔
+     *  wantCamera 无法区分新旧请求序）。失效只发生在主线程（onSurfaceTextureDestroyed /
+     *  onDestroy 同步 invalidate），closeCamera 不再触碰令牌——避免「开启任务清掉自己的请求」
+     *  （旋屏误走只更新矩阵分支）与「旧纹理关闭任务误杀新请求」两类竞态（Codex 四轮必修 1/2）。
+     *  单调递增避免清零后令牌复用误判。≠0 表示有在途或已生效的开启请求（旋屏重开判定用）。 */
+    @Volatile private var openRequestSeq = 0
+
+    /** 主线程同步失效当前相机开启请求（surface 销毁/服务销毁时调用；令牌只增不清，过期任务
+     *  在相机线程按快照比对自行作废）。 */
+    private fun invalidateOpenRequest() { openRequestSeq++ }
     private var session: CameraCaptureSession? = null
     private var previewSurface: Surface? = null
     private var generation = 0
     private var dragHelper: FloatingDragHelper? = null
     private var bufferWidth = 0
     private var bufferHeight = 0
-    private var sensorOrientation = 90
+    @Volatile private var sensorOrientation = 90
+    /** R139b：HAL 对 SurfaceTexture 是否已烤入 sensor 补偿（尺寸表含竖向条目），open 时在相机线程判定。 */
+    @Volatile private var halPreRotates = false
     private val rotationListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = Unit
         override fun onDisplayRemoved(displayId: Int) = Unit
-        override fun onDisplayChanged(displayId: Int) { if (displayId == android.view.Display.DEFAULT_DISPLAY) main.post { reapplyPreviewTransform() } }
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId == android.view.Display.DEFAULT_DISPLAY) main.post {
+                // R139b：屏幕方向变化时 buffer 尺寸也要随有效旋转角重选（review 必修④——只重算
+                // 渲染矩阵会留下「旧方向选的尺寸 × 新方向的矩阵」比例失配）。重开判定只读
+                // @Volatile openRequestSeq（三轮 review 必修：device 由相机线程写，主线程裸读无
+                // 同步保证；≠0 即有在途/已生效开启请求，旋屏要重选 buffer）。openWhenReady 全程
+                // 留在主线程（TextureView 读取不跨线程），相机侧动作由其内部单次投递到相机线程，
+                // 消除「旋转任务→再投开启任务」双重排队时序竞态。
+                if (openRequestSeq != 0) openWhenReady() else reapplyPreviewTransform()
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -207,10 +231,12 @@ class CameraOverlayService : Service() {
     private fun reapplyPreviewTransform() {
         val view = texture ?: return
         if (!view.isAvailable || view.width <= 0 || view.height <= 0 || bufferWidth <= 0 || bufferHeight <= 0) return
-        val front = spec.camera == "front"
-        val rotation = previewRotationForBuffer(bufferWidth, bufferHeight, view.width, view.height, sensorOrientation, front)
+        // R139b：halPreRotates 由尺寸表指纹在相机线程算出（含竖向条目 = HAL 已烤入 sensor 补偿）；
+        // 旋转角 = 唯一权威公式 cameraPreviewRotationDegrees（display 实时读，横竖屏/倒屏都补偿）。
+        val rotation = previewRotationForBuffer(displayRotationDegrees(), sensorOrientation,
+            spec.camera == "front", halPreRotates)
         val transform = previewTransform(view.width, view.height, bufferWidth, bufferHeight,
-            rotation, 0, front)
+            rotation, 0, spec.camera == "front")
         view.setTransform(android.graphics.Matrix().apply { setValues(transform.values) })
     }
 
@@ -296,7 +322,14 @@ class CameraOverlayService : Service() {
     private fun previewListener() = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) { reapplyPreviewTransform(); openWhenReady() }
         override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) { reapplyPreviewTransform(); openWhenReady() }
-        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean { cameraHandler.post { closeCamera() }; return true }
+        override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+            // 四轮 review 必修②：失效必须在主线程同步完成（本回调就在主线程）——若放进相机线程
+            // 的 close 任务，销毁与关闭之间登记的新开启请求会被误杀（close 任务不再触碰令牌，
+            // 这里先 ++ 让在途/后续匹配旧令牌的开启任务全部过期，再投递纯资源释放）。
+            invalidateOpenRequest()
+            cameraHandler.post { closeCamera() }
+            return true
+        }
         override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
     }
 
@@ -311,38 +344,53 @@ class CameraOverlayService : Service() {
         val surfaceTexture = view.surfaceTexture ?: return
         val width = view.width.coerceAtLeast(1); val height = view.height.coerceAtLeast(1)
         val camera = spec.camera
+        // 请求序号在主线程置位（TextureView 校验通过 = 确实想开相机）；相机线程任务执行前比对
+        // 入队时快照，序号变了即任务已过期（三轮 review：布尔无法区分新旧请求序）。
+        val myRequest = ++openRequestSeq
         cameraHandler.post {
             runCatching {
+                // R139b 二/三轮 review 必修：投递后若令牌已推进（surface 销毁在主线程同步失效、
+                // 或主线程已登记新请求），快照不匹配——过期开启任务在此作废，不在已销毁纹理上
+                // 重开相机。closeCamera 不改令牌，所以本任务不会被自己取消（四轮 review 必修 1）。
+                if (openRequestSeq != myRequest) return@runCatching
+                // R139b review 必修①：closeCamera 会递增 generation 使旧回调全部过期——本次开启的
+                // 令牌必须在 closeCamera 之后取号，否则 onOpened 里 token != generation 恒成立、
+                // 相机一打开就被判过期关闭（预览永远起不来）。generation 只在相机线程读写，
+                // myGen 捕获进闭包，无跨线程竞态。
                 closeCamera()
-                val token = generation
+                val myGen = ++generation
+                val token = myGen
                 val manager = getSystemService(CameraManager::class.java)
                 val facing = if (camera == "front") CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
                 val id = manager.cameraIdList.firstOrNull { manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) == facing }
                     ?: error("设备没有${if (camera == "front") "前" else "后"}置摄像头")
                 val sizes = manager.getCameraCharacteristics(id).get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(SurfaceTexture::class.java)
-                // 传感器旋转补偿：90/270 时缓冲以转置方向显示，按转置后的视图比例匹配
-                // （防预览拉伸变形），同比值的候选里再取面积最接近的。
-                val rotation = cameraPreviewRotationDegrees(
-                    displayRotationDegrees(),
-                    manager.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90,
-                    camera == "front",
-                )
+                val sensor = manager.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
                 val viewRatio = width.toDouble() / height
-                val targetRatio = if (rotation == 90 || rotation == 270) 1.0 / viewRatio else viewRatio
+                // R139b：有效旋转角——尺寸选择与 reapplyPreviewTransform 渲染共用同一值（review 必修①：
+                // 两处不一致会导致偏选横向条目而渲染按 0° 处理，明显裁切）。pre-rotated HAL（下方指纹
+                // 判定）= sensor 已烤入 buffer，公式代入 sensor=0（横竖屏/倒屏/前后摄全档保留补偿）。
+                val halPre = sizes?.isNotEmpty() == true && sizes.all { it.width < it.height }
+                val effectiveRotation = previewRotationForBuffer(
+                    displayRotationDegrees(), sensor, camera == "front", halPreRotates = halPre)
+                val targetRatio = if (effectiveRotation == 90 || effectiveRotation == 270) 1.0 / viewRatio else viewRatio
                 val size = sizes?.groupBy { kotlin.math.abs(it.width.toDouble() / it.height - targetRatio) }
                     ?.minByOrNull { it.key }?.value?.minByOrNull { kotlin.math.abs(it.width.toLong() * it.height - width.toLong() * height) }
                 bufferWidth = size?.width ?: width; bufferHeight = size?.height ?: height
-                sensorOrientation = manager.getCameraCharacteristics(id).get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 90
+                sensorOrientation = sensor
+                // R139b：HAL 预旋转指纹——全部 SurfaceTexture 条目均竖向(w<h)才判定 HAL 已烤入 sensor
+                // 补偿（真机实锤：modern device 尺寸表无横条目；全横表=传统设备，沿用 R139 前验证过的
+                // 完整 sensor/display 公式）。all 比 any 更保守：混列表按传统设备处理。诚实边界（Codex
+                // review）：混列表设备若 HAL 对竖向条目烤入了补偿，全公式会多转 90°（非「仅比例次优」）；
+                // 现无混列表真机证据，观察到的只有全竖/全横两种形态，先按保守处理并记录在案。
+                halPreRotates = halPre
                 surfaceTexture.setDefaultBufferSize(bufferWidth, bufferHeight)
-                // R139：旋转角由「实际选中 buffer 的方向 vs 视图方向」决定，而非死套
-                // sensor/display 公式——现代设备的 StreamConfigurationMap 对
-                // SurfaceTexture 直接列出 w<h 的竖向条目（已含 90° 补偿），此时再转
-                // 90° 就多转（真机「画面转了 90 度」实锤）。横 buffer（w>h）配竖 view
-                // 才需要转 90；同向 buffer 转 0。旋转角在 reapplyPreviewTransform 经
-                // previewRotationForBuffer 由实际 buffer/view 尺寸与 sensorOrientation 现算。
                 main.post { reapplyPreviewTransform() }
                 val surface = Surface(surfaceTexture)
                 previewSurface = surface
+                // 终审建议：openCamera 前最后复查令牌——覆盖全部准备工作期间的销毁/新请求窗口
+                // （漏网开启由后续 closeCamera + generation 校验最终过期）。
+                if (openRequestSeq != myRequest) return@runCatching
                 manager.openCamera(id, object : CameraDevice.StateCallback() {
                     override fun onOpened(cameraDevice: CameraDevice) {
                         if (token != generation) { cameraDevice.close(); return }
@@ -368,6 +416,10 @@ class CameraOverlayService : Service() {
         }
     }
 
+    /** 关闭相机并释放全部资源。四轮 review 重设计：closeCamera 不再触碰 openRequestSeq（令牌
+     *  失效统一由主线程 invalidateOpenRequest 完成）——修掉「开启任务清掉自己的请求」（旋屏
+     *  误走只更新矩阵分支、漏重选 buffer 尺寸）与「旧纹理关闭任务误杀新请求」两类竞态。
+     *  generation++ 让所有旧回调（onOpened/onConfigured/...）过期。仅在相机线程调用。 */
     private fun closeCamera() {
         generation++
         runCatching { session?.close() }; session = null
@@ -379,6 +431,9 @@ class CameraOverlayService : Service() {
     private fun fail(message: String) { lastError = message; stopSelf() }
 
     override fun onDestroy() {
+        // 二轮 review 必修：主线程同步失效在途开启请求（onDestroy 必在主线程）——不能依赖纹理
+        // 销毁回调一定先发生；否则已入队未执行的开启任务令牌仍匹配，会对已销毁服务 openCamera。
+        invalidateOpenRequest()
         // 应用内模式：清空宿主引用，防止相机挂在已销毁的 decorView 上继续运行。
         inAppContent = null
         root?.let { r ->

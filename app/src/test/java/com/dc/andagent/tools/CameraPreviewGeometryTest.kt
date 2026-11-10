@@ -100,40 +100,42 @@ class CameraPreviewGeometryTest {
         }
     }
 
-    /** R139：需转置（buffer 方向 ≠ 视图方向）时旋转角取 sensorOrientation，back/front 同式。 */
-    @Test fun transposedBufferRotatesBySensorOrientationForBothLenses() {
-        // 横 buffer(1280x720) + 竖 view(300x400) + sensor90 back → 90
-        assertEquals(90, previewRotationForBuffer(1280, 720, 300, 400, 90, false))
-        assertEquals(90, previewRotationForBuffer(1280, 720, 300, 400, 90, true))
-        // 前置 sensor270 + 需转置 → 270；back/front 同式
-        assertEquals(270, previewRotationForBuffer(1280, 720, 300, 400, 270, true))
-        assertEquals(270, previewRotationForBuffer(1280, 720, 300, 400, 270, false))
+    /** R139b：helper = 唯一权威公式 cameraPreviewRotationDegrees 的两种代入。
+     *  传统全横表设备(halPreRotates=false) = sensor/display 完整公式；pre-rotated HAL 设备
+     *  (halPreRotates=true) = sensor 代 0 的同一公式。四象限×前后摄全档断言。 */
+    @Test fun helperMirrorsCameraPreviewRotationDegreesForBothHalModes() {
+        for (sensor in intArrayOf(90, 270)) for (display in intArrayOf(0, 90, 180, 270)) for (front in booleanArrayOf(false, true)) {
+            assertEquals(
+                "raw-HAL device must equal legacy formula (display=$display front=$front)",
+                cameraPreviewRotationDegrees(display, sensor, front).toLong(),
+                previewRotationForBuffer(display, sensor, front, halPreRotates = false).toLong())
+            assertEquals(
+                "pre-rotated HAL must equal formula with sensor=0 (display=$display front=$front)",
+                cameraPreviewRotationDegrees(display, 0, front).toLong(),
+                previewRotationForBuffer(display, sensor, front, halPreRotates = true).toLong())
+        }
     }
 
-    /** R139 核心回归：前置 sensor=90 不再被硬编码成 270（旧代码 front 恒转 270 会颠倒 180°）。 */
-    @Test fun frontSensorNinetyRegressesToNinetyNotTwoSeventy() {
-        assertEquals(90, previewRotationForBuffer(1280, 720, 300, 400, 90, true))
-        // 竖 buffer(720x1280) + 横 view(400x300) 同样需转置
-        assertEquals(90, previewRotationForBuffer(720, 1280, 400, 300, 90, true))
+    /** R139 review 场景回归：pre-rotated HAL + 竖屏 display=0 → 旋转角 0（不再多转 90）。 */
+    @Test fun preroratedHalPortraitIsZeroRotation() {
+        assertEquals(0, previewRotationForBuffer(0, 90, front = false, halPreRotates = true))
+        assertEquals(0, previewRotationForBuffer(0, 270, front = true, halPreRotates = true))
     }
 
-    /** 同向 buffer（现代设备的竖向条目）转 0，不再死套公式多转 90。 */
-    @Test fun alignedBufferDoesNotRotate() {
-        // 竖 buffer(720x1280) + 竖 view → 0
-        assertEquals(0, previewRotationForBuffer(720, 1280, 300, 400, 90, false))
-        // 横 buffer + 横 view → 0
-        assertEquals(0, previewRotationForBuffer(1280, 720, 400, 300, 90, false))
-        assertEquals(0, previewRotationForBuffer(720, 1280, 300, 400, 270, true))
+    /** review 必修项回归：display 补偿在 pre-rotated HAL 上不丢——180° 倒屏两摄都有角度，横屏有 90/270。 */
+    @Test fun preroratedHalStillCompensatesDisplayRotation() {
+        assertEquals(180, previewRotationForBuffer(180, 90, front = false, halPreRotates = true))
+        assertEquals(180, previewRotationForBuffer(180, 270, front = true, halPreRotates = true))
+        assertEquals(270, previewRotationForBuffer(90, 90, front = false, halPreRotates = true))
+        assertEquals(90, previewRotationForBuffer(270, 90, front = false, halPreRotates = true))
+        // 前摄方向符号与 Camera2Basic 一致（+display，与后摄相反）
+        assertEquals(90, previewRotationForBuffer(90, 90, front = true, halPreRotates = true))
+        assertEquals(270, previewRotationForBuffer(270, 90, front = true, halPreRotates = true))
     }
 
-    /** 越界 sensor 经 %360 收敛（450→90、-270→90）；非正尺寸容错返回 0 且不抛。 */
-    @Test fun outOfRangeSensorClampsAndNonPositiveDimensionsReturnZero() {
-        assertEquals(90, previewRotationForBuffer(1280, 720, 300, 400, 450, false))
-        assertEquals(90, previewRotationForBuffer(1280, 720, 300, 400, -270, true))
-        assertEquals(0, previewRotationForBuffer(0, 720, 300, 400, 90, false))
-        assertEquals(0, previewRotationForBuffer(1280, 0, 300, 400, 90, false))
-        assertEquals(0, previewRotationForBuffer(1280, 720, 0, 400, 90, false))
-        assertEquals(0, previewRotationForBuffer(1280, 720, 300, 0, 90, false))
-        assertEquals(0, previewRotationForBuffer(-1, -1, 300, 400, 90, true))
+    /** 传统 raw-HAL 设备：横屏后摄 sensor90 display90 → 0（Camera2Basic 标准值，R139 前真机验证形态）。 */
+    @Test fun rawHalLandscapeBackCameraMatchesLegacyFormula() {
+        assertEquals(0, previewRotationForBuffer(90, 90, front = false, halPreRotates = false))
+        assertEquals(90, previewRotationForBuffer(0, 90, front = false, halPreRotates = false))
     }
 }

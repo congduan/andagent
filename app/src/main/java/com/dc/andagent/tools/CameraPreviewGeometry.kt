@@ -34,10 +34,10 @@ internal fun previewTransform(viewW: Int, viewH: Int, bufferW: Int, bufferH: Int
         d, e, viewH / 2f - d * viewW / 2f - e * viewH / 2f, 0f, 0f, 1f))
 }
 
-/** R139:SurfaceTexture buffer 自带方向(现代设备列竖向条目),旋转角由 buffer 方向 vs 视图方向决定,幅度方向取 sensor。 */
-internal fun previewRotationForBuffer(bufferW: Int, bufferH: Int, viewW: Int, viewH: Int, sensorOrientation: Int, front: Boolean): Int {
-    if (bufferW <= 0 || bufferH <= 0 || viewW <= 0 || viewH <= 0) return 0
-    val needsTranspose = (bufferW > bufferH) != (viewW > viewH)
-    if (!needsTranspose) return 0
-    return ((sensorOrientation % 360) + 360) % 360
-}
+/** R139b：旋转角唯一权威公式=Camera2Basic 的 cameraPreviewRotationDegrees。现代设备 HAL 对
+ *  SurfaceTexture 直接输出已烤入 sensor 补偿的 buffer（尺寸表含竖向条目，真机实锤），此时以
+ *  sensor=0 代入同一公式（back 得 −display、front 得 +display：竖屏 0 角即正立、180° 倒屏
+ *  仍被补偿、前摄方向符号与 Camera2Basic 一致）；传统全横表设备 halPreRotates=false 行为与
+ *  R139 之前真机验证过的版本逐位相同。检测信号是尺寸表指纹，与视图宽高完全解耦。 */
+internal fun previewRotationForBuffer(displayDegrees: Int, sensorOrientation: Int, front: Boolean, halPreRotates: Boolean): Int =
+    cameraPreviewRotationDegrees(displayDegrees, if (halPreRotates) 0 else sensorOrientation, front)
