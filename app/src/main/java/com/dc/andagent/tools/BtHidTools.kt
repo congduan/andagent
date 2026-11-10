@@ -255,7 +255,10 @@ private object BtHidRuntime {
         }.getOrDefault(false)
         if (!requested) {
             abandonRound()
-            return "ERROR: 无法申请 HID_DEVICE profile proxy（系统蓝牙栈未就绪或本机不支持 HID device 角色）"
+            // R132：区分失败路径。requested=false = 蓝牙栈同步拒绝（ROM 未实现/禁用
+            // HID device 角色——ColorOS/HyperOS 部分版本对第三方 app 白名单限制，
+            // 社区有 OPPO/华为系 ROM 同报反馈）。
+            return "ERROR: 系统蓝牙栈拒绝 HID_DEVICE profile 申请（本机 ROM 可能禁用了第三方 HID device 角色，如 ColorOS/EMUI 部分版本有白名单限制）；可尝试重启蓝牙后重试，若仍失败则本机无法充当 HID 设备"
         }
         if (!proxyLatch.await(6, TimeUnit.SECONDS)) {
             // 超时：本轮作废并自增代际；迟到的 onServiceConnected 会凭 gen 不匹配自行 close
@@ -268,7 +271,7 @@ private object BtHidRuntime {
             holder.proxy?.let {
                 runCatching { adapter.closeProfileProxy(BluetoothProfile.HID_DEVICE, it) }
             }
-            return "ERROR: 获取 BluetoothHidDevice proxy 超时（6s）"
+            return "ERROR: 获取 BluetoothHidDevice proxy 超时（6s）——蓝牙栈未响应 HID device 绑定。本机 ROM 可能对第三方 HID device 有白名单限制（ColorOS/EMUI 部分版本如此）；建议：重启蓝牙重试一次，若持续失败则本机无法充当 HID 设备（可用支持该 profile 的手机作为 HID 端）"
         }
         // 本轮 proxy 全程由局部 holder 持有，绝不先写 BtHidRegistry。
         val hid = holder.proxy as? BluetoothHidDevice

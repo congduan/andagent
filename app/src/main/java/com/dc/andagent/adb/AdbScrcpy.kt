@@ -208,7 +208,11 @@ class AdbScrcpySession(
             }
             Thread.sleep(AdbScrcpy.CONNECT_RETRY_DELAY_MS)
         }
-        return "连接 scrcpy video socket / 读取视频头失败（重试 ${AdbScrcpy.CONNECT_RETRIES} 次）；service=$service，server 可能未启动或 socket 名不符"
+        // R132：失败时带回 server 日志与进程状态——scrcpy server 启动失败的原因
+        //（app_process 报错/ClassNotFound/参数不符）全在 SERVER_LOG_PATH 里，
+        // 以前不带回导致「连接不上」无法定位。
+        val log = runCatching { client.openStream("cat ${AdbScrcpy.SERVER_LOG_PATH} 2>/dev/null; echo ---PID---; cat ${AdbScrcpy.pidFilePath(scid!!)} 2>/dev/null; echo ---PS---; ps -A 2>/dev/null | grep scrcpy | head -3") }.getOrElse { "读取失败：${it.message}" }
+        return "连接 scrcpy video socket / 读取视频头失败（重试 ${AdbScrcpy.CONNECT_RETRIES} 次）；service=$service\n--- scrcpy server 日志/进程 ---\n${log.take(1500)}"
     }
 
     /** 读下一帧；流关闭 / 长度非法抛 IOException，由工具层 runCatching 收敛。 */
