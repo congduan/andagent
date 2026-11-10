@@ -59,6 +59,7 @@ it("groups resources and closes only actionable rows after confirmation", async 
   expect(screen.getByText(/暂停|Pause/)).toBeTruthy();
   expect(screen.getAllByText(/断开 \/ 停止|Disconnect \/ stop/)).toHaveLength(1);
   fireEvent.click(screen.getByText(/断开 \/ 停止|Disconnect \/ stop/));
-  await waitFor(() => expect(close).toHaveBeenCalledWith("ssh", "s1"));
+  // R133c-review 必修项①：非 ADB 项第三参为 undefined（不带 confirmed_offline）。
+  await waitFor(() => expect(close).toHaveBeenCalledWith("ssh", "s1", undefined));
   expect(confirm).toHaveBeenCalledOnce();
 });

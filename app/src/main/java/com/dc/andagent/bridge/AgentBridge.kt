@@ -203,7 +203,7 @@ class AgentBridge(
                 val kind = action.kind
                 val id = action.id
                 if (kind == null || id == null) "ERROR: 关闭操作缺少 kind/id"
-                else hubClose(kind, id)
+                else hubClose(kind, id, action.confirmedOffline)
             }
             else -> "ERROR: 未知操作"
         }
@@ -255,7 +255,7 @@ class AgentBridge(
         "ERROR: 资源中心读取失败：${it.message ?: it.javaClass.simpleName}"
     }
 
-    private fun hubClose(kind: String, id: String): String = runCatching {
+    private fun hubClose(kind: String, id: String, confirmedOffline: Boolean? = null): String = runCatching {
         val context = requireNotNull(appContext)
         ResourceHub.close(kind, id, mapOf(
             "ssh" to { ref ->
@@ -265,10 +265,11 @@ class AgentBridge(
             "adb" to { id ->
                 // R133c：语义区分——live 目标「仅断开」保留已保存配置；未连接目标走
                 // disconnect 移除已保存目标（面板对 offline 项以「移除」文案+确认提示）。
-                if (AdbSessionHub.isLive(id)) {
-                    AdbSessionHub.closeLiveOnly(id)
-                    "已断开连接，已保存目标保留（移除请用 adb_disconnect）"
-                } else AdbSessionHub.disconnect(id)
+                // R133c-review 二轮必修项①：检查+选择+执行收进 AdbSessionHub.lock 原子完成，
+                // 消灭「确认基于面板快照、执行时 live 状态已翻转」的竞态；动作与确认不一致
+                // （确认断开却删了保存信息 / 确认移除却只断开）返回 CHANGED: 前缀，
+                // web toast 如实提示真实结果，不虚报一致。
+                AdbSessionHub.closeForHub(id, confirmedOffline)
             },
             "saf" to { uri ->
                 require(uri in SafTreeStore.list(context)) { "授权树不存在" }

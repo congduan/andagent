@@ -243,6 +243,39 @@ object AdbSessionHub {
         closeOtherLive(host, null).size
     }
 
+    /**
+     * R133c-review 必修项①（Codex 二轮）：资源中心 close 的原子入口——isLive 检查、
+     * 动作选择与执行在同一 lock 内完成，消灭「检查时 offline、执行前恰好被 connect
+     * 拉活 → 仍删掉已保存目标且不报 CHANGED」的窗口。[confirmedOffline] 是用户确认
+     * 时的快照状态（null = 未携带）；返回「CHANGED:」前缀 + 实际结果文案当实际动作与
+     * 确认不一致，否则原样返回结果文案。语义与 [closeLiveOnly]（live→仅断开，保留
+     * registry）和 [disconnect]（offline→移除已保存目标）一致，只是原子化。
+     */
+    fun closeForHub(ref: String, confirmedOffline: Boolean?): String = synchronized(lock) {
+        val host = registry.resolve(ref)?.host
+        if (host == null) {
+            // 引用解析不到（已移除/旧 key）：无法断开任何 live，如实报错。
+            return "ERROR: 目标不存在：$ref（用 adb_devices 查看）"
+        }
+        // R133c-review 三轮必修项①：存活判定与清理用同一匹配规则——staleLiveKeys
+        // （大小写不敏感 host 前缀、keeperKey=null 全清），同时覆盖 registry 之外同
+        // host 的孤儿 live key。避免旧持久化残留「Host/host 双条目」时：判定 offline
+        // 却按 host 清掉了另一条目的活连接、且不报 CHANGED。
+        val liveNow = AdbToolRules.staleLiveKeys(live.keys, host, null)
+            .any { live[it]?.isAlive() == true }
+        val result = if (liveNow) {
+            closeOtherLive(host, null)
+            "已断开连接，已保存目标保留（移除请用 adb_disconnect）"
+        } else {
+            val victims = registry.removeHost(host)
+            closeOtherLive(host, null)
+            persist()
+            "已断开 ADB 目标 $host（清理 ${victims.size} 个端口条目）"
+        }
+        val flipped = confirmedOffline != null && confirmedOffline != !liveNow
+        if (flipped) "CHANGED:$result" else result
+    }
+
     /** Snapshot only connected targets; never reconnect while listing resources. */
     fun liveTargets(): List<AdbTarget> = synchronized(lock) {
         registry.list().filter { live[it.key]?.isAlive() == true }

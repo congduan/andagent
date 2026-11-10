@@ -271,7 +271,7 @@ interface AndroidBridge {
 }
 
 export interface ResourceItem {
-  kind: string; id: string; title: string; subtitle: string; aliveSince: number | null; canClose: boolean;
+  kind: string; id: string; title: string; subtitle: string; aliveSince: number | null; canClose: boolean; offline?: boolean;
 }
 
 /**
@@ -320,8 +320,10 @@ export async function resourceHubList(): Promise<ResourceItem[]> {
   return (await resourceHubSnapshot()).items;
 }
 
-export async function resourceHubClose(kind: string, id: string): Promise<string> {
-  const raw = await resourceHubCall({ action: "close", kind, id });
+export async function resourceHubClose(kind: string, id: string, confirmedOffline?: boolean): Promise<string> {
+  // R133c-review 必修项①：close 请求携带确认时的 offline 状态（仅 ADB 消费），
+  // 原生执行时状态若已翻转，返回 CHANGED: 前缀，面板如实提示。
+  const raw = await resourceHubCall({ action: "close", kind, id, confirmed_offline: confirmedOffline });
   return raw ?? "ERROR: 资源中心不可用";
 }
 

@@ -57,8 +57,15 @@ export function ResourceHubPanel({ onClose, anchor }: { onClose: () => void; anc
     return t("resourceAge", { time });
   };
   const close = async (item: ResourceItem) => {
-    if (!(await appConfirm(t("resourceConfirm", { name: item.title })))) return;
-    showResult(await resourceHubClose(item.kind, item.id));
+    // R133c：未连接 ADB 目标的「关闭」实为移除已保存连接信息，用更强的「移除」确认文案。
+    const removeSaved = item.kind === "adb" && item.offline;
+    const message = removeSaved ? t("resourceRemoveSavedConfirm") : t("resourceConfirm", { name: item.title });
+    if (!(await appConfirm(message))) return;
+    const result = await resourceHubClose(item.kind, item.id, item.kind === "adb" ? item.offline === true : undefined);
+    // R133c-review 必修项①：确认基于列表快照，原生执行时连接状态可能已翻转——
+    // 实际动作与用户确认的不一致时，原生返回 CHANGED: 前缀，剥掉后如实提示真实结果。
+    if (result.startsWith("CHANGED:")) showResult(result.slice("CHANGED:".length));
+    else showResult(result);
     await refresh();
   };
   const hideEmbedded = async () => {
@@ -127,7 +134,7 @@ export function ResourceHubPanel({ onClose, anchor }: { onClose: () => void; anc
                 </div>
                 {item.canClose ? <div className="resource-hub-actions">
                   {kind === "embedded" && <button type="button" onClick={() => { void hideEmbedded(); }}>{t("resourceHide")}</button>}
-                  <button type="button" className="danger" onClick={() => void close(item)}>{kind === "embedded" ? t("resourceDestroy") : kind === "cron" ? t("resourcePause") : t("resourceClose")}</button>
+                  <button type="button" className="danger" onClick={() => void close(item)}>{kind === "embedded" ? t("resourceDestroy") : kind === "cron" ? t("resourcePause") : item.kind === "adb" && item.offline ? t("resourceRemoveSaved") : t("resourceClose")}</button>
                 </div> : <span className="resource-hub-tag">{t("resourceReadonly")}</span>}
               </div>)}
             </section>;

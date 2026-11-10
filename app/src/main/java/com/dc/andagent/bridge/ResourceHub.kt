@@ -13,6 +13,7 @@ import java.security.MessageDigest
 data class ResourceItem(
     val kind: String, val id: String, val title: String, val subtitle: String,
     val aliveSince: Long? = null, val canClose: Boolean = true,
+    val offline: Boolean = false,
 )
 
 /**
@@ -20,7 +21,7 @@ data class ResourceItem(
  * [kind]/[id] 允许为 null（close 时由上层判空报错）；[action] 缺失或凭证不符时
  * [ResourceHub.parseAction] 直接返回 null。
  */
-data class HubAction(val action: String, val kind: String?, val id: String?)
+data class HubAction(val action: String, val kind: String?, val id: String?, val confirmedOffline: Boolean?)
 
 /** Pure composition: callers collect each pool's snapshot before entering here. */
 object ResourceHub {
@@ -36,7 +37,9 @@ object ResourceHub {
         val token = str("__token") ?: return null
         if (!MessageDigest.isEqual(token.toByteArray(), expectedToken.toByteArray())) return null
         val action = str("action") ?: return null
-        return HubAction(action, str("kind"), str("id"))
+        // R133c-review 必修项①：close 请求携带用户确认时的 offline 状态（list 请求无此键 → null）。
+        val confirmedOffline = str("confirmed_offline")?.toBooleanStrictOrNull()
+        return HubAction(action, str("kind"), str("id"), confirmedOffline)
     }
 
     fun snapshot(groups: List<List<ResourceItem>>): String = JsonArray(groups.flatten().map { item ->
@@ -44,6 +47,7 @@ object ResourceHub {
             put("kind", item.kind); put("id", item.id); put("title", item.title)
             put("subtitle", item.subtitle); if (item.aliveSince == null) put("aliveSince", JsonNull) else put("aliveSince", item.aliveSince)
             put("canClose", item.canClose)
+            put("offline", item.offline)
         }
     }).toString()
 
