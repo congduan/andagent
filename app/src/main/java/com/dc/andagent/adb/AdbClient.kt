@@ -390,11 +390,6 @@ class AdbClient(
         fun close() = synchronized(lock) {
             if (!closed) {
                 closed = true
-                // R128：按 AOSP PC adb file_sync_client 语义，sync 会话结束**先发 QUIT**
-                // 让 adbd 的 sync 服务线程干净退出，再 CLSE。缺 QUIT 会导致 adbd 侧
-                // sync 服务悬挂泄漏（fd/线程堆积），后续 sync: 服务创建被拒——
-                // 用户真机（荣耀）「重连后第一条 pull 成功、之后 sync 全部被拒」的根源。
-                runCatching { sendSync(AdbSync.encode(AdbSync.ID_QUIT, ByteArray(0))) }
                 runCatching { write(AdbMessage(A_CLSE, localId, remoteId, ByteArray(0))) }
             }
         }
@@ -595,6 +590,11 @@ class AdbClient(
 
         fun close() {
             if (remoteId >= 0) {
+                // R128：sync 会话结束先发 QUIT 让 adbd 的 sync 服务线程干净退出，再
+                // CLSE。缺 QUIT 会让 adbd 侧 sync 服务悬挂泄漏（fd/线程堆积），后续
+                // sync: 服务创建被拒——荣耀真机「重连后第一条 pull 成功、之后 sync
+                // 全部被拒」的根源（AOSP PC adb file_sync_client 同样先 QUIT）。
+                runCatching { sendSync(AdbSync.encode(AdbSync.ID_QUIT, ByteArray(0))) }
                 runCatching { write(AdbMessage(A_CLSE, localId, remoteId, ByteArray(0))) }
             }
         }
