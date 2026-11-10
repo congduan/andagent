@@ -22,8 +22,22 @@ import java.util.concurrent.ConcurrentHashMap
 
 val USB_SERIAL_TOOLS = listOf("usb_serial_open", "usb_serial_read", "usb_serial_write", "usb_serial_close", "usb_serial_capture")
 
-internal data class SerialSession(val deviceId: Int, val port: UsbSerialPort) {
+internal data class SerialSession(
+    val deviceId: Int,
+    val port: UsbSerialPort,
+    // open 时的帧格式与波特率；esp_flash 临时切高速后按此恢复。
+    val dataBits: Int,
+    val stopBits: Int,
+    val parity: String,
+    val initialBaud: Int,
+    var currentBaud: Int,
+) {
     val lock = Any()
+    /** 在持有 lock 时按 open 时的帧格式切换波特率（UsbSerialPort.setBaud 需完整帧格式）。 */
+    fun applyBaud(baud: Int) {
+        port.setBaud(baud, dataBits, stopBits, parity)
+        currentBaud = baud
+    }
 }
 
 internal object SerialSessions {
@@ -100,7 +114,7 @@ class SerialTool(private val context: Context, override val name: String) : Tool
         try { port.open(connection, iface); port.setBaud(baud, bits, stops, parity); port.setDtrRts(dtr, rts) }
         catch (e: Exception) { runCatching { port.close() }; runCatching { connection.close() }; throw e }
         val handle = UUID.randomUUID().toString()
-        SerialSessions.sessions[handle] = SerialSession(device.deviceId, port)
+        SerialSessions.sessions[handle] = SerialSession(device.deviceId, port, bits, stops, parity, baud, baud)
         return buildJsonObject {
             put("status", "OK"); put("handle", handle); put("deviceId", device.deviceId)
             put("driver", kind); put("baud", baud); put("dataBits", bits); put("stopBits", stops); put("parity", parity)

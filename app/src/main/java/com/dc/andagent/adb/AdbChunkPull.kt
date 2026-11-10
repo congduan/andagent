@@ -145,10 +145,17 @@ object AdbChunkPull {
         return null
     }
 
-    /** 识别「大 SYNC DATA 被 OEM adbd 提前断流」的失败文案（真机实录 + 本客户端默认文案）。 */
+    /**
+     * 识别「大 SYNC DATA 被 OEM adbd 提前断流」的失败文案（真机实录 + 本客户端默认文案）。
+     *
+     * R130：移除「服务被对端关闭」——那是 OPEN "sync:" 阶段被拒（服务根本没建起来），
+     * 再走 sync 分块只会重复 N 次同样被拒的 OPEN，应直接落工具层 shell 降级。该文案
+     * 在 R130 前主要来自【我们漏读上一条流的 CLSE】（见 AdbClient.SyncStream 注释），
+     * 现已在协议层修掉；保留此判断是防止未知 OEM 真拒 sync 时白跑分块。
+     */
     fun isLargeSyncEarlyClose(reason: String): Boolean =
         reason.contains("流提前关闭") || reason.contains("未收到 DONE") ||
-            reason.contains("服务被对端关闭") || reason.contains("已收 0 字节")
+            reason.contains("已收 0 字节")
 
     /**
      * 识别 openStream 的非零退出标记（AdbClient 会在输出尾部附 `[exit code: n]`）。

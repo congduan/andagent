@@ -9,6 +9,7 @@ import android.util.Base64
 import com.dc.andagent.adb.AdbAuth
 import com.dc.andagent.adb.AdbClient
 import com.dc.andagent.adb.AdbConnectOptions
+import com.dc.andagent.adb.AdbShellPull
 import com.dc.andagent.adb.AdbTransport
 import com.dc.andagent.adb.AndroidKeystoreKeyWrapper
 import com.dc.andagent.adb.TcpTransport
@@ -550,24 +551,16 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
         return when (val r = c.syncPull(remote, SCREENCAP_MAX_BYTES)) {
             is AdbClient.AdbSyncResult.Pulled -> screencapResult(context, target, remote, r.bytes, r.evidence)
             is AdbClient.AdbSyncResult.Failed -> {
-                // R125/R129 fallback：部分 OEM adbd（荣耀/华为实测）在 TLS 连接上拒绝
-                // sync: 服务（HONOR：无线调试 TLS 下 sync 服务创建即被关——QUIT 修复
-                // 后依然被拒，OEM 行为）。改走 shell base64 通道：
-                // - 输出上限 256KB，截图 PNG（~830KB 原始 / base64 ~1.1MB）超限时
-                //   先让目标机 gzip 压缩（toybox gzip 可用），本地解压后再落相册。
-                // - base64 输出容错：去空白后再解码（toybox 默认 76 列换行）。
-                val cleaned = c.openStream("base64 $remote")
-                if (cleaned.startsWith("ERROR")) {
-                    return "ERROR: 拉取截图失败：sync=${r.reason}；shell 回退也失败：$cleaned"
+                // R130：sync: 被拒时走 shell dd|base64 分块（绕开 sync 与 256KB 输出窗口，
+                // 截图 PNG ~830KB 也在此通道内分块拿全）。证据见 AdbShellPull 注释。
+                when (val fb = AdbShellPull.pull(remote, SCREENCAP_MAX_BYTES) { cmd -> c.openStream(cmd) }) {
+                    is AdbClient.AdbSyncResult.Pulled ->
+                        screencapResult(context, target, remote, fb.bytes, fb.evidence)
+                    is AdbClient.AdbSyncResult.Failed ->
+                        "ERROR: 拉取截图失败：sync=${r.reason}；shell 分块回退失败：${fb.reason}" +
+                            (if (fb.evidence.isNotEmpty()) "\n${fb.evidence}" else "")
+                    is AdbClient.AdbSyncResult.Pushed -> "ERROR: 拉取截图回退返回意外结果"
                 }
-                val b64 = cleaned.filter { !it.isWhitespace() }
-                if (b64.isEmpty() || b64.any { it !in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" }) {
-                    return "ERROR: 拉取截图失败：sync=${r.reason}；shell 回退输出不是合法 base64（前 80 字符：${cleaned.take(80)}）"
-                }
-                runCatching {
-                    val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
-                    screencapResult(context, target, remote, bytes)
-                }.getOrElse { "ERROR: shell 回退解码失败：${it.message}" }
             }
             is AdbClient.AdbSyncResult.Pushed -> "ERROR: 拉取截图返回意外结果"
         }
@@ -621,28 +614,37 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
             is AdbClient.AdbSyncResult.Failed -> buildString {
                 append("ERROR: 拉取失败：${r.reason}")
                 if (r.evidence.isNotEmpty()) append("\n${r.evidence}")
-                // R129 fallback：OEM adbd（荣耀实测）TLS 下 sync: 服务被拒——
-                // shell base64 回退（256KB 输出窗口内单命令拿全；超限提示用户用
-                // adb_pull 的分块路径或目标机手动复制到 Download）。落到与正常路径
-                // 相同的目录（name/dir 语义复用）。
-                val name = runCatching {
-                    AdbToolRules.safeName(args.strArg("filename") ?: remote.substringAfterLast('/'))
-                }.getOrElse { remote.substringAfterLast('/') }
+                // R130：sync: 被拒（或修后仍有未知 OEM 时序）时降级到 shell dd|base64
+                // 分块通道，绕开 sync 与 256KB 输出窗口，大文件也能拉（慢但可用）。
+                // sync 优先路径保留：健康设备仍走快速 SYNC RECV。name/dir 与正常路径
+                // 同一套校验（safeName / dir 枚举），不用未校验的远程文件名兜底。
                 val dir = args.strArg("dir") ?: "downloads"
-                val cleaned = c.openStream("base64 \"$remote\"")
-                if (!cleaned.startsWith("ERROR")) {
-                    val b64 = cleaned.filter { !it.isWhitespace() }
-                    if (b64.isNotEmpty() && b64.all { it in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" }) {
-                        runCatching {
-                            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
-                            val saved = saveBytes(name, bytes, dir)
-                            append("\n✅ shell 回退成功：$saved（${bytes.size} 字节，经 base64 通道）")
-                        }.getOrElse { append("\nshell 回退解码/保存失败：${it.message}") }
-                    } else {
-                        append("\nshell 回退输出非 base64（可能是权限拒绝信息），前 120 字符：${cleaned.take(120)}")
-                    }
+                if (dir !in listOf("downloads", "app_private")) {
+                    append("\nshell 回退失败：dir 只能是 downloads 或 app_private")
                 } else {
-                    append("\nshell 回退不可用：${cleaned.take(120)}")
+                    val name = runCatching {
+                        AdbToolRules.safeName(args.strArg("filename") ?: remote.substringAfterLast('/'))
+                    }.getOrElse { "INVALID:${it.message}" }
+                    if (name.startsWith("INVALID:")) {
+                        append("\nshell 回退失败：文件名无效（${name.removePrefix("INVALID:")}）")
+                    } else {
+                        when (val fb = AdbShellPull.pull(remote, maxBytes) { cmd -> c.openStream(cmd) }) {
+                            is AdbClient.AdbSyncResult.Pulled -> {
+                                val saved = runCatching { saveBytes(name, fb.bytes, dir) }
+                                    .getOrElse {
+                                        append("\n⚠️ 此设备 sync: 通道不可用，已降级到 shell 分块通道（慢），但保存失败：${it.message}")
+                                        return@buildString
+                                    }
+                                append("\n✅ 此设备 sync: 通道不可用，已自动降级到 shell dd|base64 分块通道：$saved（${fb.bytes.size} 字节）")
+                                if (fb.evidence.isNotEmpty()) append("\n${fb.evidence}")
+                            }
+                            is AdbClient.AdbSyncResult.Failed -> {
+                                append("\nshell 分块回退失败：${fb.reason}")
+                                if (fb.evidence.isNotEmpty()) append("\n${fb.evidence}")
+                            }
+                            is AdbClient.AdbSyncResult.Pushed -> append("\nshell 分块回退返回意外结果")
+                        }
+                    }
                 }
             }
             is AdbClient.AdbSyncResult.Pushed -> "ERROR: 拉取返回意外结果"

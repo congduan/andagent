@@ -527,16 +527,29 @@ class AdbClient(
             private set
         @Volatile var closed = false
 
-        /** OPEN "sync:" → 等 OKAY（arg0=对端 id）或 CLSE（arg0=0 表示拒绝）。 */
+        /**
+         * OPEN "sync:" → 等本流 OKAY（arg0=对端 id）或 CLSE（arg0=0 表示拒绝）。
+         *
+         * R130：一条 TCP/TLS 连接上所有流锁步复用。AOSP adbd 的 OKAY/WRTE/CLSE 一律把
+         * 【本流 local id 放在 arg1】（adb.cpp:544 send_ready、sockets.cpp:513
+         * remote_socket_shutdown）。openStream 的 R126 过滤能丢掉上一流的迟到帧，但本类
+         * 此前没有——上一条流关闭时 adbd 回敬的 A_CLSE(arg0≠0, arg1=上一流 id) 会被
+         * 误当成自己 OPEN 的拒绝，报「sync: 服务被对端关闭」。这是荣耀真机「重连后第一条
+         * pull 成功、之后全部被拒」的根因。三方对照：cocool97/adb_client 用 dispatcher 按
+         * local_id 路由、adb_shell 用 args_match(arg0,arg1) 分流（见 R130 战报）。
+         */
         fun open() {
             if (input == null) error("未连接：请先调用 connect()")
             write(AdbMessage(A_OPEN, localId, 0, "sync:\u0000".toByteArray()))
             while (true) {
                 val msg = read()
                 when (msg.command) {
-                    A_OKAY -> { remoteId = msg.arg0; return }
-                    A_CLSE -> error(if (msg.arg0 == 0) "sync: 服务被拒绝" else "sync: 服务被对端关闭")
-                    else -> Unit
+                    A_CNXN -> error("ADB 连接已被目标机重置（收到重发 CNXN）。请直接重试，将自动重建连接。")
+                    A_OKAY -> if (msg.arg1 == localId) { remoteId = msg.arg0; return }
+                    A_CLSE -> if (msg.arg1 == localId) {
+                        error(if (msg.arg0 == 0) "sync: 服务被拒绝" else "sync: 服务被对端关闭")
+                    }
+                    else -> Unit // 其它流的迟到帧 / 未知命令：丢弃并继续等本流 OKAY
                 }
             }
         }
@@ -576,6 +589,10 @@ class AdbClient(
         }
 
         private fun handle(msg: AdbMessage) {
+            // R130：只处理本流帧（arg1 == localId）。共享连接上其它流的迟到 OKAY/WRTE/CLSE
+            // 一旦混入会错乱 acksNeeded、把别人的 CLSE 当成自己的关流。对齐 openStream R126。
+            if (msg.command == A_CNXN) { closed = true; return }
+            if (msg.arg1 != localId) return
             when (msg.command) {
                 A_WRTE -> {
                     reader.feed(msg.data)
@@ -590,12 +607,43 @@ class AdbClient(
 
         fun close() {
             if (remoteId >= 0) {
-                // R128：sync 会话结束先发 QUIT 让 adbd 的 sync 服务线程干净退出，再
-                // CLSE。缺 QUIT 会让 adbd 侧 sync 服务悬挂泄漏（fd/线程堆积），后续
-                // sync: 服务创建被拒——荣耀真机「重连后第一条 pull 成功、之后 sync
-                // 全部被拒」的根源（AOSP PC adb file_sync_client 同样先 QUIT）。
+                // QUIT 让 adbd 的 file_sync_service 线程干净退出
+                // （file_sync_service.cpp:852-853 / 862-869）；随后发本流 CLSE。
                 runCatching { sendSync(AdbSync.encode(AdbSync.ID_QUIT, ByteArray(0))) }
                 runCatching { write(AdbMessage(A_CLSE, localId, remoteId, ByteArray(0))) }
+                // R130：adbd 必定回敬一个 A_CLSE(arg0≠0, arg1=本流 id)
+                // （sockets.cpp:344-357 → :513-523）。必须读掉，否则下一次 sync: OPEN
+                // 会把它当拒绝。三方都这么做：AOSP file_sync_client.cpp:253-267
+                // ReadOrderlyShutdown、cocool97 adb_session.rs:141-152 recv_until_close、
+                // adb_shell adb_device.py:1114-1127 _clse 的 _read_until([CLSE])。
+                drainPeerClose()
+            }
+        }
+
+        /** 有界读回 adbd 关流时回敬的 CLSE（及夹带的 OKAY/WRTE），避免污染共享连接下一条流。 */
+        private fun drainPeerClose() {
+            if (closed) return // QUIT 的 ACK 等待阶段已经读到过 CLSE
+            val savedTimeout = SESSION_TIMEOUT_MS
+            runCatching { transport.setReadTimeout(DRAIN_TIMEOUT_MS) }
+            try {
+                val deadline = System.currentTimeMillis() + DRAIN_TIMEOUT_MS
+                while (!closed && System.currentTimeMillis() < deadline) {
+                    val msg = try {
+                        read()
+                    } catch (e: IOException) {
+                        break // 读超时 / EOF：放弃等待，不拖慢正常路径
+                    }
+                    when (msg.command) {
+                        A_CLSE -> if (msg.arg1 == localId) { closed = true; break }
+                        A_WRTE -> if (msg.arg1 == localId) {
+                            runCatching { write(AdbMessage(A_OKAY, localId, msg.arg0, ByteArray(0))) }
+                        }
+                        else -> Unit
+                    }
+                }
+            } finally {
+                runCatching { transport.setReadTimeout(savedTimeout) }
+                closed = true
             }
         }
     }
@@ -687,5 +735,7 @@ class AdbClient(
         const val PEER_CNXN_WAIT_MS = 15_000
         /** 建连后的读超时：shell/文件传输可能长时间无输出，不沿用 connect 的短超时。 */
         const val SESSION_TIMEOUT_MS = 90_000
+        /** R130：close() 读回 adbd 关流 CLSE 的有界窗口（正常 adbd 毫秒级回，超时即放弃）。 */
+        const val DRAIN_TIMEOUT_MS = 1_500
     }
 }

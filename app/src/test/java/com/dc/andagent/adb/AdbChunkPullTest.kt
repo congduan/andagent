@@ -218,6 +218,10 @@ class AdbChunkPullTest {
         assertTrue(AdbChunkPull.isLargeSyncEarlyClose("sync: 服务被对端关闭（流提前关闭，已收 0 字节）"))
         assertFalse(AdbChunkPull.isLargeSyncEarlyClose("远程文件超过 1MB 上限（已收 2000000 字节）"))
         assertFalse(AdbChunkPull.isLargeSyncEarlyClose("SYNC FAIL no such file"))
+        // R130：纯 OPEN 阶段拒绝不再触发 sync 分块（分块只会重复 N 次同样被拒的 OPEN），
+        // 应直接落工具层 shell 降级。真「流提前关闭」仍走分块。
+        assertFalse(AdbChunkPull.isLargeSyncEarlyClose("sync: 服务被对端关闭"))
+        assertFalse(AdbChunkPull.isLargeSyncEarlyClose("sync: 服务被拒绝"))
     }
 
     /* ---------------- 编排：成功 / 失败清理 / 重入 / 诊断 ---------------- */

@@ -506,4 +506,88 @@ class AdbClientTest {
         val open = fake.writtenMessages().first { it.command == A_OPEN }
         assertEquals("shell,v2,raw:echo ok\u0000", String(open.data))
     }
+
+    /* ---------------- R130：sync: 漏读对端 CLSE / localId 过滤 ---------------- */
+
+    /**
+     * 复现真机根因：上一条流关闭时 adbd 回敬的 A_CLSE(arg0≠0, arg1=上一流 id) 滞留在
+     * 共享连接上；本次 sync: OPEN 的读循环必须先丢弃它、只认 arg1==本流 id 的 OKAY。
+     * 修前：SyncStream.open 无过滤 → 把这条 CLSE 报成「sync: 服务被对端关闭」。
+     * 帧序：CNXN(connect) → stale CLSE → OPEN ack → RECV 传输 ack → DATA → DONE →
+     * QUIT 传输 ack → 对端关流 CLSE（由 close() 的 drainPeerClose 读回）。
+     */
+    @Test
+    fun syncPullIgnoresStaleClseFromPreviousStream() {
+        val payload = "hello after stale close".toByteArray()
+        val localId = 1
+        val frames = frameBytes(
+            cnxnFrame(),
+            // 上一条流残留：arg1=999（别的流），arg0≠0 → 修前被误判为「服务被对端关闭」
+            AdbMessage(A_CLSE, 5, 999, ByteArray(0)),
+            AdbMessage(A_OKAY, SERVER_ID, localId, ByteArray(0)), // OPEN ack
+            AdbMessage(A_OKAY, SERVER_ID, localId, ByteArray(0)), // RECV WRTE 的传输 ack
+            AdbMessage(A_WRTE, SERVER_ID, localId, AdbSync.encodeData(payload)),
+            AdbMessage(A_WRTE, SERVER_ID, localId, AdbSync.encode("DONE", ByteArray(0))),
+            AdbMessage(A_OKAY, SERVER_ID, localId, ByteArray(0)), // QUIT WRTE 的传输 ack
+            AdbMessage(A_CLSE, SERVER_ID, localId, ByteArray(0)), // 对端关流 CLSE，close 读回
+        )
+        val fake = ScriptedTransport(ByteArrayInputStream(frames))
+        val client = AdbClient(transport = fake)
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+        val r = client.syncPull("/sdcard/x.txt", 1L * 1024 * 1024)
+        assertTrue("stale CLSE 不得打断 pull，实际=$r", r is AdbClient.AdbSyncResult.Pulled)
+        assertEquals(String(payload), String((r as AdbClient.AdbSyncResult.Pulled).bytes))
+        // close() 必须读超时后恢复会话值，不能把 1.5s 探测窗口泄漏到后续操作。
+        assertEquals(AdbClient.SESSION_TIMEOUT_MS, fake.timeouts.last())
+        assertTrue("close() 须设过有界的 CLSE drain 超时", fake.timeouts.contains(AdbClient.DRAIN_TIMEOUT_MS))
+    }
+
+    /**
+     * 连续两次 pull（真机「重连后第一条成功、之后全失败」）：每次 close() 都把 adbd
+     * 回敬的 CLSE 读掉，保证下一条 sync: OPEN 拿到干净的帧。修前第二条读到残留 CLSE 被拒。
+     */
+    @Test
+    fun twoConsecutiveSyncPullsBothSucceed() {
+        val frames = frameBytes(
+            cnxnFrame(),
+            // pull #1（localId=1）
+            AdbMessage(A_OKAY, SERVER_ID, 1, ByteArray(0)),
+            AdbMessage(A_OKAY, SERVER_ID, 1, ByteArray(0)),
+            AdbMessage(A_WRTE, SERVER_ID, 1, AdbSync.encodeData("one".toByteArray())),
+            AdbMessage(A_WRTE, SERVER_ID, 1, AdbSync.encode("DONE", ByteArray(0))),
+            AdbMessage(A_OKAY, SERVER_ID, 1, ByteArray(0)),
+            AdbMessage(A_CLSE, SERVER_ID, 1, ByteArray(0)), // 关流回敬，必须被 close 读走
+            // pull #2（localId=2）
+            AdbMessage(A_OKAY, SERVER_ID, 2, ByteArray(0)),
+            AdbMessage(A_OKAY, SERVER_ID, 2, ByteArray(0)),
+            AdbMessage(A_WRTE, SERVER_ID, 2, AdbSync.encodeData("two".toByteArray())),
+            AdbMessage(A_WRTE, SERVER_ID, 2, AdbSync.encode("DONE", ByteArray(0))),
+            AdbMessage(A_OKAY, SERVER_ID, 2, ByteArray(0)),
+            AdbMessage(A_CLSE, SERVER_ID, 2, ByteArray(0)),
+        )
+        val fake = ScriptedTransport(ByteArrayInputStream(frames))
+        val client = AdbClient(transport = fake)
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+        val r1 = client.syncPull("/sdcard/a.txt", 1L * 1024 * 1024)
+        val r2 = client.syncPull("/sdcard/b.txt", 1L * 1024 * 1024)
+        assertTrue("第一条应成功，实际=$r1", r1 is AdbClient.AdbSyncResult.Pulled)
+        assertEquals("one", String((r1 as AdbClient.AdbSyncResult.Pulled).bytes))
+        assertTrue("第二条应成功，实际=$r2", r2 is AdbClient.AdbSyncResult.Pulled)
+        assertEquals("two", String((r2 as AdbClient.AdbSyncResult.Pulled).bytes))
+    }
+
+    /** 本流真正的 A_CLSE(arg0=0) 仍须报「服务被拒绝」，过滤不能把真拒绝也吞掉。 */
+    @Test
+    fun syncPullStillReportsGenuineServiceRejection() {
+        val frames = frameBytes(
+            cnxnFrame(),
+            AdbMessage(A_CLSE, 0, 1, ByteArray(0)), // arg0=0 且 arg1=本流 id = create_local_service_socket 失败
+        )
+        val fake = ScriptedTransport(ByteArrayInputStream(frames))
+        val client = AdbClient(transport = fake)
+        assertTrue(client.connect("127.0.0.1", 5555).startsWith("OK"))
+        val r = client.syncPull("/sdcard/x.txt", 1L * 1024 * 1024)
+        assertTrue(r is AdbClient.AdbSyncResult.Failed)
+        assertTrue((r as AdbClient.AdbSyncResult.Failed).reason.contains("服务被拒绝"))
+    }
 }
