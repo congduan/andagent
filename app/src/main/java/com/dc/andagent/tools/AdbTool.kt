@@ -69,6 +69,8 @@ object AdbSessionHub {
 
     /** 资源中心用：目标是否有存活连接（R133c 面板状态标注）。 */
     fun isLive(key: String): Boolean = synchronized(lock) { live[key]?.isAlive() == true }
+    /** 资源中心用：该 live 连接的建立时刻（ms），无连接返回 null（R133c 存活时长取真实值，避免每次快照归零）。 */
+    fun liveSinceOf(key: String): Long? = synchronized(lock) { liveSince[key] }
     private val live = LinkedHashMap<String, AdbClient>()
     /** R121f：每条 live 连接的建立时刻（ms），供 adb_devices 展示连接时长。 */
     private val liveSince = LinkedHashMap<String, Long>()
@@ -228,6 +230,17 @@ object AdbSessionHub {
         closeOtherLive(t.host, null)
         persist()
         "已断开 ADB 目标 ${t.host}（清理 ${victims.size} 个端口条目）"
+    }
+
+    /**
+     * 资源中心「仅断开」：关闭该目标全部 live 连接，保留已保存目标（不删 registry、
+     * 不 persist 删除）。与 [disconnect] 的差别仅在保留已保存条目。返回关闭的连接数。
+     * [ref] 是资源中心条目 id（host:port 或 host）；closeOtherLive 按 host 前缀匹配
+     * live key，故先经 registry.resolve 归一到裸 host，兼容端口迁移后的旧引用。
+     */
+    fun closeLiveOnly(ref: String): Int = synchronized(lock) {
+        val host = registry.resolve(ref)?.host ?: ref.substringBeforeLast(':')
+        closeOtherLive(host, null).size
     }
 
     /** Snapshot only connected targets; never reconnect while listing resources. */

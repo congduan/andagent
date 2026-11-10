@@ -225,7 +225,15 @@ class AgentBridge(
         // 多端口时 React key 重复、close 经 registry.resolve 误关首项。
         val adb = AdbSessionHub.registry.list().map { t ->
             val alive = AdbSessionHub.isLive(t.key)
-            ResourceItem("adb", t.key, t.host, "${t.host}:${t.port}（${if (alive) "已连接" else "未连接"}）", if (alive) System.currentTimeMillis() else null)
+            if (alive) {
+                // R133c：存活时长取真实连接建立时刻，不再每次快照归零。
+                ResourceItem("adb", t.key, t.host, "${t.host}:${t.port}（已连接）",
+                    aliveSince = AdbSessionHub.liveSinceOf(t.key))
+            } else {
+                // R133c：未连接目标 aliveSince 保持 null、offline=true，web 端不显示「已存活」。
+                ResourceItem("adb", t.key, t.host, "${t.host}:${t.port}（未连接）",
+                    aliveSince = null, offline = true)
+            }
         }
         val saf = SafTreeStore.list(context).map { ResourceItem("saf", it, it.substringAfterLast('/'), it) }
         val embedded = if (embeddedResourceVisible()) listOf(ResourceItem("embedded", "browser", "WebView", "embedded")) else emptyList()
@@ -238,7 +246,9 @@ class AgentBridge(
         val keys = groups.flatten().map { "${it.kind}:${it.id}" }.toSet()
         resourceObservedAt.keys.retainAll(keys)
         ResourceHub.snapshot(groups.map { group -> group.map { item ->
-            item.copy(aliveSince = item.aliveSince ?: resourceObservedAt.computeIfAbsent("${item.kind}:${item.id}") { System.currentTimeMillis() })
+            // R133c：offline 项（未连接 ADB 目标）跳过回填，aliveSince 保持 null。
+            if (item.offline) item
+            else item.copy(aliveSince = item.aliveSince ?: resourceObservedAt.computeIfAbsent("${item.kind}:${item.id}") { System.currentTimeMillis() })
         } })
     }.getOrElse {
         // 失败必须与“没有资源”区分：此前返回 "[]"，面板会把读取失败显示成空态。
@@ -252,7 +262,14 @@ class AgentBridge(
                 // closeByRef：先摘登记再断开，ref 同时支持 session_id 与 nickname。
                 if (SshSessionPool.closeByRef(ref) == null) "ERROR: SSH 会话不存在" else "OK"
             },
-            "adb" to { host -> AdbSessionHub.disconnect(host) },
+            "adb" to { id ->
+                // R133c：语义区分——live 目标「仅断开」保留已保存配置；未连接目标走
+                // disconnect 移除已保存目标（面板对 offline 项以「移除」文案+确认提示）。
+                if (AdbSessionHub.isLive(id)) {
+                    AdbSessionHub.closeLiveOnly(id)
+                    "已断开连接，已保存目标保留（移除请用 adb_disconnect）"
+                } else AdbSessionHub.disconnect(id)
+            },
             "saf" to { uri ->
                 require(uri in SafTreeStore.list(context)) { "授权树不存在" }
                 val grant = context.contentResolver.persistedUriPermissions.firstOrNull { it.uri.toString() == uri }

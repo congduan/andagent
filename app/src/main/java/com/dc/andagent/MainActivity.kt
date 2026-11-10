@@ -32,6 +32,7 @@ import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -795,6 +796,11 @@ class MainActivity : ComponentActivity() {
             settings.setSupportZoom(false)
             settings.builtInZoomControls = false
             settings.textZoom = 100
+            // R133c：assets 打包页面禁用 HTTP 磁盘缓存——覆盖安装新版本后 WebView
+            // 可能继续用缓存的旧 index-*.js（hash 不同导致旧 JS 调不存在的新桥方法，
+            // 报「桥不可用」）。file:///android_asset 与 https 同源加载下 LOAD_DEFAULT
+            // 的缓存语义按 URL 失效性判断，覆盖安装不更新缓存 → 必须显式 NO_CACHE。
+            settings.cacheMode = WebSettings.LOAD_NO_CACHE
             addJavascriptInterface(bridge, "AndroidBridge")
             // Without a WebChromeClient WebView denies every PermissionRequest,
             // so JS getUserMedia() fails even with RECORD_AUDIO granted.
