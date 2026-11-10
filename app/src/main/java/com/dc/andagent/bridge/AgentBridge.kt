@@ -219,10 +219,13 @@ class AgentBridge(
         val ssh = SshSessionPool.registry.list().map {
             ResourceItem("ssh", it.id, it.nickname ?: "${it.user}@${it.host}", "${it.host}:${it.port}", it.startedAt)
         }
+        // R133c：资源中心显示【全部已保存目标】而非仅 live——连接断开后目标从面板
+        // 消失造成「资源不显示」（真机反馈）。subtitle 标注连接状态。
         // R110-review 必修项②：id 用 AdbTarget.key（host:port），避免同 host
         // 多端口时 React key 重复、close 经 registry.resolve 误关首项。
-        val adb = AdbSessionHub.liveTargets().map {
-            ResourceItem("adb", it.key, it.host, "${it.host}:${it.port}")
+        val adb = AdbSessionHub.registry.list().map { t ->
+            val alive = AdbSessionHub.isLive(t.key)
+            ResourceItem("adb", t.key, t.host, "${t.host}:${t.port}（${if (alive) "已连接" else "未连接"}）", if (alive) System.currentTimeMillis() else null)
         }
         val saf = SafTreeStore.list(context).map { ResourceItem("saf", it, it.substringAfterLast('/'), it) }
         val embedded = if (embeddedResourceVisible()) listOf(ResourceItem("embedded", "browser", "WebView", "embedded")) else emptyList()

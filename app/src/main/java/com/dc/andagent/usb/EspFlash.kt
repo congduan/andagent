@@ -326,11 +326,11 @@ class EspFlasher(
         val targetBaud = baud?.takeIf { it > 0 && it != initialBaud && setBaud != null && initialBaud != null }
         if (targetBaud != null) {
             try {
-                // payload=<II(baud, 0)>：esptool v5.6.0 loader.py change_baud 发 8B（new+old），
-                // ROM 只读第一字（新波特率），第二字给二阶段/stub；发 4B 部分 ROM 固件会拒收。
+                // payload=<II(baud, 0)>：esptool v5.6.0 loader.py change_baud 发 8B；ROM 模式第二字固定 0
+                // （只有 stub 模式才传旧波特率，见官方 serial-protocol 文档）。
                 val buf = ByteArray(8)
                 EspFlashCodec.putLe32(buf, 0, targetBaud)
-                EspFlashCodec.putLe32(buf, 4, initialBaud!!)
+                EspFlashCodec.putLe32(buf, 4, 0)
                 checkCommand(EspCmd.CHANGE_BAUDRATE, buf)
                 setBaud!!(targetBaud)
                 sleepMs(50)

@@ -66,6 +66,9 @@ object AdbSessionHub {
     )
 
     val registry = AdbSessionRegistry()
+
+    /** 资源中心用：目标是否有存活连接（R133c 面板状态标注）。 */
+    fun isLive(key: String): Boolean = synchronized(lock) { live[key]?.isAlive() == true }
     private val live = LinkedHashMap<String, AdbClient>()
     /** R121f：每条 live 连接的建立时刻（ms），供 adb_devices 展示连接时长。 */
     private val liveSince = LinkedHashMap<String, Long>()

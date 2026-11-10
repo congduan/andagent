@@ -356,11 +356,11 @@ class EspFlashCodecTest {
 
         // 0x0F 请求在旧波特率上应答，后续 FLASH 命令在新波特率上收发
         assertTrue(serial.receivedOps.contains(EspCmd.CHANGE_BAUDRATE to 115200))
-        // payload=<II(new, old)> 8 字节（esptool change_baud 同构，ROM 读第一字）
+        // payload=<II(new, 0)> 8 字节（esptool change_baud 同构：ROM 模式第二字固定 0，stub 才传旧波特率）
         val baudPayload = serial.baudPayloads.single()
         assertEquals(8, baudPayload.size)
         assertEquals(921600, EspFlashCodec.le32(baudPayload, 0))
-        assertEquals(115200, EspFlashCodec.le32(baudPayload, 4))
+        assertEquals(0, EspFlashCodec.le32(baudPayload, 4))
         assertTrue(serial.receivedOps.contains(EspCmd.FLASH_BEGIN to 921600))
         assertTrue(serial.receivedOps.any { it.first == EspCmd.FLASH_DATA && it.second == 921600 })
         assertTrue(serial.receivedOps.any { it.first == EspCmd.SPI_FLASH_MD5 && it.second == 921600 })
