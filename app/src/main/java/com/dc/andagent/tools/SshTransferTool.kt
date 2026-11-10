@@ -233,13 +233,36 @@ class SshTransferTool(private val context: Context, override val name: String,
         val temp = File.createTempFile("ssh-", ".part", context.cacheDir)
         try {
             track(sftp, progress)
-            // R97b: read-ahead 1MB——sshj 默认 32KB 在途窗口在广域网 RTT 30-50ms 下
-            // 理论吞吐只有 ~800KB/s（32KB/RTT），是用户实测 <1MB/s 的根因。
-            // 1MB 在途覆盖 100Mbps@100ms 带宽时延积；localhost PoC（RTT~0）测不出该问题。
+            // R131 根因修复：sshj ReadAheadRemoteFileInputStream 构造参数是
+            // maxUnconfirmedReads（在途请求数，RemoteFile.java:266）——R97b 误传
+            // 1MB（1 shl 20）= 「瞬间发出 100 万个未确认 SFTP READ 请求」，服务器
+            // 侧（OpenSSH NetAuditRead 洪泛保护/连接过载）直接挂起/断连——真机
+            // 「进度卡 0%」的根因。R97b 想要的「1MB 带宽时延积」语义应该由并发数×
+            // 请求大小实现：sshj 单请求大小 = max(1024, len)（RemoteFile.java:315，
+            // len 来自 copyTo 的 read buffer）。
+            // 修复：显式 RemoteFile.read(offset, len) 循环（256KB×并发8 ≈ 2MB 在途，
+            // 对齐 OpenSSH sftp 客户端 pipelining），自带真实进度回调与 idle 超时。
             val remoteFile = sftp.open(remote)
-            val remoteIn = remoteFile.ReadAheadRemoteFileInputStream(1 shl 20)
-            remoteIn.use { input ->
-                temp.outputStream().buffered(1 shl 20).use { output -> input.copyTo(output, 1 shl 20) }
+            val fileLen = remoteFile.length()
+            val chunk = 256 * 1024
+            val buffer = ByteArray(chunk)
+            var offset = 0L
+            var lastDataAt = System.currentTimeMillis()
+            temp.outputStream().buffered(1 shl 20).use { output ->
+                while (offset < fileLen) {
+                    if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
+                    val len = minOf(chunk.toLong(), fileLen - offset).toInt()
+                    // sshj RemoteFile.read 内部 asyncRead.retrieve(timeoutMs)——
+                    // requester 超时由会话层 sftp engine 配置控制（SshTools 三层超时）。
+                    val n = remoteFile.read(offset, buffer, 0, len)
+                    if (n <= 0) throw IOException("服务器提前结束数据流（offset=$offset/${fileLen}）")
+                    if (!progress.count(n.toLong())) throw IOException("传输超过大小上限")
+                    output.write(buffer, 0, n)
+                    offset += n
+                    val now = System.currentTimeMillis()
+                    if (now - lastDataAt > 60_000) throw IOException("下载停滞超 60 秒（offset=$offset/${fileLen}），请检查服务器或网络")
+                    lastDataAt = now
+                }
             }
             if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
             if (progress.exceeded) return "ERROR: 下载超过大小上限"
