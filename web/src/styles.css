@@ -3859,6 +3859,43 @@ button:disabled {
   animation: dialog-in 0.18s cubic-bezier(0.22, 0.8, 0.25, 1) both;
 }
 
+/* R106: 富决策确认——放宽宽度让 CARD / BUTTON_GROUP 舒展，
+   并去掉内嵌 a2ui-card 的重复边框，避免出现「卡片套卡片」。 */
+.confirm-card-rich {
+  width: min(560px, 100%);
+  padding: 12px 12px 8px;
+}
+.confirm-card-rich .a2ui-card {
+  margin: 0 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* R106 必修项1: 宿主自渲染完整参数——不进 spec、不受 A2uiCard 的 1000 字
+   clip，只限高度滚动，保证危险操作的参数全文可见、不被静默截断。 */
+.confirm-args-label {
+  margin: 4px 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.confirm-args {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--wash-1);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .confirm-overlay.closing {
   animation: fade-out 0.16s ease both;
   pointer-events: none;

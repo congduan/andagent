@@ -1033,3 +1033,59 @@ describe("A2uiCard · R136 展示型字段", () => {
     expect(document.querySelector(".a2ui-submit")).toBeNull();
   });
 });
+
+// R106: 受控提交出口——富确认弹窗用 onSubmit 接管结果，不进对话流 composer-fill 提交态。
+describe("A2uiCard · R106 controlled submit", () => {
+  beforeEach(() => localStorage.setItem("andagent.language", "zh"));
+  afterEach(() => cleanup());
+
+  it("with onSubmit: calls (payload, title), skips composer-fill and the submitted state", () => {
+    const { handler, stop } = captureFill();
+    const onSubmit = vi.fn();
+    const spec = {
+      title: "危险操作确认",
+      fields: [
+        {
+          type: "BUTTON_GROUP",
+          key: "decision",
+          required: true,
+          buttons: [{ value: "confirm", label: "允许执行" }],
+        },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByText("允许执行"));
+    fireEvent.click(screen.getByText("提交"));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const [payload, title] = onSubmit.mock.calls[0];
+    expect((payload as Record<string, unknown>).decision).toBe("confirm");
+    expect(title).toBe("危险操作确认");
+    expect(handler).not.toHaveBeenCalled();
+    // 不进入「已提交」态（由宿主决定后续）。
+    expect(screen.queryByText("已提交")).toBeNull();
+    stop();
+  });
+
+  it("without onSubmit: still dispatches composer-fill and enters submitted state", () => {
+    const { handler, stop } = captureFill();
+    const spec = {
+      title: "普通表单",
+      fields: [
+        {
+          type: "BUTTON_GROUP",
+          key: "decision",
+          required: true,
+          buttons: [{ value: "confirm", label: "允许执行" }],
+        },
+      ],
+    };
+    render(<A2uiCard code={JSON.stringify(spec)} />);
+    fireEvent.click(screen.getByText("允许执行"));
+    fireEvent.click(screen.getByText("提交"));
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("已提交")).toBeTruthy();
+    stop();
+  });
+});

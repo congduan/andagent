@@ -10,7 +10,7 @@ import type {
 } from "@mariozechner/pi-ai";
 import type { ThreadMessageLike } from "@assistant-ui/react";
 import { cancelAgentWork, execTool, STOPPED_RESULT, type Settings } from "./bridge";
-import { appConfirm } from "./ConfirmDialog";
+import { appConfirm, appRichConfirm, buildDecisionSpec, type DecisionParts } from "./ConfirmDialog";
 import { PERMISSION_GUIDE, PERMISSION_GUIDE_EN } from "./permissionGuide";
 import { currentLanguage } from "./i18n";
 import { isModelConfigured, visionCapable } from "./modelConfig";
@@ -1847,14 +1847,28 @@ export class AgentEngine {
             undefined,
             controller.signal,
           );
-          // F3: CONFIRM_REQUIRED → 真 UI 弹窗。Kotlin 侧参数闸返回确认请求时，
-          // 弹 ConfirmDialog 展示危险摘要；用户允许 → 同参数 + confirm=true 自动重试；
-          // 拒绝 → 结果改写为「用户拒绝」，AI 不再自作主张重试。
+          // R106: CONFIRM_REQUIRED → a2ui 富决策卡。工具名 + 全参数全文、风险摘要
+          // 一并展示；用户选「允许执行」→ 同参数 + confirm=true 自动重试；
+          // 取消/拒绝/停止 → 结果改写为「用户拒绝」，AI 不再自作主张重试。
           if (result.result.startsWith("CONFIRM_REQUIRED:") && !controller.signal.aborted) {
             const summary = result.result.slice("CONFIRM_REQUIRED:".length).trim().slice(0, 300);
             const args = { ...(call.arguments ?? {}) };
-            const ok = await appConfirm(`危险操作确认${summary ? "：" + summary : ""}`);
-            if (ok) {
+            const en = currentLanguage() === "en";
+            const parts: DecisionParts = {
+              cardTitle: en ? "Dangerous action" : "危险操作确认",
+              riskText: summary,
+              argsText: JSON.stringify({ tool: call.name, arguments: call.arguments ?? {} }),
+              argsLabel: en ? "Full arguments" : "完整参数",
+              fallbackMessage: en
+                ? `Dangerous action${summary ? ": " + summary : ""}`
+                : `危险操作确认${summary ? "：" + summary : ""}`,
+            };
+            const specText = buildDecisionSpec(parts);
+            // R106 fallback: spec 构造失败（parse 不过的极端情况）→ 回落纯文本 appConfirm。
+            const approved = specText === null
+              ? await appConfirm(parts.fallbackMessage)
+              : (await appRichConfirm(specText, parts.argsText, parts.argsLabel))?.decision === "confirm";
+            if (approved) {
               args.confirm = true;
               result = await execTool(call.name, args, call.id, undefined, controller.signal);
             } else {

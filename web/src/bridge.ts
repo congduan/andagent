@@ -1,5 +1,5 @@
 import { currentLanguage, translate } from "./i18n";
-import { appConfirm, cancelConfirmDialog } from "./ConfirmDialog";
+import { appConfirm, appRichConfirm, buildDecisionSpec, cancelConfirmDialog, type DecisionParts } from "./ConfirmDialog";
 import { loadConfirmMode } from "./confirmMode";
 import { TOOL_DESTRUCTIVE, TOOL_META } from "./toolMeta";
 import { waitForMainFrameToken } from "./settingBridge";
@@ -719,11 +719,28 @@ function confirmTool(name: string, argsJson: string, signal?: AbortSignal): Prom
   if (existing) return existing.decision;
 
   const meta = TOOL_META[name];
-  const label = currentLanguage() === "en" ? (meta?.labelEn ?? name) : (meta?.label ?? name);
+  const en = currentLanguage() === "en";
+  const label = en ? (meta?.labelEn ?? name) : (meta?.label ?? name);
   const summary = argsJson.length > 200 ? `${argsJson.slice(0, 200)}…` : argsJson;
   const message = translate("toolConfirmPrompt", { label, args: summary });
+  // R106 必修项1: 富决策卡——工具展示名/风险说明进 CARD，完整参数作为独立
+  // argsText 交给宿主自渲染（不进 spec、不受 A2uiCard 的 1000 字 clip）。
+  // decision 按钮组沿用 agent.ts 路径 A 的同一套构造。
+  const parts: DecisionParts = {
+    cardTitle: label,
+    riskText: message,
+    argsText: argsJson,
+    argsLabel: en ? "Full arguments" : "完整参数",
+    fallbackMessage: message,
+  };
+  const specText = buildDecisionSpec(parts);
   // 排队期间可能已被「停止」：abort 后不再弹窗，避免停止后又冒出一个确认框。
-  const decision = confirmationQueue.then(() => (signal?.aborted ? false : appConfirm(message)));
+  const decision = confirmationQueue.then(() => {
+    if (signal?.aborted) return false;
+    // R106 fallback: spec 构造失败 → 回落纯文本 appConfirm。
+    if (specText === null) return appConfirm(message);
+    return appRichConfirm(specText, parts.argsText, parts.argsLabel).then((payload) => payload?.decision === "confirm");
+  });
   confirmationQueue = decision.then(() => undefined, () => undefined);
   recentConfirmations.set(key, { decision, expiresAt: Infinity });
   void decision.then(() => {

@@ -334,7 +334,14 @@ function safeImageSrc(raw: string): string {
   return "";
 }
 
-export function A2uiCard({ code }: { code: string }) {
+export function A2uiCard({
+  code,
+  onSubmit,
+}: {
+  code: string;
+  /** R106: 受控提交出口。传入时提交结果交给宿主，不再 dispatch composer-fill、不进入已提交态。 */
+  onSubmit?: (payload: Record<string, unknown>, title: string) => void;
+}) {
   const { t, language } = useI18n();
   const reactId = useId().replace(/[^a-zA-Z0-9]/g, "");
   const spec = useMemo(() => parseSpec(code), [code]);
@@ -516,6 +523,11 @@ export function A2uiCard({ code }: { code: string }) {
     });
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors);
+      return;
+    }
+    // R106: 受控模式（富确认弹窗）由宿主决定后续，不进对话流的 composer-fill 提交态。
+    if (onSubmit) {
+      onSubmit(payload, title);
       return;
     }
     const detail = JSON.stringify({ a2ui_submit: payload, a2ui_title: title });
