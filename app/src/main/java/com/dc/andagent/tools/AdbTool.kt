@@ -49,6 +49,8 @@ object AdbSessionHub {
     /** R103 A：配对时记录的设备证书指纹（host -> SHA-256 hex，null = 已配对但未取到）。仅记录用途。 */
     private const val PAIRINGS_KEY = "pairings"
     const val RECONNECT_TIMEOUT_MS = 3000
+    /** R124 b: ADB 保活引用 tag（单 tag 表示「存在 live 连接」）。 */
+    private const val ADB_KEEPALIVE_TAG = "adb"
 
     /**
      * R124 真机 A/B 开关（只改这几行，协议层不动）：
@@ -127,10 +129,35 @@ object AdbSessionHub {
         liveSince[key] = System.currentTimeMillis()
     }
 
-    /** 摘除 live 连接（同时清掉时长记录），返回被摘除的连接供调用方 close。 */
+    /**
+     * 摘除 live 连接（同时清掉时长记录），返回被摘除的连接供调用方 close。
+     * R124 b（Codex review 必修 1/2 修复）：release 在 hub 锁内调用；KeepAliveRefs
+     * 内部把「引用计数变更 + stop 动作」作为原子段执行，最后一个引用释放即串行停服，
+     * 不会与并发 acquire 的 start 交错（「非空停服」不可能）。
+     */
     private fun dropLive(key: String): AdbClient? {
         liveSince.remove(key)
-        return live.remove(key)
+        val c = live.remove(key)
+        if (c != null && live.isEmpty()) {
+            runCatching { KeepAliveRefs.release(ADB_KEEPALIVE_TAG) }
+        }
+        return c
+    }
+
+    /**
+     * R124 b：成功建立/重连 live 连接后登记保活引用并确保服务在跑。
+     * 必须在 hub 锁内调用：引用登记与 live 变更同锁，杜绝「连接已被并发 disconnect
+     * 摘除、release 却因无引用而漏掉、随后 acquire 登记孤儿引用」的窗口（必修 1）。
+     * KeepAliveRefs 内部保证「acquire + start 动作」原子；running 脏标记使服务
+     * 曾启动失败/被回收时自动重拉（必修 3 的自愈闭环）。
+     */
+    private fun keepAliveAcquiredLocked() {
+        runCatching { KeepAliveRefs.acquire(ADB_KEEPALIVE_TAG) }
+    }
+
+    /** R124 b：devices() 在 hub 锁外登记保活引用（列表页 best-effort 重连恢复时）。 */
+    private fun keepAliveAcquired() {
+        runCatching { KeepAliveRefs.acquire(ADB_KEEPALIVE_TAG) }
     }
 
     /**
@@ -191,36 +218,44 @@ object AdbSessionHub {
     /** 连接并登记目标；返回 AdbClient.connect 的原始结果串。tls=true 走 TLS 1.3 传输。 */
     fun connect(host: String, port: Int, tls: Boolean = false, pinnedFp: String? = null): String =
         synchronized(lock) {
-            val key = "$host:$port"
-            // 同 host 已有条目时属于「迁移到新端口」，不占用新的目标名额。
-            if (registry.size() >= AdbToolRules.MAX_TARGETS && !registry.contains(key) &&
-                registry.list().none { it.host.equals(host, ignoreCase = true) }) {
-                return "ERROR: 已保存目标数达上限 ${AdbToolRules.MAX_TARGETS}，请先 adb_disconnect"
-            }
-            // R121f：adbd 单客户端——建新连接前先关掉同 host 全部旧 live（历史端口残留），
-            // 释放 adbd 名额，否则新连接握手时旧连接被 kick，OPEN 已发却永远等不到 OKAY。
-            closeOtherLive(host, null)
-            val transport: AdbTransport =
-                if (tls) {
-                    TlsTransport(listOfNotNull(pinnedFp), AdbPairNative, keyPair.private.encoded)
-                } else TcpTransport()
-            val c = AdbClient(keyPair, transport, options = connectOptions(tls))
-            val r0 = c.connect(host, port)
-            // R124 诊断：把目标机 CNXN banner 全文（features 权威数据）随连接结果留痕。
-            val banner = c.peerBanner()
-            val r = if (r0.startsWith("OK") && banner.isNotEmpty()) "$r0\n对端 CNXN banner：$banner" else r0
-            if (r.startsWith("OK")) putLive(key, c) else c.close()
-            // OK / AUTH_REQUIRED 都登记（便于 adb_devices 看到、重试）；纯网络 ERROR 不登记。
-            if (r.startsWith("OK") || r.startsWith("AUTH_REQUIRED")) {
-                // host 级合并：条目迁移到新 host:port，移除同 host 旧端口条目，
-                // 并清掉旧 key 上可能残留的 live（大小写不一致时的兜底）。
-                val stale = registry.mergeHost(AdbTarget(host, port, tls, pinnedFp))
-                stale.forEach { k -> runCatching { dropLive(k)?.close() } }
-                closeOtherLive(host, key)
-                persist()
-            }
+            val r = connectLocked(host, port, tls, pinnedFp)
+            // R124 b（必修 1/2 修复）：引用登记在 hub 锁内、紧贴 putLive，与并发
+            // disconnect/dropLive 串行化；KeepAliveRefs 内部保证 start 动作原子。
+            if (r.startsWith("OK")) keepAliveAcquiredLocked()
             r
         }
+
+    private fun connectLocked(host: String, port: Int, tls: Boolean, pinnedFp: String?): String {
+        val key = "$host:$port"
+        // 同 host 已有条目时属于「迁移到新端口」，不占用新的目标名额。
+        if (registry.size() >= AdbToolRules.MAX_TARGETS && !registry.contains(key) &&
+            registry.list().none { it.host.equals(host, ignoreCase = true) }) {
+            return "ERROR: 已保存目标数达上限 ${AdbToolRules.MAX_TARGETS}，请先 adb_disconnect"
+        }
+        // R121f：adbd 单客户端——建新连接前先关掉同 host 全部旧 live（历史端口残留），
+        // 释放 adbd 名额，否则新连接握手时旧连接被 kick，OPEN 已发却永远等不到 OKAY。
+        closeOtherLive(host, null)
+        val transport: AdbTransport =
+            if (tls) {
+                TlsTransport(listOfNotNull(pinnedFp), AdbPairNative, keyPair.private.encoded)
+            } else TcpTransport()
+        val c = AdbClient(keyPair, transport, options = connectOptions(tls))
+        val r0 = c.connect(host, port)
+        // R124 诊断：把目标机 CNXN banner 全文（features 权威数据）随连接结果留痕。
+        val banner = c.peerBanner()
+        val r = if (r0.startsWith("OK") && banner.isNotEmpty()) "$r0\n对端 CNXN banner：$banner" else r0
+        if (r.startsWith("OK")) putLive(key, c) else c.close()
+        // OK / AUTH_REQUIRED 都登记（便于 adb_devices 看到、重试）；纯网络 ERROR 不登记。
+        if (r.startsWith("OK") || r.startsWith("AUTH_REQUIRED")) {
+            // host 级合并：条目迁移到新 host:port，移除同 host 旧端口条目，
+            // 并清掉旧 key 上可能残留的 live（大小写不一致时的兜底）。
+            val stale = registry.mergeHost(AdbTarget(host, port, tls, pinnedFp))
+            stale.forEach { k -> runCatching { dropLive(k)?.close() } }
+            closeOtherLive(host, key)
+            persist()
+        }
+        return r
+    }
 
     fun disconnect(host: String): String = synchronized(lock) {
         val t = registry.resolve(host) ?: return "ERROR: 目标不存在：$host（用 adb_devices 查看）"
@@ -286,11 +321,21 @@ object AdbSessionHub {
 
     /** 操作工具取用：必要时（重连/app 重启后 live 空）自动连接（沿用目标的传输类型）。 */
     fun client(ref: String): AdbClient? = synchronized(lock) {
-        val t = registry.resolve(ref) ?: return null
+        val lookup = clientLocked(ref)
+        // R124 b（必修 1/2/3 修复）：真重连在锁内登记引用；复用既有连接时调 repair()
+        // 兜底——引用仍在但服务已死（自停/系统回收）时重拉，堵「有引用无服务」。
+        if (lookup.reconnected) keepAliveAcquiredLocked() else KeepAliveRefs.repair()
+        lookup.client
+    }
+
+    private data class ClientLookup(val client: AdbClient?, val reconnected: Boolean)
+
+    private fun clientLocked(ref: String): ClientLookup {
+        val t = registry.resolve(ref) ?: return ClientLookup(null, false)
         // R121f：adbd 单客户端——同 host 只保留 t.key 这一条 live，重连前先关闭其它旧端口连接。
         closeOtherLive(t.host, t.key)
         val existing = live[t.key]
-        if (existing != null && existing.isAlive()) return existing
+        if (existing != null && existing.isAlive()) return ClientLookup(existing, false)
         // 死连接（含被 adbd kick 的假活）：先关闭再重建，避免占 adbd 名额 / 旧 socket 泄漏。
         if (existing != null) {
             dropLive(t.key)
@@ -300,10 +345,10 @@ object AdbSessionHub {
         val r = c.connect(t.host, t.port)
         if (r.startsWith("OK")) {
             putLive(t.key, c)
-            return c
+            return ClientLookup(c, true)
         }
         c.close()
-        null
+        return ClientLookup(null, false)
     }
 
     /**
@@ -350,6 +395,16 @@ object AdbSessionHub {
 
     /** adb_devices：列出已保存目标 + 状态（是否有 live 连接 + 连接时长）；离线目标做一次 best-effort 重连。 */
     fun devices(): String = synchronized(lock) {
+        val r = devicesLocked()
+        // R124 review 必修 1：adb_devices 的 best-effort 重连真实建立了 live 连接，
+        // 必须与 connect() 同等登记保活引用（本函数已在 hub 锁内）。
+        if (r.reconnected) keepAliveAcquiredLocked() else KeepAliveRefs.repair()
+        r.text
+    }
+
+    private data class DevicesResult(val text: String, val reconnected: Boolean)
+
+    private fun devicesLocked(): DevicesResult {
         // R121f 断言式自愈：修复后同 host 不应再有多条目；老用户 KV 残留的历史端口则
         // Log.w 并自动合并为单条目，同时关掉旧端口 live（首次 adb_devices 不崩且收敛）。
         val dupGroups = registry.duplicateHostGroups()
@@ -369,10 +424,11 @@ object AdbSessionHub {
         }
         val targets = registry.list()
         if (targets.isEmpty()) {
-            if (pairings.isNotEmpty()) return "已配对待连接：${pairings.keys.joinToString()}。请从目标机无线调试主页读取主端口，调用 adb_connect(host, port)；配对端口不能用作主端口。"
-            return "没有已保存的 ADB 目标。用 adb_connect(host, port=5555) 连接目标手机（无线调试端口从手机「无线调试」页读取）。"
+            if (pairings.isNotEmpty()) return DevicesResult("已配对待连接：${pairings.keys.joinToString()}。请从目标机无线调试主页读取主端口，调用 adb_connect(host, port)；配对端口不能用作主端口。", false)
+            return DevicesResult("没有已保存的 ADB 目标。用 adb_connect(host, port=5555) 连接目标手机（无线调试端口从手机「无线调试」页读取）。", false)
         }
         val sb = StringBuilder("已保存 ADB 目标 ${targets.size} 个：\n")
+        var reconnected = false
         for (t in targets) {
             val c = live[t.key]
             val alive = c != null && c.isAlive()
@@ -387,6 +443,7 @@ object AdbSessionHub {
                 val r = nc.connect(t.host, t.port, RECONNECT_TIMEOUT_MS)
                 if (r.startsWith("OK")) {
                     putLive(t.key, nc)
+                    reconnected = true
                     status = "connected(已重连，有 live 连接)"
                 } else {
                     runCatching { nc.close() }
@@ -398,7 +455,7 @@ object AdbSessionHub {
             sb.append("- $host  paired(待连接主端口)\n")
         }
         sb.append("提示：首次连接需在手机点「允许」授权；adb_shell/pull/push/screencap 会自动重连离线目标。")
-        sb.toString().trimEnd()
+        return DevicesResult(sb.toString().trimEnd(), reconnected)
     }
 }
 
@@ -524,6 +581,13 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
                 r.startsWith("OK") -> append("下一步：adb_devices 查看；adb_shell / adb_screencap / adb_pull / adb_push 操作。")
                 r.startsWith("AUTH_REQUIRED") -> append("目标已登记；在手机点「允许」后重新 adb_connect(host, port) 即完成握手。")
                 else -> append("请确认目标手机「无线调试」已开启、端口正确且与本机在同一网络。")
+            }
+            // R124 a: 连接成功后检测电池优化白名单；未白名单时尾部附双语提示。
+            if (r.startsWith("OK")) {
+                BackgroundSurvival.whitelistHint(context)?.let { appendLine(); append(it) }
+            } else if (!r.startsWith("AUTH_REQUIRED")) {
+                // R124 d: 纯连接失败（非「待点允许」）时附厂商 ROM 后台保活 + 电池白名单提示。
+                appendLine(); append(survivalHint())
             }
         }
     }
@@ -722,7 +786,14 @@ class AdbTool(private val context: Context, override val name: String) : Tool {
     }
 
     private fun noTarget(target: String): String =
-        "ERROR: 目标不可达：$target（用 adb_devices 查看状态；首次连接先在手机点「允许」授权，再 adb_connect）"
+        "ERROR: 目标不可达：$target（用 adb_devices 查看状态；首次连接先在手机点「允许」授权，再 adb_connect）" +
+            "\n${survivalHint()}"
+
+    /** R124 d: 连接失败时附厂商 ROM 后台保活路径 + 电池优化白名单提示（不新增任何凭据传参）。 */
+    private fun survivalHint(): String = buildString {
+        append(BackgroundSurvival.vendorGuide(Build.MANUFACTURER))
+        BackgroundSurvival.whitelistHint(context)?.let { appendLine(); append(it) }
+    }
 
     /** 落盘到 Download/AndAgentSsh（MediaStore）或 app_private（filesDir/adb_downloads）。 */
     private fun saveBytes(name: String, bytes: ByteArray, dir: String): String {

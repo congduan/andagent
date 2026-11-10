@@ -225,6 +225,8 @@ class SshTool(
                 appendLine("注意：本次使用旧的 key_path 文件路径认证（兼容模式）；路径已出现在对话中，建议改为在「设置 → SSH 凭据」保存后以 credential 引用。")
             }
             append("下一步：ssh_exec 执行命令；ssh_list 查看会话；ssh_close 断开。")
+            // R124 a: 连接成功后检测电池优化白名单；未白名单时尾部附双语提示。
+            BackgroundSurvival.whitelistHint(appContext)?.let { appendLine(); append(it) }
         }
     }
 
@@ -386,10 +388,12 @@ class SshTool(
         if (deadSession) SshSessionPool.removeByRef(ref)
         if (cancelled) return@withContext "ERROR: 已被用户中断"
         if (deadSession && exit == -1 && !timedOut && failure != null) {
-            return@withContext "ERROR: 会话已断开（$ref）：命令执行失败：$failure"
+            // R124 d: 断线自愈收口——不做后台静默重连（凭据解密触发面扩大），
+            // 改为引导模型用已加密保存的凭据重新 ssh_connect，等效恢复且不过任何凭据。
+            return@withContext "ERROR: 会话已断开（$ref）：命令执行失败：$failure\n${BackgroundSurvival.SSH_RECONNECT_HINT}"
         }
         if (deadSession && exit == -1 && !timedOut) {
-            return@withContext "ERROR: 会话已断开：$ref"
+            return@withContext "ERROR: 会话已断开：$ref\n${BackgroundSurvival.SSH_RECONNECT_HINT}"
         }
         if (failure != null && exit == -1 && !timedOut) {
             return@withContext buildString {
@@ -620,14 +624,32 @@ object SshSessionPool {
 
     @Synchronized fun put(id: String, session: Live, context: Context) {
         appContext = context.applicationContext
+        val tag = "ssh:$id"
+        // presence 仍驱动通知 deeplink 的 latest；保活引用计数改由 KeepAliveRefs 统一（SSH+ADB 共用）。
         val first = presence.put(id)
         try {
-            // 幂等：服务已在跑时只是再走一次 onStartCommand（锁已持有则不再 acquire）。
+            // R124 收口（Codex review 必修 3）：acquire 也纳入 try——前台服务启动抛异常时
+            // 上抛给调用方决定首条连接是否拒绝；幂等：服务已在跑时只是再走一次 onStartCommand。
             // 旧实现只在“从空到非空”调一次，服务一旦被系统停掉就再也拉不起来，保活静默失效。
-            SshKeepAliveService.ensureStarted(context.applicationContext)
+            // R124 二轮 review 必修 2：start 动作（ensureStarted）由 KeepAliveRefs.acquire
+            // 在锁内统一执行——此处不再二次裸调（重复调用无意义，且其异常会误判成功路径）。
+            // R124 三轮 review 必修：acquire 失败（start 抛异常）时**保留引用登记、不回滚、
+            // 也不拒会话**——引用代表「该会话需要保活」这个事实，与会话同生共死（remove 时
+            // release）；此刻服务拉不起来但引用在位，后续任何 acquire/repair（含服务死亡
+            // markServiceDead 后）都会自愈重拉。若此处回滚引用却仍接纳会话，其它会话关闭
+            // 后引用归零误停保活，而这条新会话实际还在用——正是二轮要堵的洞的镜像。
+            KeepAliveRefs.acquire(tag)
         } catch (e: Exception) {
-            if (first) { presence.remove(id); throw e }
-            // 已有其它活跃会话：保活重启失败不该连带拒掉这条新连接。
+            // never-crash：保活重启失败不拒绝 SSH 连接本身（连接可用性优先于保活），
+            // 引用已在 acquire 内登记；后续任何 acquire/repair（含服务死亡复位后）自愈重拉。
+            if (first) {
+                // R124 四轮 review：首条连接（从无到有）失败时该会话并未被接纳（live 未写入），
+                // 上抛拒绝前必须摘除 presence 与引用——否则拒绝后残留孤儿引用：计数永不归零、
+                // 保活服务永不停（引用语义 = 「会话需要保活」，而此刻并没有任何会话在池里）。
+                presence.remove(id)
+                runCatching { KeepAliveRefs.release(tag) }
+                throw e
+            }
         }
         live[id] = session
     }
@@ -640,7 +662,12 @@ object SshSessionPool {
     @Synchronized fun remove(id: String): Live? {
         registry.remove(id)
         val removed = live.remove(id)
-        if (presence.remove(id)) appContext?.let(SshKeepAliveService::stop)
+        presence.remove(id)
+        // R124 b: SSH+ADB 共用引用计数——只有两类会话都清空才停服。
+        // R124 收口（Codex review 必修 2）：release 返回 true 时已在 KeepAliveRefs 锁内
+        // 串行执行 stop 动作，此处不再二次 stopService——两次 stop 之间 ADB 可能已取得
+        // 引用并拉起服务，二次 stop 会误停仍被 ADB 使用的保活。
+        KeepAliveRefs.release("ssh:$id")
         return removed
     }
 

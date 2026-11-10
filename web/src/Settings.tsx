@@ -829,6 +829,11 @@ export function SettingsPanel({ settings, page, onNavigate, onBack, onClose, onS
       <p className="settings-card-note">{t("adbPairGuideStep2")}</p>
       <p className="settings-card-note">{t("adbPairGuideStep3")}</p>
     </>)}
+    {/* R124 a: 纯静态双语说明卡，不新增桥；状态探测需要 PowerManager，设置页不引桥。 */}
+    {section(t("backgroundSurvivalTitle"), <>
+      <p className="settings-card-note">{t("backgroundSurvivalNote")}</p>
+      <p className="settings-card-note">{t("backgroundSurvivalGuide")}</p>
+    </>)}
     {section(`${t("sshCredentialList")} (${creds.length})`, <>
       <div className="settings-card-actions">
         <button type="button" className="btn-primary" onClick={() => showResult(sshCredentialsOpen())}>{t("sshCredentialAdd")}</button>

@@ -47,6 +47,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- R124 a: open_settings(panel=battery_whitelist) 直接弹「忽略电池优化」授权。
+         F-Droid 路线可用；Google Play 对该权限有政策限制，本项目不走 Play。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <!-- Silent alarm/timer writes via AlarmClock intents (SKIP_UI=true) -->

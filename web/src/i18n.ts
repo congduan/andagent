@@ -433,6 +433,10 @@ const zh = {
   adbPairGuideStep1: "① 目标手机：设置 → 开发者选项 → 无线调试 → 打开，点「使用配对码配对设备」，记下弹窗里的 IP 地址、配对端口、6 位配对码。",
   adbPairGuideStep2: "② 回到对话，说「配对 xx.xx.xx.x 端口 xxxxx 配对码 xxxxxx」，或用 adb_pair 工具填 host / pairing_port / pairing_code。",
   adbPairGuideStep3: "③ 配对成功后用 adb_connect(host, adb_port) 直连；adb_port 是「无线调试」页的主端口，与配对端口不同。仅 arm64-v8a 真机可用。",
+  // R124 a: 设置页「后台存活」静态卡（不新增桥，只放双语说明 + 让 agent 跑白名单的引导）。
+  backgroundSurvivalTitle: "后台存活",
+  backgroundSurvivalNote: "退到后台或锁屏后，系统可能冻结进程、限制网络，SSH / ADB 连接容易断开。把 AndAgent 加入电池优化白名单，并按厂商 ROM 放开自启动与后台运行，可显著降低断连概率。",
+  backgroundSurvivalGuide: "在对话里说「把我加入电池优化白名单」，助手会拉起系统授权并给出针对这台手机的设置指引；也可让助手运行 open_settings(panel=battery_whitelist)。",
   sshCredentialsGroupSub: "管理已加密保存的连接凭据",
   sshCredentialsNote: "密码与私钥只在原生界面输入，用 Android Keystore 加密保存在本机；对话只用 nickname 引用。",
   sshCredentialList: "已保存的凭据",
@@ -915,6 +919,10 @@ const en: Record<Key, string> = {
   adbPairGuideStep1: "1) On the target phone: Settings → Developer options → Wireless debugging → On, tap 'Pair device with pairing code' and note the IP address, pairing port and 6-digit code.",
   adbPairGuideStep2: "2) Back in the chat, say 'pair xx.xx.xx.x port xxxxx code xxxxxx', or call adb_pair with host / pairing_port / pairing_code.",
   adbPairGuideStep3: "3) After pairing, connect with adb_connect(host, adb_port). adb_port is the main port on the Wireless debugging page, different from the pairing port. arm64-v8a devices only.",
+  // R124 a: static 'Background survival' settings card (no new bridge; bilingual note + guide).
+  backgroundSurvivalTitle: "Background survival",
+  backgroundSurvivalNote: "When the app moves to the background or the screen locks, Android may freeze the process and restrict networking, which drops SSH / ADB connections. Adding AndAgent to the battery-optimization whitelist and allowing autostart/background running for your device's ROM greatly reduces disconnects.",
+  backgroundSurvivalGuide: "Say \"add me to the battery optimization whitelist\" in the chat — the assistant will launch the system prompt and give device-specific guidance; you can also ask it to run open_settings(panel=battery_whitelist).",
   sshCredentialsGroupSub: "Manage encrypted connection credentials",
   sshCredentialsNote: "Passwords and private keys are entered in a native screen and encrypted on this device with Android Keystore. Chats reference them by nickname only.",
   sshCredentialList: "Saved credentials",

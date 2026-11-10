@@ -17,7 +17,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.dc.andagent.MainActivity
 
-/** Holds network and CPU awake while at least one SSH session is in the pool. */
+/** R124 b: Holds network and CPU awake while at least one SSH or ADB session is live. */
 class SshKeepAliveService : Service() {
     private var wifiLock: WifiManager.WifiLock? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -29,7 +29,7 @@ class SshKeepAliveService : Service() {
         try {
             val manager = getSystemService(NotificationManager::class.java)
             if (manager.getNotificationChannel(CHANNEL) == null) {
-                manager.createNotificationChannel(NotificationChannel(CHANNEL, "SSH 会话", NotificationManager.IMPORTANCE_LOW))
+                manager.createNotificationChannel(NotificationChannel(CHANNEL, "SSH/ADB 会话", NotificationManager.IMPORTANCE_LOW))
             }
             val notification = notification(this, null, null)
             if (Build.VERSION.SDK_INT >= 29) {
@@ -58,6 +58,9 @@ class SshKeepAliveService : Service() {
     }
 
     override fun onDestroy() {
+        // R124 二轮 review 必修 3：服务死亡（异常自停 / 系统回收 / 主动 stop）时同步复位
+        // KeepAliveRefs 的 running 脏标记，保证引用仍在时后续 acquire/repair 会重拉。
+        runCatching { KeepAliveRefs.markServiceDead() }
         try { releaseLocks() } finally { super.onDestroy() }
     }
 
@@ -77,7 +80,7 @@ class SshKeepAliveService : Service() {
         private fun notification(context: Context, file: String?, percent: Int?) =
             NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
-                .setContentTitle("SSH 会话运行中")
+                .setContentTitle("SSH/ADB 会话运行中")
                 .setContentText(if (file == null) "保持网络连接，点击返回 AndAgent" else "正在下载 $file")
                 // R97 fixup: deeplink 回到当前 SSH 会话所在对话；singleTop 防止
                 // 点击通知新建 MainActivity 实例叠栈（用户报「没有返回指定对话」）。
