@@ -6,4 +6,21 @@
     <string name="terminal_title">终端</string>
     <string name="terminal_close">关闭</string>
     <string name="terminal_not_ready">内嵌 shell 未就绪：请先在设置中运行 termux_setup</string>
+
+    <!-- R83②: 字号按钮、tab 条、附加键行。 -->
+    <string name="terminal_font_minus_label">A-</string>
+    <string name="terminal_font_plus_label">A+</string>
+    <string name="terminal_font_smaller">缩小字号</string>
+    <string name="terminal_font_larger">放大字号</string>
+    <string name="terminal_new_tab">新建标签</string>
+    <string name="terminal_new_tab_label">+</string>
+    <string name="terminal_tab_label">标签 %1$d</string>
+    <string name="terminal_tab_hint">长按关闭</string>
+    <string name="terminal_key_esc">ESC 退出键</string>
+    <string name="terminal_key_tab">制表键</string>
+    <string name="terminal_key_ctrl">Ctrl 粘滞键</string>
+    <string name="terminal_key_up">上箭头</string>
+    <string name="terminal_key_down">下箭头</string>
+    <string name="terminal_key_left">左箭头</string>
+    <string name="terminal_key_right">右箭头</string>
 </resources>

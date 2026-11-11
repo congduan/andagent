@@ -10,4 +10,21 @@
     <string name="terminal_title">Terminal</string>
     <string name="terminal_close">Close</string>
     <string name="terminal_not_ready">Embedded shell is not ready. Run termux_setup in Settings first.</string>
+
+    <!-- R83②: font buttons, tab strip, extra keys row. -->
+    <string name="terminal_font_minus_label">A-</string>
+    <string name="terminal_font_plus_label">A+</string>
+    <string name="terminal_font_smaller">Decrease font size</string>
+    <string name="terminal_font_larger">Increase font size</string>
+    <string name="terminal_new_tab">New tab</string>
+    <string name="terminal_new_tab_label">+</string>
+    <string name="terminal_tab_label">Tab %1$d</string>
+    <string name="terminal_tab_hint">Long press to close</string>
+    <string name="terminal_key_esc">Escape</string>
+    <string name="terminal_key_tab">Tab</string>
+    <string name="terminal_key_ctrl">Control (sticky)</string>
+    <string name="terminal_key_up">Up arrow</string>
+    <string name="terminal_key_down">Down arrow</string>
+    <string name="terminal_key_left">Left arrow</string>
+    <string name="terminal_key_right">Right arrow</string>
 </resources>

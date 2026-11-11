@@ -6,6 +6,7 @@
     android:background="#0B0D11"
     android:fitsSystemWindows="true">
 
+    <!-- 顶栏：状态行 + 字号 -/+ + 关闭 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="48dp"
@@ -26,6 +27,22 @@
             android:text="@string/terminal_title" />
 
         <Button
+            android:id="@+id/terminal_font_minus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:text="@string/terminal_font_minus_label"
+            android:contentDescription="@string/terminal_font_smaller" />
+
+        <Button
+            android:id="@+id/terminal_font_plus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:text="@string/terminal_font_plus_label"
+            android:contentDescription="@string/terminal_font_larger" />
+
+        <Button
             android:id="@+id/terminal_close"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -33,11 +50,34 @@
             android:text="@string/terminal_close" />
     </LinearLayout>
 
-    <com.termux.view.TerminalView
-        android:id="@+id/terminal_view"
+    <!-- 顶部 tab 条：动态 chip 与 "+" 放入内层 LinearLayout（TerminalActivity 刷新）。 -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/terminal_tab_container"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp" />
+    </HorizontalScrollView>
+
+    <!-- 每个 tab 一个动态 TerminalView 叠放于此 FrameLayout（切 tab = bringToFront）。 -->
+    <FrameLayout
+        android:id="@+id/terminal_container"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
-        android:focusable="true"
-        android:focusableInTouchMode="true" />
+        android:layout_weight="1" />
+
+    <!-- 终端视图下方的附加键行槽位：onCreate 代码构建 ExtraKeysView 放入。 -->
+    <FrameLayout
+        android:id="@+id/terminal_extra_keys_slot"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
 </LinearLayout>
