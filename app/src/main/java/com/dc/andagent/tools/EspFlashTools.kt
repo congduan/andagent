@@ -6,10 +6,14 @@ import android.os.Build
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
+import com.dc.andagent.usb.EspChip
 import com.dc.andagent.usb.EspFlasher
 import com.dc.andagent.usb.EspImage
 import com.dc.andagent.usb.EspReset
 import com.dc.andagent.usb.EspSerialIo
+import com.dc.andagent.usb.EspStub
+import com.dc.andagent.usb.EspStubAssets
+import com.dc.andagent.usb.EspTargets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonNull
@@ -94,7 +98,9 @@ class EspFlashTool(private val context: Context, override val name: String) : To
         val setBaud: (Int) -> Unit = { b -> synchronized(session.lock) { session.applyBaud(b) } }
         val initialBaud = synchronized(session.lock) { session.currentBaud }
 
-        val r = EspFlasher(io, control, sleepMs, setBaud, initialBaud)
+        // stub 二进制随包在 assets/esp_stub/<chip>.bin；按检测到的芯片取，且做 chip_id/版本匹配校验。
+        // 取不到 / 校验不过 / 启动失败一律在 EspFlasher 内自动降级 ROM，调用方无感。
+        val r = EspFlasher(io, control, sleepMs, setBaud, initialBaud, stubProvider = ::loadStub)
             .flash(image, offset, flashSizeBytes, baud)
         return buildJsonObject {
             put("status", "OK")
@@ -109,8 +115,21 @@ class EspFlashTool(private val context: Context, override val name: String) : To
             put("elapsedMs", r.elapsedMs)
             put("source", r.source)
             if (r.baud != null) put("baud", r.baud) else put("baud", JsonNull)
+            // R143 新增可选字段（既有字段全部保留、语义不变）："stub"|"rom"，供真机速度对比。
+            put("loader", r.loader)
             r.warning?.let { put("warning", it) }
         }.toString()
+    }
+
+    /** 从 assets 读取并校验该芯片的 stub；任何异常/不匹配返回 null → 触发 ROM 降级。 */
+    private fun loadStub(chip: EspChip): EspStub? {
+        val key = EspTargets.stubKeyFor(chip) ?: return null
+        return try {
+            val blob = context.assets.open("${EspStubAssets.ASSET_DIR}/$key.bin").use { it.readBytes() }
+            EspStubAssets.load(chip, blob)
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun monitor(args: JsonObject): String {

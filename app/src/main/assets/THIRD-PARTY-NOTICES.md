@@ -162,6 +162,12 @@ AndAgent is licensed under Apache-2.0 (see [LICENSE](LICENSE)). The entries belo
 - Copyright: Flipper-IRDB contributors（CC0 1.0）
 - 注：仅保留来源 URL 以便追溯，非许可要求。
 
+### esptool flasher stub binaries（app/src/main/assets/esp_stub/*.bin）
+- License: Apache-2.0 OR MIT（dual license；全文见 app/src/main/assets/esp_stub/LICENSE-APACHE 与 LICENSE-MIT）
+- Source: https://github.com/espressif/esptool — `esptool/targets/stub_flasher/2/*.json`（set 2，来自 https://github.com/espressif/esp-flasher-stub/releases/tag/v1.4.1）
+- Copyright: Copyright 2024-2026 Espressif Systems (Shanghai) CO LTD and esp-flasher-stub contributors
+- 注：本目录的 .bin 是把官方 JSON 里的 base64 `text`/`data` 解码后，加上 36 字节元数据头（magic `ESTB`、schema version、entry、text_start/text_len、data_start/data_len、chip_id、stub 版本标签 0x00010401）重新封装的容器，未修改固件本体；各文件来源 URL 与 SHA-256 见 /tmp/andagent-r143-run.md。
+
 ## Build-only frontend tool
 
 ### Vite 6.4.5

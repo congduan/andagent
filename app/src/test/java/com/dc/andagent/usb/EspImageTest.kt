@@ -267,6 +267,30 @@ class EspImageTest {
         }
     }
 
+    @Test fun toBinaryP4UsesExtendedHeaderAndWideMap() {
+        // R143：补齐 ESP32-P4（官方 esptool/targets/esp32p4.py:17,27-30 / js src/targets/esp32p4.ts:7,9-12）。
+        // 0x48000010 落在 P4 的 IROM/DROM (0x40000000..0x4C000000) 内，应归 flash 段。
+        val img = EspImage.fromElf(buildElf(0x40000000 + 0x20, listOf(
+            0x4FF00000 to byteArrayOf(1, 2, 3, 4),                    // P4 DRAM（不在 MAP → RAM 垫片段）
+            0x48000010 to byteArrayOf(0x11, 0x12, 0x13, 0x14),        // P4 IROM → flash 段
+        )))
+        val bin = img.toBinary(EspChip("ESP32-P4", 18))
+        // 扩展头 chip_id=18（u16 @12）、append_digest=1（@23）
+        assertEquals(18, EspFlashCodec.le16(bin, 12))
+        assertEquals(1, bin[23].toInt() and 0xff)
+        // DRAM 4B 经 split_image 作垫段 @24
+        assertEquals(0, EspFlashCodec.le32(bin, 24))
+        assertEquals(4, EspFlashCodec.le32(bin, 28))
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4), bin.copyOfRange(32, 36))
+        // flash 段头落在 65552（与 C3 同构的 64KB 对齐），段长 4（P4 非 ESP32 无 0x24 特例）
+        assertEquals(0x48000010, EspFlashCodec.le32(bin, 65552))
+        assertEquals(4, EspFlashCodec.le32(bin, 65556))
+        assertArrayEquals(byteArrayOf(0x11, 0x12, 0x13, 0x14), bin.copyOfRange(65560, 65564))
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(bin.copyOfRange(0, bin.size - 32))
+        assertArrayEquals(digest, bin.copyOfRange(bin.size - 32, bin.size))
+    }
+
     @Test fun toBinaryUnknownChipUsesWideMap() {
         // 未知芯片：UNKNOWN flavor 用 S3 宽区间，0x42 段仍进 flash 路径
         val img = EspImage.fromElf(buildElf(0x40000000, listOf(

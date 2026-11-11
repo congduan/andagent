@@ -30,6 +30,7 @@ import java.security.MessageDigest
  *      ESP32-C2   IROM 0x42000000..0x42400000 DROM 0x3C000000..0x3C400000 chip_id=12 boot_off=0x0
  *      ESP32-C6   IROM 0x42000000..0x42800000 DROM 0x42800000..0x43000000 chip_id=13 boot_off=0x0
  *      ESP32-H2   同 C6（继承 C6 MAP）                              chip_id=16 boot_off=0x0
+ *      ESP32-P4   IROM 0x40000000..0x4C000000 DROM 0x40000000..0x4C000000 chip_id=18 boot_off=0x2000（R143 补齐）
  *  - ELF 解析（ELFFile :1294）：32 位 LSB ELF，PT_LOAD(p_type=1) 取 p_paddr(LMA)/p_offset/p_filesz。
  *
  * 未复刻（记录为边界）：ram_only_header 变体、secure_pad、.flash.appdesc/.dram0.bootdesc 重排
@@ -57,6 +58,8 @@ class EspImage private constructor(
         ESP32_C2("ESP32-C2", 12, 0x42000000, 0x42400000, 0x3C000000, 0x3C400000),
         ESP32_C6("ESP32-C6", 13, 0x42000000, 0x42800000, 0x42800000, 0x43000000),
         ESP32_H2("ESP32-H2", 16, 0x42000000, 0x42800000, 0x42800000, 0x43000000),
+        // R143：补齐 ESP32-P4（官方 esptool/targets/esp32p4.py:17,27-30 / js src/targets/esp32p4.ts:7,9-12）。
+        ESP32_P4("ESP32-P4", 18, 0x40000000, 0x4C000000, 0x40000000, 0x4C000000),
         UNKNOWN(null, -2, 0x42000000, 0x44000000, 0x3C000000, 0x3E000000), // 未知芯片按 S3 宽区间
         ;
 
