@@ -2,20 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { appConfirm, appRichConfirm, cancelConfirmDialog, ConfirmDialog } from "./ConfirmDialog";
 
-// R106 必修项1: spec 只含 CARD + BUTTON_GROUP；完整参数由宿主自渲染，不再进 spec。
+// R142 交互重构后：spec 只含风险摘要 CARD；确认/取消按钮由宿主底部渲染（单步点击），
+// 完整参数由宿主自渲染，不再进 spec（也不再有 BUTTON_GROUP）。
 const DECISION_SPEC = JSON.stringify({
   title: "危险操作确认",
   fields: [
     { type: "CARD", title: "危险操作确认", text: "删除文件 /sdcard/x" },
-    {
-      type: "BUTTON_GROUP",
-      key: "decision",
-      required: true,
-      buttons: [
-        { value: "cancel", label: "取消" },
-        { value: "confirm", label: "允许执行" },
-      ],
-    },
   ],
 });
 const ARGS_TEXT = '{"tool":"file_write","arguments":{"path":"/sdcard/x"}}';
@@ -49,8 +41,8 @@ describe("ConfirmDialog · R106 rich confirm", () => {
     expect(document.querySelector(".confirm-overlay")).toBeTruthy();
     expect(document.querySelector(".confirm-card-rich")).toBeTruthy();
     expect(screen.getByText("删除文件 /sdcard/x")).toBeTruthy();
-    expect(screen.getByText("允许执行")).toBeTruthy();
-    expect(document.querySelector(".a2ui-button-group")).toBeTruthy();
+    // R142：宿主底部单步确认按钮（复用 confirmOk 文案「确定」/「OK」）。
+    expect(screen.getByText("确定")).toBeTruthy();
     // R106 必修项1: argsLabel 作小标题，argsText 全文由宿主用 <pre> 渲染，不 clip。
     expect(document.querySelector(".confirm-args-label")!.textContent).toBe(ARGS_LABEL);
     const args = document.querySelector("pre.confirm-args");
@@ -59,10 +51,10 @@ describe("ConfirmDialog · R106 rich confirm", () => {
   });
 
   it("submitting the a2ui card resolves with the decision payload", async () => {
+    // R142 交互重构后：确认/取消是宿主底部单步按钮（允许执行=confirmOk），点击即结算。
     render(<ConfirmDialog />);
     const promise = openRich();
-    fireEvent.click(screen.getByText("允许执行"));
-    fireEvent.click(screen.getByText("提交"));
+    fireEvent.click(screen.getByText("确定"));
     await expect(promise).resolves.toMatchObject({ decision: "confirm" });
   });
 
@@ -85,18 +77,14 @@ describe("ConfirmDialog · R106 rich confirm", () => {
   });
 
   it("a new rich request takes over and remounts the card with a cleared selection", async () => {
+    // R142 后宿主按钮单步结算； takeover 断言保持「新卡全新 state、旧 promise 结 null」。
     render(<ConfirmDialog />);
     const first = openRich();
-    // 先在第一张卡上选中「允许执行」——A2uiCard 给选中按钮加 a2ui-option-btn-active。
-    fireEvent.click(screen.getByText("允许执行"));
-    expect(document.querySelector(".a2ui-option-btn-active")).toBeTruthy();
     const second = openRich();
     await expect(first).resolves.toBeNull();
-    // 新请求用新 id 作 key 强制重挂载：内嵌 A2uiCard 是全新 state，选中态清空。
-    expect(document.querySelector(".a2ui-option-btn-active")).toBeNull();
-    // 重挂载后重新选中并提交，第二个请求仍能正常结算。
-    fireEvent.click(screen.getByText("允许执行"));
-    fireEvent.click(screen.getByText("提交"));
+    expect(document.querySelector(".confirm-card-rich")).toBeTruthy();
+    // 重挂载后点击宿主确认按钮，第二个请求仍能正常结算。
+    fireEvent.click(screen.getByText("确定"));
     await expect(second).resolves.toMatchObject({ decision: "confirm" });
   });
 

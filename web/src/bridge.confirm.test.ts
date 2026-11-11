@@ -95,18 +95,18 @@ describe("operation confirmation gate", () => {
   });
 
   // R106: destructive 闸确实走富决策卡（而非旧纯文本 appConfirm），且 spec 结构可用。
-  it("routes the destructive gate through the rich decision card (CARD + BUTTON_GROUP only)", async () => {
+  it("routes the destructive gate through the rich decision card (CARD-only spec, host-rendered buttons)", async () => {
     setConfirmMode("destructive");
     await execTool("file_write", { path: "/rich" });
     expect(appRichConfirm).toHaveBeenCalledOnce();
     expect(appConfirm).not.toHaveBeenCalled();
     const spec = specOf(0);
+    // R142 交互重构：spec 只含风险摘要 CARD；确认/取消按钮由宿主底部渲染。
     expect(spec.fields.some((f) => f.type === "CARD")).toBe(true);
     // 必修项1: spec 不含 TEXT_DISPLAY，完整参数改由宿主自渲染，绕开 1000 字 clip。
     expect(spec.fields.some((f) => f.type === "TEXT_DISPLAY")).toBe(false);
-    const group = spec.fields.find((f) => f.type === "BUTTON_GROUP");
-    expect(group?.key).toBe("decision");
-    expect(group?.buttons?.map((b) => b.value)).toEqual(["cancel", "confirm"]);
+    // R142: BUTTON_GROUP 也移出 spec（单步宿主按钮取代「选中+提交」两步流）。
+    expect(spec.fields.some((f) => f.type === "BUTTON_GROUP")).toBe(false);
   });
 
   // R106 必修项1 端到端：超长参数（>1000 字符 JSON）经确认闸完整到达宿主，无 "…" 截断。

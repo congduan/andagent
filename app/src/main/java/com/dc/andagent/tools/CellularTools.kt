@@ -51,6 +51,19 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import java.util.concurrent.Executor
 import kotlin.math.round
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
+import android.location.GnssStatus
+import android.location.Location
+import android.location.LocationListener
+import android.location.OnNmeaMessageListener
+import android.os.Handler
+import android.os.Looper
+import android.telephony.CellSignalStrength
+import android.telephony.SignalStrength
+import kotlinx.coroutines.delay
 
 /**
  * R113 — 蜂窝深度刀（R85 c 的深化版）。
@@ -69,7 +82,11 @@ import kotlin.math.round
  * 分工：telephony_info（R12）只给运营商/网络类型；data_usage（R12）只给 TrafficStats 累计值。
  * 本刀面向「信号质量诊断 / 邻区审计 / 5G 能力 / 流量配额」四类深度问题。
  */
-val CELLULAR_TOOLS = listOf("cell_info", "cell_scan", "nr_bandwidth", "data_policy")
+val CELLULAR_TOOLS = listOf(
+    "cell_info", "cell_scan", "nr_bandwidth", "data_policy",
+    // R85 ②: a) GNSS 卫星 / b) 连续轨迹 / d) 双卡订阅 / e) 连续信号
+    "gnss_status", "location_stream", "sim_subscription", "telephony_signal",
+)
 
 /* ------------------------------ pure helpers ------------------------------ */
 
@@ -306,6 +323,208 @@ object CellularCodec {
         return QuotaProjection(used, limit, round(percent * 100.0) / 100.0, remaining, daily, daysUntil, level)
     }
 
+    /* --------------------- R85 a) GNSS 卫星诊断 --------------------- */
+
+    /**
+     * GnssStatus 星座常量 → 可读名。用 AOSP 的整数值而非框架常量：纯函数层不依赖 Android
+     * 框架，JVM 单测可直接调用；IRNSS=7 仅 API 29+ 上报。
+     */
+    fun gnssConstellationName(type: Int): String = when (type) {
+        1 -> "GPS"
+        2 -> "SBAS"
+        3 -> "GLONASS"
+        4 -> "QZSS"
+        5 -> "BEIDOU"
+        6 -> "GALILEO"
+        7 -> "IRNSS"
+        else -> "UNKNOWN"
+    }
+
+    /** Cn0DbHz 分档：≥30 良好 / 20~30 一般 / <20 弱。 */
+    fun gnssSignalGrade(cn0: Double): String = when {
+        cn0 >= 30.0 -> "good"
+        cn0 >= 20.0 -> "fair"
+        else -> "weak"
+    }
+
+    data class GnssAssessment(val grade: String, val hint: String)
+
+    /** 综合评级：先看是否有固定解，再看参与解算卫星数与平均信噪比，最后给遮挡提示。 */
+    fun gnssOverall(total: Int, used: Int, avgCn0: Double?): GnssAssessment {
+        val cn0Text = avgCn0?.let { round1(it).toString() } ?: "?"
+        return when {
+            total <= 0 -> GnssAssessment(
+                "none",
+                "未搜索到任何卫星：确认在户外开阔处、系统定位开关已开；室内/车顶/高楼遮挡会让可见卫星数骤降",
+            )
+            used <= 0 -> GnssAssessment(
+                "no_fix",
+                "搜到 $total 颗卫星但尚无固定解（usedInFix=0）：等待首次定位或移至开阔处，金属膜/车体会显著拖慢",
+            )
+            used < 4 -> GnssAssessment(
+                "weak",
+                "仅 $used 颗星参与定位（<4 通常无法解算三维坐标）：到开阔处、避免遮挡",
+            )
+            avgCn0 != null && avgCn0 < 20.0 -> GnssAssessment(
+                "weak",
+                "平均信噪比 $cn0Text dB-Hz 偏弱：室内/车顶/高楼遮挡会让 Cn0 骤降，移到无遮挡处",
+            )
+            avgCn0 != null && avgCn0 < 30.0 -> GnssAssessment(
+                "fair",
+                "平均信噪比 $cn0Text dB-Hz 一般：可用于定位，精度受多路径与遮挡影响",
+            )
+            else -> GnssAssessment(
+                "good",
+                "$used/$total 颗星参与定位，平均信噪比 $cn0Text dB-Hz 良好",
+            )
+        }
+    }
+
+    /* --------------------- R85 b) 连续定位轨迹 --------------------- */
+
+    /** 一个定位采样点（纯数据，便于 JVM 单测）。 */
+    data class TrackPoint(
+        val lat: Double,
+        val lon: Double,
+        val accuracyM: Float? = null,
+        val speedMps: Float? = null,
+        val bearingDeg: Float? = null,
+        /** 单调时钟 SystemClock.elapsedRealtime()（回调时刻采样）——跨 provider 可比；不用 Location.time（不同源不可比较）。 */
+        val monoMs: Long,
+        /** 定位来源 provider（gps / network），null 表示未知（旧测试兼容）。 */
+        val provider: String? = null,
+    )
+
+    data class TrackStats(
+        val pointCount: Int,
+        val distanceMeters: Double,
+        val avgSpeedMps: Double?,
+        val durationMs: Long,
+        /** 相邻两点 provider 不同被跳过、不计入里程的段数（跨源坐标差会伪造移动）。 */
+        val providerJumpSegments: Int = 0,
+        /** 精度 > 100m 的点数（这些点不参与距离累加）。 */
+        val accuracyFilteredPoints: Int = 0,
+    )
+
+    /** 两点大圆距离（米），均值地球半径 6371008.8 m。 */
+    fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val s1 = sin(dLat / 2)
+        val s2 = sin(dLon / 2)
+        val h = s1 * s1 + cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * s2 * s2
+        return 2 * 6_371_008.8 * asin(sqrt(h.coerceIn(0.0, 1.0)))
+    }
+
+    /**
+     * 轨迹统计：相邻点大圆距离累加、平均速度（优先上报速度，否则距离/时长）、单调时钟时间跨度。
+     * 诚实口径：a) 相邻两点 provider 不同 → 该段跳过不计入里程（GPS/NETWORK 静止时坐标也不同，
+     * 跨源直接累加会伪造移动）；b) 精度 > 100m 的点不参与距离累加（按点独立计数，含首末点）；
+     * c) durationMs 用单调时钟。distanceMeters 因此是保守下界。
+     */
+    fun trackStats(points: List<TrackPoint>): TrackStats {
+        if (points.isEmpty()) return TrackStats(0, 0.0, null, 0L)
+        val sorted = points.sortedBy { it.monoMs }
+        var distance = 0.0
+        var providerJumps = 0
+        // 精度过滤按点独立计数（review 必修项 2）：首点/唯一点超限也要如实报告，不能只数「作为后端点」的情形
+        val accuracyFiltered = sorted.count { (it.accuracyM ?: 0f) > 100f }
+        for (i in 1 until sorted.size) {
+            val a = sorted[i - 1]
+            val b = sorted[i]
+            val aUsable = (a.accuracyM ?: 0f) <= 100f
+            val bUsable = (b.accuracyM ?: 0f) <= 100f
+            if (!aUsable || !bUsable) continue
+            if (a.provider != null && b.provider != null && a.provider != b.provider) {
+                providerJumps++
+                continue
+            }
+            distance += haversineMeters(a.lat, a.lon, b.lat, b.lon)
+        }
+        val durationMs = (sorted.last().monoMs - sorted.first().monoMs).coerceAtLeast(0L)
+        val reported = sorted.mapNotNull { it.speedMps?.toDouble()?.takeIf { s -> s >= 0.0 } }
+        val avgSpeed = when {
+            reported.isNotEmpty() -> reported.average()
+            durationMs > 0 -> distance / (durationMs / 1000.0)
+            else -> null
+        }
+        return TrackStats(sorted.size, distance, avgSpeed, durationMs, providerJumps, accuracyFiltered)
+    }
+
+    /* --------------------- R85 d) 双卡订阅 --------------------- */
+
+    /** PLMN 拼接：mcc/mnc 任一为空返回 null，不拼出半截运营商码。 */
+    fun mccMncOf(mcc: String?, mnc: String?): String? {
+        val a = mcc?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val b = mnc?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return a + b
+    }
+
+    /** 旧 API 的 int 版（getMcc/getMnc，不可用时常为 -1 / Int.MAX_VALUE）；mnc 补零到两位。 */
+    fun mccMncOf(mcc: Int?, mnc: Int?): String? {
+        val a = mcc?.takeIf { it in 100..999 } ?: return null
+        val b = mnc?.takeIf { it in 0..999 } ?: return null
+        return a.toString() + "%02d".format(b)
+    }
+
+    /* --------------------- R85 e) 信号采样 --------------------- */
+
+    data class SignalSummary(
+        val count: Int,
+        val minDbm: Int?,
+        val maxDbm: Int?,
+        val avgDbm: Double?,
+        /** 峰值→其后谷底的最大回落（dBm，越大掉档越明显）；有效样本 <2 为 null。 */
+        val maxDropDbm: Int?,
+        /** improving / degrading / stable / unknown */
+        val trend: String,
+    )
+
+    /** 采样序列摘要（入参中的 null/Int.MAX_VALUE 视为无效读数，不计入统计）。 */
+    fun signalSampleSummary(dbmValues: List<Int?>): SignalSummary {
+        val vals = dbmValues.filterNotNull().filter { it != Int.MAX_VALUE }
+        if (vals.isEmpty()) return SignalSummary(0, null, null, null, null, "unknown")
+        val avg = round(vals.average() * 100.0) / 100.0
+        var peak = vals.first()
+        var maxDrop = 0
+        for (v in vals) {
+            if (v > peak) peak = v
+            val drop = peak - v
+            if (drop > maxDrop) maxDrop = drop
+        }
+        val delta = vals.last() - vals.first()
+        val trend = when {
+            vals.size < 2 -> "unknown"
+            delta <= -5 -> "degrading"
+            delta >= 5 -> "improving"
+            else -> "stable"
+        }
+        return SignalSummary(
+            vals.size,
+            vals.min(),
+            vals.max(),
+            avg,
+            if (vals.size >= 2) maxDrop else null,
+            trend,
+        )
+    }
+
+    /** 把 level 序列压缩成 "4→2→3"（连续相同合并），直观看出掉档。 */
+    fun collapseLevels(levels: List<Int?>): String {
+        if (levels.isEmpty()) return ""
+        val out = mutableListOf<String>()
+        var prev: Int? = levels.first()
+        out += prev?.toString() ?: "?"
+        for (i in 1 until levels.size) {
+            val l = levels[i]
+            if (l != prev) {
+                out += l?.toString() ?: "?"
+                prev = l
+            }
+        }
+        return out.joinToString("→")
+    }
+
     private fun round3(v: Double): Double = round(v * 1000.0) / 1000.0
 }
 
@@ -331,6 +550,25 @@ private inline fun <T> probe(block: () -> T): T? = try {
 /** 字节 → MB 字符串（两位小数），数据类与工具共用。 */
 private fun mb(bytes: Long): String = "%.2f".format(bytes / 1024.0 / 1024.0)
 
+/** 保留 1 位小数（工具输出与提示文案共用）。 */
+private fun round1(v: Double): Double = round(v * 10.0) / 10.0
+
+/** 单次信号采样的纯数据快照（工具层 buildJsonObject 前先脱框架）。 */
+private data class SignalReading(
+    val dbm: Int?,
+    val level: Int?,
+    val asu: Int?,
+    val rsrp: Int?,
+    val ssRsrp: Int?,
+    val available: Boolean,
+    /** true = dbm 来自 GSM ASU 换算回退（API<29 无分制式信号时的估算），不得计入真实 dBm 统计。 */
+    val estimated: Boolean = false,
+) {
+    companion object {
+        val EMPTY = SignalReading(null, null, null, null, null, false)
+    }
+}
+
 /* -------------------------------- tool -------------------------------- */
 
 class CellularTool(
@@ -355,6 +593,28 @@ class CellularTool(
             "流量配额与省流量策略：Data Saver(restrictBackgroundStatus)、NetworkPolicyManager 系统配额" +
                 "（缺 MANAGE_NETWORK_POLICY 时如实报 denied）、移动网络周期用量（需「使用情况访问」）、" +
                 "Top 应用流量；可传 limit_mb 套餐额度，工具算出剩余量与耗尽天数预测。"
+        "gnss_status" ->
+            "GNSS 卫星诊断（户外定位质量分析）：在 3~15 秒窗口内采集 GnssStatus 卫星列表——" +
+                "星座（GPS/GLONASS/GALILEO/BEIDOU/QZSS/IRNSS/SBAS）、每颗星 svid/方位角/仰角/Cn0DbHz 信噪比/" +
+                "星历与历书/是否参与定位，附原始 NMEA（GGA/RMC）最后一句（取不到如实标 null）、首次定位时间 TTFF、" +
+                "平均信噪比与 overall 评级 + 遮挡提示。需要 ACCESS_FINE_LOCATION 且系统定位开关打开。"
+        "location_stream" ->
+            "连续定位轨迹：在指定窗口内同时监听 GPS 与 NETWORK 提供器，收集每个 fix 的经纬度/精度/速度/方位/年龄与来源 provider，" +
+                "输出点数、总里程（保守下界：相邻点 provider 不同的段与精度>100m 的点不计入，见 providerJumpSegments/accuracyFilteredPoints）、" +
+                "平均速度、窗口时长与逐点明细。" +
+                "窗口到点即正常返回已收点（不报错）；0 点时如实说明室内 GPS 无效等原因。需要 ACCESS_FINE_LOCATION。"
+        "sim_subscription" ->
+            "双卡订阅信息（只读）：列出每张已激活 SIM 的 subscriptionId/卡槽/运营商/MCC+MNC/国家码/eSIM/" +
+                "数据漫游/订阅类型/显示名，以及系统默认数据/通话/短信卡 ID。" +
+                "普通应用无法切换默认数据卡或通话卡（需 MODIFY_PHONE_STATE 系统签名权限），" +
+                "工具如实输出 switchCapability=false 并说明原因，不虚报切换能力。需要 READ_PHONE_STATE。"
+        "telephony_signal" ->
+            "连续信号强度记录：按固定间隔轮询 TelephonyManager.signalStrength（默认 10 秒 / 1 秒），" +
+                "输出最多 100 个样本的 dBm/level/asu/LTE RSRP/NR SS-RSRP，以及 min/max/avg dBm、" +
+                "level 掉档序列（如 4→2）、峰谷最大回落、趋势与耗时。" +
+                "API 28 以下或拿不到分制式信号时 dBm 来自 GSM ASU 换算（dbmEstimated=true，不计入 min/max/avg 统计）；" +
+                "轮询可能命中基带缓存，相邻重复样本计入 duplicateSamples。样本上限（100）与窗口先到为准（stopReason）。" +
+                "需要 READ_PHONE_STATE。只读。"
         else -> "蜂窝网络工具"
     }
 
@@ -374,6 +634,19 @@ class CellularTool(
             "limit_mb" to intParam("套餐额度（MB）；给出后计算剩余量与耗尽预测，缺省用系统配额（若可读）"),
             "include_apps" to boolParam("是否返回按应用流量排行，默认 true"),
         )
+        "gnss_status" -> schemaOf(
+            "seconds" to intParam("采样窗口秒数，默认 4，范围 3..15（收集 3~5 秒即可稳定）"),
+        )
+        "location_stream" -> schemaOf(
+            "seconds" to intParam("采集窗口秒数，默认 30，范围 5..600"),
+            "interval_ms" to intParam("定位更新最小间隔毫秒，默认 2000，范围 500..60000"),
+            "max_points" to intParam("最多收集的点数，默认 50，范围 1..500"),
+        )
+        "sim_subscription" -> schemaOf()
+        "telephony_signal" -> schemaOf(
+            "seconds" to intParam("采样窗口秒数，默认 10，范围 3..120"),
+            "interval_ms" to intParam("采样间隔毫秒，默认 1000，范围 200..10000"),
+        )
         else -> schemaOf()
     }
 
@@ -387,6 +660,10 @@ class CellularTool(
                 "cell_scan" -> cellScan(args)
                 "nr_bandwidth" -> nrBandwidth()
                 "data_policy" -> dataPolicy(args)
+                "gnss_status" -> gnssStatus(args)
+                "location_stream" -> locationStream(args)
+                "sim_subscription" -> simSubscription(args)
+                "telephony_signal" -> telephonySignal(args)
                 else -> "ERROR: 未知蜂窝工具 $name"
             }
         }.getOrElse { "ERROR: $name 执行失败：${it.message ?: it.javaClass.simpleName}" }
@@ -1276,6 +1553,476 @@ class CellularTool(
             }
         }
         return index
+    }
+
+    /* ---------------------------- gnss_status ---------------------------- */
+
+    @Suppress("DEPRECATION")
+    private suspend fun gnssStatus(args: JsonObject): String {
+        val seconds = (args.intArg("seconds") ?: 4).coerceIn(3, 15)
+        // GnssStatus.Callback / OnNmeaMessageListener 均为 API 24；minSdk 26 恒可用，仍显式分支保护
+        if (Build.VERSION.SDK_INT < 24) {
+            return buildJsonObject {
+                put("ok", false)
+                put("reason", "unsupported_api")
+                put("message", "GnssStatus 回调需要 Android 7.0（API 24）及以上；当前 API ${Build.VERSION.SDK_INT}")
+            }.toString()
+        }
+        if (!permissions.ensure(listOf(Manifest.permission.ACCESS_FINE_LOCATION))) {
+            return "ERROR: 读取 GNSS 卫星状态需要精确定位权限（ACCESS_FINE_LOCATION）"
+        }
+        if (!locationEnabled()) {
+            return buildJsonObject {
+                put("ok", false)
+                put("reason", "location_disabled")
+                put("message", "系统定位开关已关闭，GNSS 不会上报卫星状态")
+                put("hint", "打开「位置信息」后重试；室内或遮挡环境下可见卫星数也会骤降")
+            }.toString()
+        }
+        val lm = context.getSystemService(LocationManager::class.java)
+            ?: return "ERROR: 设备无 LocationManager 服务"
+
+        val warnings = mutableListOf<String>()
+        val latestRef = java.util.concurrent.atomic.AtomicReference<GnssStatus?>(null)
+        val firstFixRef = java.util.concurrent.atomic.AtomicInteger(-1)
+        val nmeaSentences = java.util.Collections.synchronizedList(mutableListOf<String>())
+
+        val statusCallback = object : GnssStatus.Callback() {
+            override fun onFirstFix(ttffMillis: Int) { firstFixRef.set(ttffMillis) }
+            override fun onSatelliteStatusChanged(status: GnssStatus) { latestRef.set(status) }
+        }
+        val nmeaListener = OnNmeaMessageListener { message, _ ->
+            if (!message.isNullOrBlank()) {
+                synchronized(nmeaSentences) {
+                    nmeaSentences += message.trim()
+                    if (nmeaSentences.size > 32) nmeaSentences.removeAt(0)
+                }
+            }
+        }
+        val handler = Handler(Looper.getMainLooper())
+        val gnssOk = runCatching { lm.registerGnssStatusCallback(statusCallback, handler) }.getOrDefault(false)
+        val nmeaOk = runCatching { lm.addNmeaListener(nmeaListener, handler) }.getOrDefault(false)
+        if (!gnssOk) warnings += "registerGnssStatusCallback 返回 false：本设备可能不支持 GNSS 状态回调"
+        if (!nmeaOk) warnings += "addNmeaListener 返回 false：无法采集原始 NMEA 语句"
+        // 驱动 GNSS 引擎用的定位请求句柄：finally 必须 removeUpdates，否则 listener 泄漏在 LocationManager 上
+        var fixListener: LocationListener? = null
+
+        try {
+            // review 必修项 1：只注册 GnssStatus 回调不足以唤醒 GNSS 引擎（部分机型 GNSS 引擎
+            // 处于空闲时不主动上报卫星状态）。窗口内挂一次 GPS_PROVIDER 请求，既驱动引擎开机，
+            // 也顺带校验定位开关；不依赖返回的 fix 本身（诊断只看 GnssStatus/NMEA）。
+            if (gnssOk) {
+                val requested = object : LocationListener {
+                    override fun onLocationChanged(location: Location) {}
+                    @Deprecated("deprecated in api30")
+                    override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
+                    override fun onProviderEnabled(provider: String) {}
+                    override fun onProviderDisabled(provider: String) {}
+                }
+                val fixRequested = runCatching {
+                    lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, requested, handler.looper)
+                }.isSuccess
+                if (fixRequested) {
+                    fixListener = requested
+                } else {
+                    warnings += "无法请求 GPS_PROVIDER 定位更新：系统定位开关可能已关闭（打开「位置信息」后重试）"
+                }
+            }
+            delay(seconds * 1000L)
+        } finally {
+            runCatching { lm.unregisterGnssStatusCallback(statusCallback) }
+            runCatching { lm.removeNmeaListener(nmeaListener) }
+            fixListener?.let { runCatching { lm.removeUpdates(it) } }
+        }
+
+        val status = latestRef.get()
+        if (status == null) {
+            // review 必修项 1：未观测到状态 ≠ 没有卫星——不能断言 0 颗
+            return buildJsonObject {
+                put("apiLevel", Build.VERSION.SDK_INT)
+                put("windowSeconds", seconds)
+                put("observed", false)
+                put("overall", "no_data")
+                put(
+                    "hint",
+                    "整个窗口未收到 GNSS 状态上报：不能断言天上没有卫星。常见原因——系统定位开关未开、" +
+                        "设备 GNSS 引擎未启动、厂商阉割 GNSS 状态回调；请确认「位置信息」已开并在户外开阔处重试。",
+                )
+                put("nmea", null)
+                put("nmeaCaptured", false)
+                put("firstFixMs", null)
+                put("firstFix", "unavailable")
+                putJsonArray("satellites") { }
+                if (warnings.isNotEmpty()) putJsonArray("warnings") { warnings.forEach { add(it) } }
+            }.toString()
+        }
+        val total = status.satelliteCount
+        val satellites = mutableListOf<JsonObject>()
+        val cn0s = mutableListOf<Double>()
+        var used = 0
+        if (status != null) {
+            for (i in 0 until total) {
+                val cn0 = status.getCn0DbHz(i).toDouble()
+                cn0s += cn0
+                if (status.usedInFix(i)) used++
+                satellites += buildJsonObject {
+                    put("svid", status.getSvid(i))
+                    put("constellation", CellularCodec.gnssConstellationName(status.getConstellationType(i)))
+                    put("azimuthDeg", round1(status.getAzimuthDegrees(i).toDouble()))
+                    put("elevationDeg", round1(status.getElevationDegrees(i).toDouble()))
+                    put("cn0DbHz", round1(cn0))
+                    put("signalGrade", CellularCodec.gnssSignalGrade(cn0))
+                    put("hasEphemeris", status.hasEphemerisData(i))
+                    put("hasAlmanac", status.hasAlmanacData(i))
+                    put("usedInFix", status.usedInFix(i))
+                }
+            }
+        }
+        val avgCn0 = if (cn0s.isEmpty()) null else cn0s.average()
+        val assessment = CellularCodec.gnssOverall(total, used, avgCn0)
+        val nmea = synchronized(nmeaSentences) {
+            nmeaSentences.lastOrNull { s ->
+                val talker = s.substringAfter('$', "").substringBefore(',')
+                talker.endsWith("GGA") || talker.endsWith("RMC")
+            }
+        }
+        val firstFixMs = firstFixRef.get().takeIf { it >= 0 }
+        return buildJsonObject {
+            put("apiLevel", Build.VERSION.SDK_INT)
+            put("windowSeconds", seconds)
+            put("satelliteCount", total)
+            put("usedInFix", used)
+            put("avgCn0DbHz", avgCn0?.let { round1(it) })
+            put("overall", assessment.grade)
+            put("hint", assessment.hint)
+            put("firstFixMs", firstFixMs)
+            put("firstFix", if (firstFixMs != null) "available" else "unavailable")
+            put("nmea", nmea)
+            put("nmeaCaptured", nmea != null)
+            putJsonArray("satellites") { satellites.forEach { add(it) } }
+            if (warnings.isNotEmpty()) putJsonArray("warnings") { warnings.forEach { add(it) } }
+        }.toString()
+    }
+
+    /* --------------------------- location_stream --------------------------- */
+
+    @Suppress("DEPRECATION")
+    private suspend fun locationStream(args: JsonObject): String {
+        val seconds = (args.intArg("seconds") ?: 30).coerceIn(5, 600)
+        val intervalMs = (args.longArg("interval_ms") ?: 2000L).coerceIn(500L, 60_000L)
+        val maxPoints = (args.intArg("max_points") ?: 50).coerceIn(1, 500)
+        if (!permissions.ensure(listOf(Manifest.permission.ACCESS_FINE_LOCATION))) {
+            return "ERROR: 连续定位需要精确定位权限（ACCESS_FINE_LOCATION）"
+        }
+        val lm = context.getSystemService(LocationManager::class.java)
+            ?: return "ERROR: 设备无 LocationManager 服务"
+
+        val warnings = mutableListOf<String>()
+        val points = java.util.Collections.synchronizedList(mutableListOf<CellularCodec.TrackPoint>())
+        val listener = object : LocationListener {
+            override fun onLocationChanged(location: Location) {
+                if (points.size >= maxPoints) return
+                points += CellularCodec.TrackPoint(
+                    lat = location.latitude,
+                    lon = location.longitude,
+                    accuracyM = if (location.hasAccuracy()) location.accuracy else null,
+                    speedMps = if (location.hasSpeed()) location.speed else null,
+                    bearingDeg = if (location.hasBearing()) location.bearing else null,
+                    // 单调时钟回调时刻采样：跨 provider 可比；不用 Location.time（不同 provider 不同源，不可比较）
+                    monoMs = SystemClock.elapsedRealtime(),
+                    provider = location.provider,
+                )
+            }
+
+            @Deprecated("deprecated in api30")
+            override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
+
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+        }
+        val looper = Looper.getMainLooper()
+        var gpsOk = false
+        var netOk = false
+        try {
+            gpsOk = runCatching {
+                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, intervalMs, 0f, listener, looper)
+                true
+            }.getOrDefault(false)
+            netOk = runCatching {
+                lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, intervalMs, 0f, listener, looper)
+                true
+            }.getOrDefault(false)
+            if (!gpsOk) warnings += "GPS_PROVIDER 注册失败（设备可能无 GPS 或权限不足）"
+            if (!netOk) warnings += "NETWORK_PROVIDER 注册失败（设备可能无网络定位）"
+            if (gpsOk || netOk) delay(seconds * 1000L)
+        } finally {
+            // 必须清理，否则 Listener 会一直挂在 LocationManager 上泄漏
+            runCatching { lm.removeUpdates(listener) }
+        }
+
+        val snapshot = synchronized(points) { points.toList() }
+        val stats = CellularCodec.trackStats(snapshot)
+        val now = System.currentTimeMillis()
+        return buildJsonObject {
+            put("windowSeconds", seconds)
+            put("intervalMs", intervalMs)
+            put("maxPoints", maxPoints)
+            put("pointCount", stats.pointCount)
+            // 保守下界：跨 provider 切换段与低精度点不计入里程（GPS/NETWORK 静止时坐标也不同，混算会伪造移动）
+            put("distanceMeters", round1(stats.distanceMeters))
+            put("avgSpeedMps", stats.avgSpeedMps?.let { round1(it) })
+            put("durationMs", stats.durationMs)
+            put("providerJumpSegments", stats.providerJumpSegments)
+            put("accuracyFilteredPoints", stats.accuracyFilteredPoints)
+            put("distanceNote", "distanceMeters 为保守下界：相邻点 provider 不同的段与精度>100m 的点不计入里程")
+            put("windowEndMs", now)
+            putJsonArray("points") {
+                snapshot.forEach { p ->
+                    add(buildJsonObject {
+                        put("lat", p.lat)
+                        put("lon", p.lon)
+                        put("provider", p.provider)
+                        put("accuracyM", p.accuracyM?.toDouble())
+                        put("speedMps", p.speedMps?.toDouble())
+                        put("bearingDeg", p.bearingDeg?.toDouble())
+                        put("ageMs", (SystemClock.elapsedRealtime() - p.monoMs).coerceAtLeast(0))
+                    })
+                }
+            }
+            if (warnings.isNotEmpty()) putJsonArray("warnings") { warnings.forEach { add(it) } }
+            if (stats.pointCount == 0) {
+                put("hint", "窗口内 0 个定位点：室内 GPS 常无效，确认系统定位开关已开、到开阔处重试或增大 seconds")
+            }
+        }.toString()
+    }
+
+    /* --------------------------- sim_subscription --------------------------- */
+
+    @Suppress("DEPRECATION")
+    private suspend fun simSubscription(args: JsonObject): String {
+        val warnings = mutableListOf<String>()
+        if (!permissions.ensure(listOf(Manifest.permission.READ_PHONE_STATE))) {
+            warnings += "未授予 READ_PHONE_STATE：activeSubscriptionInfoList 通常返回空或抛 SecurityException"
+        }
+        val sm = context.getSystemService(SubscriptionManager::class.java)
+        if (sm == null) {
+            return buildJsonObject {
+                put("ok", false)
+                put("reason", "no_service")
+                put("message", "设备无 SubscriptionManager 服务（可能无通话/蜂窝能力）")
+                put("switchCapability", false)
+                put("switchReason", "切换默认数据卡/通话卡需要 MODIFY_PHONE_STATE 系统签名权限，普通应用不可达")
+            }.toString()
+        }
+        var listReadFailure: String? = null
+        val subs = try {
+            sm.activeSubscriptionInfoList.orEmpty()
+        } catch (e: SecurityException) {
+            // review 必修项 4：读取失败必须与「真无卡」可区分——cardCount=0 只属于真正的空列表
+            listReadFailure = "读取订阅列表被拒：${e.message ?: "SecurityException"}（需要 READ_PHONE_STATE）"
+            warnings += listReadFailure
+            emptyList()
+        } catch (e: Exception) {
+            listReadFailure = "读取订阅列表失败：${e.message ?: e.javaClass.simpleName}"
+            warnings += listReadFailure
+            emptyList()
+        }
+
+        val cards = subs.map { info ->
+            val mccMnc = if (Build.VERSION.SDK_INT >= 29) {
+                CellularCodec.mccMncOf(
+                    runCatching { info.mccString }.getOrNull(),
+                    runCatching { info.mncString }.getOrNull(),
+                )
+            } else {
+                CellularCodec.mccMncOf(info.mcc.known(), info.mnc.known())
+            }
+            val embedded = if (Build.VERSION.SDK_INT >= 28) {
+                runCatching { info.isEmbedded }.getOrNull()
+            } else {
+                null
+            }
+            val subType = if (Build.VERSION.SDK_INT >= 29) {
+                when (runCatching { info.subscriptionType }.getOrNull()) {
+                    SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM -> "local_sim"
+                    SubscriptionManager.SUBSCRIPTION_TYPE_REMOTE_SIM -> "remote_sim"
+                    else -> null
+                }
+            } else {
+                // API<29 无 getSubscriptionType（该接口实际 API 29+）：按 eSIM 推断，不伪造 SYSTEM 类型
+                embedded?.let { if (it) "embedded" else "physical" }
+            }
+            buildJsonObject {
+                put("subscriptionId", info.subscriptionId)
+                put("simSlotIndex", info.simSlotIndex.takeIf { it >= 0 })
+                put("carrierName", info.carrierName?.toString())
+                put("mccMnc", mccMnc)
+                put("countryIso", info.countryIso)
+                put("isEmbedded", embedded)
+                put("dataRoaming", info.dataRoaming)
+                put("subscriptionType", subType)
+                put("displayName", info.displayName?.toString())
+            }
+        }
+
+        return buildJsonObject {
+            put("apiLevel", Build.VERSION.SDK_INT)
+            put("cardCount", cards.size)
+            putJsonArray("subscriptions") { cards.forEach { add(it) } }
+            putJsonObject("defaults") {
+                put("defaultDataSubscriptionId", defaultSubscriptionId { SubscriptionManager.getDefaultDataSubscriptionId() })
+                put("defaultVoiceSubscriptionId", defaultSubscriptionId { SubscriptionManager.getDefaultVoiceSubscriptionId() })
+                put("defaultSmsSubscriptionId", defaultSubscriptionId { SubscriptionManager.getDefaultSmsSubscriptionId() })
+            }
+            put("switchCapability", false)
+            put(
+                "switchReason",
+                "切换默认数据/通话/短信卡需要 MODIFY_PHONE_STATE（系统签名权限）或运营商特权，普通应用无法获取；" +
+                    "本工具只读，不虚报切换能力。ROADMAP 原文的「切数据卡/默认通话卡」在普通应用权限下不可达。",
+            )
+            if (listReadFailure != null) {
+                put("ok", false)
+                put("reason", "subscription_list_read_failed")
+                put("message", listReadFailure)
+            }
+            if (warnings.isNotEmpty()) putJsonArray("warnings") { warnings.forEach { add(it) } }
+            if (cards.isEmpty() && listReadFailure == null) {
+                put("hint", "未读到已激活订阅：确认已插卡、授予 READ_PHONE_STATE；无蜂窝能力的设备本就为空")
+            }
+        }.toString()
+    }
+
+    private fun defaultSubscriptionId(block: () -> Int): Int? = runCatching(block).getOrNull()?.takeIf { it >= 0 }
+
+    /* --------------------------- telephony_signal --------------------------- */
+
+    @Suppress("DEPRECATION")
+    private suspend fun telephonySignal(args: JsonObject): String {
+        val seconds = (args.intArg("seconds") ?: 10).coerceIn(3, 120)
+        val intervalMs = (args.longArg("interval_ms") ?: 1000L).coerceIn(200L, 10_000L)
+        val warnings = mutableListOf<String>()
+        if (!permissions.ensure(listOf(Manifest.permission.READ_PHONE_STATE))) {
+            warnings += "未授予 READ_PHONE_STATE：signalStrength 通常读不到真实值（部分机型返回 null 或抛 SecurityException）"
+        }
+        if (Build.VERSION.SDK_INT < 28) {
+            warnings += "当前 API ${Build.VERSION.SDK_INT} < 28：getSignalStrength 走隐藏 API 反射，部分机型会被系统拦截；" +
+                "被拦截时样本 available=false，如实不造数"
+        }
+        val tm = context.getSystemService(TelephonyManager::class.java)
+            ?: return "ERROR: 设备无 TelephonyManager 服务（可能无蜂窝能力）"
+
+        val samples = mutableListOf<JsonObject>()
+        val dbms = mutableListOf<Int?>()
+        val levels = mutableListOf<Int?>()
+        var estimatedCount = 0
+        var duplicateCount = 0
+        var lastRawKey: String? = null
+        val startedAt = SystemClock.elapsedRealtime()
+        val endAt = startedAt + seconds * 1000L
+        var stopReason = "window_elapsed"
+        while (true) {
+            val r = readSignal(tm)
+            if (r.estimated) estimatedCount++
+            val rawKey = listOf(r.dbm, r.level, r.asu, r.rsrp, r.ssRsrp).joinToString("|")
+            if (rawKey == lastRawKey) duplicateCount++
+            lastRawKey = rawKey
+            dbms += r.dbm?.takeIf { !r.estimated }
+            // review 必修项 3：估算回退样本（无分制式读数）的 level 同样不进掉档序列——
+            // GSM ASU 聚合档与真实制式档不可比，混入会伪造掉档/回升趋势
+            levels += r.level?.takeIf { !r.estimated }
+            samples += buildJsonObject {
+                put("available", r.available)
+                put("dbm", r.dbm)
+                put("dbmEstimated", r.estimated)
+                put("level", r.level)
+                put("levelLabel", CellularCodec.levelName(r.level))
+                put("asu", r.asu)
+                put("rsrp", r.rsrp)
+                put("rsrpLabel", r.rsrp?.let { CellularCodec.rsrpLabel(it) })
+                put("ssRsrp", r.ssRsrp)
+                put("ssRsrpLabel", r.ssRsrp?.let { CellularCodec.rsrpLabel(it) })
+            }
+            val remaining = endAt - SystemClock.elapsedRealtime()
+            if (remaining <= 0) break
+            if (samples.size >= 100) {
+                stopReason = "max_samples"
+                break
+            }
+            delay(minOf(intervalMs, remaining))
+        }
+        val durationMs = SystemClock.elapsedRealtime() - startedAt
+        // estimated（GSM ASU 回退）读数不进 min/max/avg/掉档统计——不能把估算值当真实 dBm
+        val summary = CellularCodec.signalSampleSummary(dbms)
+
+        return buildJsonObject {
+            put("apiLevel", Build.VERSION.SDK_INT)
+            put("requestedSeconds", seconds)
+            put("intervalMs", intervalMs)
+            put("durationMs", durationMs)
+            put("stopReason", stopReason)
+            put("sampleCount", samples.size)
+            put("estimatedDbmSamples", estimatedCount)
+            put("duplicateSamples", duplicateCount)
+            putJsonArray("samples") { samples.forEach { add(it) } }
+            putJsonObject("summary") {
+                put("count", summary.count)
+                put("minDbm", summary.minDbm)
+                put("maxDbm", summary.maxDbm)
+                put("avgDbm", summary.avgDbm)
+                put("maxDropDbm", summary.maxDropDbm)
+                put("trend", summary.trend)
+                put("levelSequence", CellularCodec.collapseLevels(levels))
+                put(
+                    "note",
+                    "summary 只统计真实 dBm；GSM ASU 回退的估算值已排除（见 estimatedDbmSamples）。" +
+                        "轮询读取可能命中基带缓存，相邻完全相同的样本已计入 duplicateSamples，趋势/掉档据此解读。",
+                )
+            }
+            if (estimatedCount > 0) {
+                warnings += "本机型 $estimatedCount 个样本来自 GSM ASU 换算（估算值），未计入 min/max/avg 统计"
+            }
+            if (warnings.isNotEmpty()) putJsonArray("warnings") { warnings.forEach { add(it) } }
+            if (summary.count == 0) {
+                put("hint", "未采到有效信号样本：确认已授予 READ_PHONE_STATE、设备有蜂窝信号；飞行模式/无 SIM 时 signalStrength 常为空")
+            }
+        }.toString()
+    }
+
+    /** 轮询一次 signalStrength：优先公开 API 28 的 getSignalStrength，低版本用隐藏 API 反射兜底。 */
+    @Suppress("DEPRECATION")
+    private fun readSignal(tm: TelephonyManager): SignalReading {
+        val ss: SignalStrength = if (Build.VERSION.SDK_INT >= 28) {
+            runCatching { tm.signalStrength }.getOrNull()
+        } else {
+            probe { tm.javaClass.getMethod("getSignalStrength").invoke(tm) as? SignalStrength }
+        } ?: return SignalReading.EMPTY
+
+        val cells: List<CellSignalStrength> = probe { ss.cellSignalStrengths } ?: emptyList()
+        if (cells.isEmpty()) {
+            // 低版本（cellSignalStrengths 需 API 29+）/厂商实现只暴露聚合 level 与 GSM asu：
+            // 按 GSM 近似公式换算 dBm——这是估算值，estimated=true，不进真实 dBm 统计，不猜 LTE/NR。
+            // review 建议项：available/estimated 反映实际是否取得读数，两字段全空时不虚报 available。
+            val level = probe { ss.level }?.takeIf { it in 0..4 }
+            val asu = probe { ss.gsmSignalStrength }?.takeIf { it in 0..31 }
+            val dbm = asu?.let { -113 + 2 * it }
+            val anyReading = level != null || asu != null
+            return SignalReading(dbm, level, asu, null, null, available = anyReading, estimated = anyReading)
+        }
+        val primary = cells.first()
+        val lte = cells.filterIsInstance<CellSignalStrengthLte>().firstOrNull()
+        val nr = if (Build.VERSION.SDK_INT >= 29) {
+            cells.filterIsInstance<CellSignalStrengthNr>().firstOrNull()
+        } else {
+            null
+        }
+        return SignalReading(
+            dbm = primary.dbm.known(),
+            level = primary.level,
+            asu = primary.asuLevel.known(),
+            rsrp = lte?.let { probe { it.rsrp }?.known() },
+            ssRsrp = nr?.let { probe { it.ssRsrp }?.known() },
+            available = true,
+        )
     }
 
     /* ------------------------------ plumbing ------------------------------ */

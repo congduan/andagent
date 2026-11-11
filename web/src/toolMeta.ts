@@ -198,6 +198,11 @@ export const TOOL_META: Record<string, ToolMeta> = {
   cell_scan: { label: "邻区扫描", labelEn: "Neighbor scan", icon: "antenna" },
   nr_bandwidth: { label: "5G NR 频段带宽", labelEn: "5G NR bands", icon: "antenna" },
   data_policy: { label: "流量配额", labelEn: "Data quota", icon: "activity" },
+  // R85②: GNSS + 蜂窝四工具（icon 用现有 antenna 键，与 Kotlin CELLULAR_TOOLS 对齐）
+  gnss_status: { label: "GNSS 卫星诊断", labelEn: "GNSS satellite diagnostics", icon: "antenna" },
+  location_stream: { label: "连续定位轨迹", labelEn: "Location track stream", icon: "antenna" },
+  sim_subscription: { label: "双卡订阅信息", labelEn: "SIM subscriptions", icon: "antenna" },
+  telephony_signal: { label: "信号强度记录", labelEn: "Signal strength log", icon: "antenna" },
   // R122: eSIM 管理（status 只读；download/enable/disable/delete 与 Kotlin destructive 对齐）
   esim_status: { label: "eSIM 状态", labelEn: "eSIM status", icon: "smartphone" },
   esim_download: { label: "下载 eSIM", labelEn: "Download eSIM", icon: "download", destructive: true },

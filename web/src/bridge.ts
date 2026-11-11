@@ -11,7 +11,9 @@ const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "sign
   // R122: eSIM 下载走运营商 SM-DP+ 全流程，LPA 回调最长 180s。
   "esim_download",
   // R123 ①: 大镜像 ROM 烧录前置擦除慢（40s×MB），默认 65s 预算会杀掉，放宽到 30min。
-  "esp_flash"]);
+  "esp_flash",
+  // R85②: location_stream 窗口最长 600s、telephony_signal 最长 120s，须走长任务超时（gnss_status ≤15s / sim_subscription 即时，不加）。
+  "location_stream", "telephony_signal"]);
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
  *
