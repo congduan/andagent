@@ -73,8 +73,8 @@ android {
         applicationId = "com.dc.andagent"
         minSdk = 26
         targetSdk = 28
-        versionCode = 62
-        versionName = "0.33.0"
+        versionCode = 63
+        versionName = "0.34.0"
         // R101b: ABI 过滤——真机 99% 是 arm64；x86/x86_64 仅模拟器、armeabi-v7a
         // 是 32 位老设备（Termux bootstrap 本身也只内置 aarch64）。省 ~3.8MB。
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -89,12 +89,23 @@ android {
     signingConfigs {
         // 2026-11-08 实测纠正（主控 keytool 验证）：本机 ~/.android/debug.keystore
         // 就是 2009f47f（Oct 17 2026 生成）——与设备已装全部历史包一致，覆盖安装正常。
-        // 仓库 jks（b2351aed）与设备不一致会导致卸载重装，弃用。正式发版换 release keystore。
+        // 本机签名链（2009f47f）优先；文件不存在（CI runner）时回退仓库内置
+        // andagent-dev.jks（R142c：CI 从建仓起就没绿过——keystore 缺失）。
+        // 仓库 jks（b2351aed）与设备签名链不一致，CI 编译验证产物不装机无影响。
         create("dev") {
-            storeFile = file(System.getProperty("user.home") + "/.android/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            val localPath = System.getProperty("user.home") + "/.android/debug.keystore"
+            if (file(localPath).isFile) {
+                storeFile = file(localPath)
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            } else {
+                // CI fallback: repo-bundled dev keystore (compile verification only)
+                storeFile = file("keystore/andagent-dev.jks")
+                storePassword = "andagent-dev"
+                keyAlias = "andagent"
+                keyPassword = "andagent-dev"
+            }
         }
     }
 
@@ -157,6 +168,10 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // R144 (Roadmap R78 a): Eclipse Paho MQTT v3.1.1 客户端，纯 Java、Maven Central，
+    // 无需 Android service / 本地库。1.2.5（1.2.0 有已知 leak；paho.mqtt.android 已停维护不用）。
+    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
 
     // Health Connect step data.
     // NOTE: 1.2.0-alpha06 (mentioned in the brief) declares minCompileSdk=37 and
