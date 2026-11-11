@@ -203,6 +203,10 @@ export const TOOL_META: Record<string, ToolMeta> = {
   location_stream: { label: "连续定位轨迹", labelEn: "Location track stream", icon: "antenna" },
   sim_subscription: { label: "双卡订阅信息", labelEn: "SIM subscriptions", icon: "antenna" },
   telephony_signal: { label: "信号强度记录", labelEn: "Signal strength log", icon: "antenna" },
+  // R144: MQTT 三工具（pub/sub 非破坏性，不标 destructive；icon 用现有 antenna 键，与 Kotlin MQTT_TOOLS 对齐）
+  mqtt_pub: { label: "MQTT 发布", labelEn: "MQTT publish", icon: "antenna" },
+  mqtt_sub: { label: "MQTT 订阅窗口", labelEn: "MQTT subscribe window", icon: "antenna" },
+  mqtt_status: { label: "MQTT 订阅状态", labelEn: "MQTT subscription status", icon: "antenna" },
   // R122: eSIM 管理（status 只读；download/enable/disable/delete 与 Kotlin destructive 对齐）
   esim_status: { label: "eSIM 状态", labelEn: "eSIM status", icon: "smartphone" },
   esim_download: { label: "下载 eSIM", labelEn: "Download eSIM", icon: "download", destructive: true },
@@ -231,6 +235,10 @@ export const TOOL_META: Record<string, ToolMeta> = {
   wifi_easy_connect: { label: "DPP 免密入网", labelEn: "Wi-Fi Easy Connect", icon: "wifi" },
   wifi_direct: { label: "Wi-Fi Direct", labelEn: "Wi-Fi Direct", icon: "wifi", destructive: true },
   wifi_rtt: { label: "Wi-Fi 测距", labelEn: "Wi-Fi RTT ranging", icon: "antenna" },
+  // R144: pcap 抓包分析三工具（只读，不标 destructive）。
+  pcap_summary: { label: "抓包总览", labelEn: "PCAP summary", icon: "activity" },
+  pcap_dns: { label: "抓包 DNS 记录", labelEn: "PCAP DNS", icon: "globe" },
+  pcap_http: { label: "抓包 HTTP/TLS 记录", labelEn: "PCAP HTTP/TLS", icon: "file-code" },
 };
 
 export const TOOL_DESTRUCTIVE = new Set(

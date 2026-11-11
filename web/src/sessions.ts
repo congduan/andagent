@@ -118,10 +118,14 @@ function loadLocalIndex(): SessionMeta[] {
   // One-time migration: adopt the v1 single-conversation history.
   const legacy = safeParse<PiMessage[]>(localStorage.getItem(LEGACY_KEY));
   if (legacy && Array.isArray(legacy) && legacy.length > 0) {
-    const firstUser = legacy.find((m) => m.role === "user");
-    const title = firstText(firstUser).slice(0, 24) || translate("pastChat");
+    // R144 review 必修项①：迁移写入也是落盘入口——旧版单会话历史可能带明文凭据，
+    // 写入 SESSION_KEY / 索引标题前统一过 scrub 链（与 migrateToKv 同口径）。
+    const counter: ScrubCounter = { replaced: 0 };
+    const scrubbedLegacy = scrubValue(legacy, counter) as PiMessage[];
+    const firstUser = scrubbedLegacy.find((m) => m.role === "user");
+    const title = scrubSecretsInText(firstText(firstUser).slice(0, 24) || translate("pastChat")).text;
     const meta: SessionMeta = { id: newId(), title, updatedAt: Date.now() };
-    localStorage.setItem(SESSION_KEY(meta.id), JSON.stringify(legacy));
+    localStorage.setItem(SESSION_KEY(meta.id), JSON.stringify(scrubbedLegacy));
     localStorage.setItem(INDEX_KEY, JSON.stringify([meta]));
     return [meta];
   }
@@ -136,15 +140,37 @@ function migrateToKv(): SessionMeta[] {
   const local = loadLocalIndex();
   if (local.length === 0) return [];
   let copied = 0;
+  // R144 review 六轮必修项③ + R144 修3：迁移是明文落盘入口——localStorage 旧数据
+  // 可能还带着明文凭据，复制进 KV 前必须过同一条脱敏链；解析失败的非 JSON 旧记录
+  // 绝不把原文写进 KV（明文副本），跳过迁移、console.warn 记 id 并从迁移索引剔除。
+  const migratable: SessionMeta[] = [];
   for (const meta of local) {
     const raw = localStorage.getItem(SESSION_KEY(meta.id));
-    if (!raw) continue;
-    if (kvWrite(kvSessionKey(meta.id), raw)) copied++;
+    if (!raw) {
+      // 无本地会话体：保留索引条目（读取会回退 localStorage），不写 KV。
+      migratable.push(meta);
+      continue;
+    }
+    const parsed = safeParse<PiMessage[]>(raw);
+    if (!parsed) {
+      console.warn(`session KV migrate skipped (unparseable): ${meta.id}`);
+      continue;
+    }
+    // 成功解析的记录照旧 scrub 后写入 KV。
+    const counter: ScrubCounter = { replaced: 0 };
+    const payload = JSON.stringify(scrubValue(parsed, counter));
+    if (kvWrite(kvSessionKey(meta.id), payload)) copied++;
     else console.warn(`session KV migrate skipped: ${meta.id}`);
+    // 写入失败（如 >64KB）仍保留索引条目，读取会回退 localStorage。
+    migratable.push(meta);
   }
-  if (copied === 0) return local;
-  if (!kvWrite(KV_INDEX_KEY, JSON.stringify(local))) return local;
-  return sortIndex(local);
+  // R144 修3：索引标题脱敏无条件——写入 KV_INDEX_KEY 前对全部 meta.title 过
+  // scrubSecretsInText，不再只在成功复制会话体后才做（copied===0 也返回脱敏索引）。
+  const scrubbedIndex = sortIndex(
+    migratable.map((meta) => ({ ...meta, title: scrubSecretsInText(meta.title).text })),
+  );
+  if (copied > 0) kvWrite(KV_INDEX_KEY, JSON.stringify(scrubbedIndex));
+  return scrubbedIndex;
 }
 
 function loadIndex(): SessionMeta[] {
@@ -203,13 +229,31 @@ type ScrubRule = { re: RegExp; build: (prefix: string) => string };
  */
 const SECRET_PATTERNS: ScrubRule[] = [
   {
-    re: /(["']?(?:password|passwd|pwd|passphrase|key_passphrase)\b["']?\s*[:=]\s*)(?:"(?!\[REDACTED\])[^"\n]*"|'(?!\[REDACTED\])[^'\n]*'|(?!\[REDACTED\])[^\s"'`,;，。、）)]+)/gi,
+    // R144 review 建议项：左侧 \b 词边界——不以 password/passwd/pwd/passphrase 结尾的
+    // 普通字段（如 showPasswordHint=true、masterpwd: 1）不被误遮盖。
+    re: /(\b(?:["']?(?:password|passwd|pwd|passphrase|key_passphrase)\b["']?)\s*[:=]\s*)(?:"(?!\[REDACTED\])[^"\n]*"|'(?!\[REDACTED\])[^'\n]*'|(?!\[REDACTED\])[^\s"'`,;，。、）)]+)/gi,
     build: (prefix) => `${prefix}[REDACTED]`,
+  },
+  // R144 review 三轮/四轮必修项①②：URL userinfo 凭据（如 mqtt/ssh 的
+  // broker/URL 参数写成 tcp://user:pass@host / https://user:pass@host）。
+  // 保留 scheme://，userinfo 整段 → <masked>@（与 Kotlin MqttCodec.sanitizeBroker
+  // 按「最后一个 @」遮盖同一约定）；负向断言 (?!<masked>@) 保证幂等。
+  // R144 review 六轮必修项②：userinfo 段不允许越过 RFC 3986 的 authority 边界——
+  // 各段字符类排除 `?` 与 `#`，query/fragment 里的 `@`（如
+  // https://host?email=alice@example.org、page#@section）不再被当成 userinfo
+  // 整段吞掉（此前仅排除 `/` 时，无 path 的 query 直连域名形式会被误伤）。
+  // 保留 scheme://，userinfo 整段 → <masked>@（与 Kotlin MqttCodec.sanitizeBroker
+  // 按「最后一个 @」遮盖同一约定）；负向断言 (?!<masked>@) 保证幂等。
+  // userinfo 各段不含 /、空白与引号——普通 URL 路径里的 @（https://host/docs/@alice）
+  // 不误伤；无冒号（tcp://alice@host）与多 @（tcp://a:p@ss@host）整段遮盖到最后一个 @。
+  {
+    re: /(\b\w+:\/\/)(?!<masked>@)[^\s"'@/?#]+(?::[^\s"'@/?#]*)?(?:@[^\s"'@/?#]*)*@/g,
+    build: (prefix) => `${prefix}<masked>@`,
   },
 ];
 
-/** 结构化键名（工具参数对象）：命中即整值替换，不解析值内容。 */
-const SECRET_KEYS = /^(?:password|passwd|pwd|passphrase|key_passphrase|secret)$/i;
+/** 结构化键名（工具参数对象）：命中即整值替换，不解析值内容。R144 六轮必修项①：username 与 password 是成对凭据，值一并替换。 */
+const SECRET_KEYS = /^(?:password|passwd|pwd|passphrase|key_passphrase|secret|username)$/i;
 
 /** 纯函数：返回脱敏后的文本与替换处数。 */
 export function scrubSecretsInText(input: string): { text: string; replaced: number } {
@@ -256,6 +300,20 @@ function scrubValue(value: unknown, counter: ScrubCounter): unknown {
 function scrubAll(): { sessions: number; replaced: number } {
   let sessions = 0;
   let replaced = 0;
+  // R144 review 二轮必修项：索引标题也要扫——旧版本可能在标题里留过明文。
+  let indexDirty = false;
+  const index = loadIndex().map((meta) => {
+    const scrubbedTitle = scrubSecretsInText(meta.title);
+    if (scrubbedTitle.replaced > 0) {
+      indexDirty = true;
+      replaced += scrubbedTitle.replaced;
+      return { ...meta, title: scrubbedTitle.text };
+    }
+    return meta;
+  });
+  if (indexDirty) {
+    persist([[KV_INDEX_KEY, INDEX_KEY, JSON.stringify(sortIndex(index))]]);
+  }
   for (const meta of loadIndex()) {
     const messages = loadSession(meta.id);
     if (!messages.length) continue;
@@ -285,19 +343,33 @@ export const SessionStore = {
     if (messages.length === 0 && !index.some((s) => s.id === id)) {
       return sortIndex(index);
     }
+    // R144 review 二轮必修项：标题先脱敏再截断——首条用户消息可能含明文凭据
+    // （如「连一下 password=abc123」），明文不得落进 andagent.sessions.index.v1。
     const firstUser = messages.find((m) => m.role === "user");
-    const autoTitle = firstText(firstUser).slice(0, 24) || translate("newChat");
+    const scrubbedList = scrubValue([firstUser], { replaced: 0 }) as PiMessage[];
+    const autoTitle = firstText(scrubbedList[0]).slice(0, 24) || translate("newChat");
     const existing = index.find((s) => s.id === id);
+    // R144 review 三轮必修项①：沿用旧标题前也除密——旧版本落盘的标题可能
+    // 带明文凭据，不能因「标题已存在」绕过 save 的落盘脱敏路径。
+    const existingTitle =
+      existing?.title && existing.title !== "新对话"
+        ? scrubSecretsInText(existing.title).text
+        : existing?.title;
     const total = sumMessageUsage(messages);
     const meta: SessionMeta = {
       id,
-      title: existing?.title && existing.title !== "新对话" ? existing.title : autoTitle,
+      title: existingTitle || autoTitle,
       updatedAt: Date.now(),
       usage: { input: total.input, output: total.output },
     };
     const next = [meta, ...index.filter((s) => s.id !== id)];
+    // R144 review 必修项①：持久化前统一除密——工具调用参数（如 mqtt_pub/mqtt_sub 的
+    // password、ssh_exec 的 key_passphrase）里命中密码/口令键名的值一律替换为
+    // [REDACTED] 后再落盘（KvStore 与 localStorage 回退共用此路径）。聊天模型已在
+    // 生成参数时被指引「凭据随调用传入」，落盘的是工具调用记录，不再保留明文。
+    const scrubbed = scrubValue(messages, { replaced: 0 }) as PiMessage[];
     persist([
-      [kvSessionKey(id), SESSION_KEY(id), JSON.stringify(messages)],
+      [kvSessionKey(id), SESSION_KEY(id), JSON.stringify(scrubbed)],
       [KV_INDEX_KEY, INDEX_KEY, JSON.stringify(next)],
     ]);
     // KV 模式保留 localStorage 原始键（迁移备份），浏览器模式维持旧行为。
@@ -307,7 +379,10 @@ export const SessionStore = {
 
   rename(id: string, title: string): SessionMeta[] {
     const index = loadIndex();
-    const next = index.map((s) => (s.id === id ? { ...s, title: title.trim() || s.title } : s));
+    // R144 review 三轮必修项③：rename 是标题直接落盘入口，与 save 沿用旧标题
+    // 同等对待——落盘前除密，防含 userinfo/密码的标题绕过 scrub 链。
+    const safeTitle = scrubSecretsInText(title.trim()).text;
+    const next = index.map((s) => (s.id === id ? { ...s, title: safeTitle || s.title } : s));
     persist([[KV_INDEX_KEY, INDEX_KEY, JSON.stringify(next)]]);
     return sortIndex(next);
   },

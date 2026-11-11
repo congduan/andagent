@@ -176,6 +176,25 @@ class StoreTool(private val context: Context, override val name: String) : Tool 
         val apk = runCatching { File(path).canonicalFile }.getOrNull()
             ?: return "ERROR: 路径无效"
         if (!apk.isFile || !apk.name.endsWith(".apk", true)) return "ERROR: 不是有效的 APK 文件：$path"
+        // R144b：Android 8+ 未知来源安装授权检查——未授权时 ACTION_VIEW 会静默失败。
+        // 引导用户到本应用的「安装未知应用」设置页（一次性授权）。
+        val canInstall = runCatching { context.packageManager.canRequestPackageInstalls() }.getOrDefault(false)
+        if (!canInstall) {
+            // R144 修4：startActivity 成功/失败分开回报——不再吞掉异常后固定谎报「已打开设置页」。
+            val opened = runCatching {
+                context.startActivity(
+                    android.content.Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                        .setData(android.net.Uri.fromParts("package", context.packageName, null))
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+            if (opened.isSuccess) {
+                return "ERROR: 缺少「安装未知应用」授权——已打开设置页，请开启「允许来自此来源的应用」后重新 app_install（一次性授权）"
+            }
+            val ex = opened.exceptionOrNull()
+            val summary = ex?.message ?: ex?.javaClass?.simpleName ?: "未知异常"
+            return "ERROR: 缺少『安装未知应用』授权，且自动打开设置页失败（$summary）。请手动：设置 → 应用 → AndAgent → 安装未知应用 → 允许，然后重试 app_install"
+        }
         return runCatching {
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
             context.startActivity(

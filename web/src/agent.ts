@@ -900,6 +900,7 @@ const NETWORK_GUIDE = [
   "「这个网里有什么设备」先问 lan_discover（默认 protocol=both，SSDP + mDNS 并行约 3-5 秒）：返回每台设备的 name/category（tv 电视、speaker 音箱、printer 打印机、home_assistant、nas、camera、router、cast、computer、iot、andagent 另一台 AndAgent）、address/port 与 txt 属性；home_assistant 的 txt.base_url 或 location 就是它的 API 入口，拿到后直接用 http_request 访问。要更细的型号与可控制服务用 upnp_describe(url=该设备的 location)。",
   "只有 lan_discover 找不到（设备不发 SSDP/mDNS，如部分老式打印机或路由器）才退回 lan_scan：mode=ping 扫当前 Wi-Fi 的 /24，mode=port 查已知端口（8123、80、1883）。仅扫描自己所在的网络，不要扫描他人网段；不要用 http_request 对同一地址高频轮询。",
   "http_request 返回 JSON：status/ok/url/headers/body/truncated/elapsedMs。长正文用 max_chars 控制；非 2xx 时先看 status 与 body 前段再决定是否重试，不要盲目重复同一请求。",
+  "MQTT 局域网设备：mqtt_pub 向 broker(tcp://主机:1883) 的 topic 发布消息（payload 可为 JSON 字符串，可选 qos/retain），mqtt_sub 用 topic_filter(+ 单层 / # 多层) 在 duration_ms 窗口内收集消息，mqtt_status 查当前/最近一次订阅统计；username/password 随调用传入、不回显不落盘。broker 不可达 / 认证失败 / DNS 失败返回 ok=false 与具体原因。",
 ].join("\n");
 
 const WIFI_GUIDE = [
@@ -919,6 +920,7 @@ const NETWORK_GUIDE_EN = [
   "For \"what is on this network\", start with lan_discover (protocol=both by default, SSDP + mDNS in parallel, ~3-5s). It returns name/category per device (tv, speaker, printer, home_assistant, nas, camera, router, cast, computer, iot, andagent = another AndAgent phone), address/port and TXT attributes; a home_assistant device's txt.base_url or location is its API entry, call it with http_request. Use upnp_describe(url=<that device's location>) for the model and controllable services (controlURL/SCPDURL).",
   "Fall back to lan_scan only when a device sends neither SSDP nor mDNS: mode=ping scans the current Wi-Fi /24, mode=port probes a known port (8123, 80, 1883). Scan only the network you are on, never someone else's range, and do not hammer one address through http_request.",
   "http_request returns JSON with status/ok/url/headers/body/truncated/elapsedMs. Bound long bodies with max_chars; on non-2xx inspect status and the body prefix before deciding whether to retry, and do not blindly repeat the same request.",
+  "MQTT LAN devices: mqtt_pub publishes a message (payload may be a JSON string, optional qos/retain) to a topic on a broker (tcp://host:1883); mqtt_sub collects messages in a duration_ms window using a topic_filter (+ single-level / # multi-level); mqtt_status reports the current / last subscription stats. Pass username/password per call — they are never echoed or stored. Unreachable broker / auth failure / DNS failure return ok=false with a concrete reason.",
 ].join("\n");
 
 const A11Y_GUIDE = [

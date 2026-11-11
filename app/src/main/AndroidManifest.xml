@@ -105,6 +105,9 @@
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+    <!-- R144b：app_install 工具（StoreTools）触发系统安装器需要 Android 8+ 的
+         未知来源安装授权（设置页每 app 开关，非运行时权限弹窗）。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- R122: Wi-Fi 三件套的可选硬件声明（required=false，能力在运行时探测降级）。
          权限复用已有 ACCESS_WIFI_STATE / CHANGE_WIFI_STATE / ACCESS_FINE_LOCATION。 -->

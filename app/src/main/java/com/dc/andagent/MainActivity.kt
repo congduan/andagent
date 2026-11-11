@@ -201,6 +201,10 @@ import com.dc.andagent.tools.DevToolsTool
 import com.dc.andagent.tools.WebSearchTool
 import com.dc.andagent.tools.HttpTool
 import com.dc.andagent.tools.HTTP_TOOLS
+import com.dc.andagent.tools.PcapTool
+import com.dc.andagent.tools.PCAP_TOOLS
+import com.dc.andagent.tools.MqttTool
+import com.dc.andagent.tools.MQTT_TOOLS
 import com.dc.andagent.tools.DiscoveryTool
 import com.dc.andagent.tools.DISCOVERY_TOOLS
 import com.dc.andagent.tools.DEVTOOLS_TOOLS
@@ -615,6 +619,10 @@ class MainActivity : ComponentActivity() {
         tools.putAll(listOf("web_search", "web_read").associateWith { WebSearchTool(it, liveKv) })
         // R73: http_request (generic client, http:// allowed for LAN devices) + lan_scan (LAN probe).
         tools.putAll(HTTP_TOOLS.associateWith { HttpTool(it, appContext) })
+        // R144: pcap/pcapng 抓包分析三工具（只读，流式解析，纯 JVM 核心）。
+        tools.putAll(PCAP_TOOLS.associateWith { PcapTool(it) })
+        // R144 (Roadmap R78 a): MQTT 三工具 mqtt_pub / mqtt_sub / mqtt_status（LAN broker 发布与订阅窗口）。
+        tools.putAll(MQTT_TOOLS.associateWith { MqttTool(appContext, it) })
         // R121: 语义化局域网发现（SSDP/UPnP + mDNS/DNS-SD）：电视/音箱/打印机/HA 识别 + UPnP 描述文档。
         tools.putAll(DISCOVERY_TOOLS.associateWith { DiscoveryTool(it, appContext) })
         // R122: Wi-Fi 三件套（DPP 免密入网 / Wi-Fi Direct 无路由器 P2P / RTT 测距）。

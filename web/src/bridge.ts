@@ -13,7 +13,9 @@ const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "sign
   // R123 ①: 大镜像 ROM 烧录前置擦除慢（40s×MB），默认 65s 预算会杀掉，放宽到 30min。
   "esp_flash",
   // R85②: location_stream 窗口最长 600s、telephony_signal 最长 120s，须走长任务超时（gnss_status ≤15s / sim_subscription 即时，不加）。
-  "location_stream", "telephony_signal"]);
+  "location_stream", "telephony_signal",
+  // R144: mqtt_sub 订阅窗口最长 60s（+连接/收尾），贴近默认 65s 预算，须走长任务超时。
+  "mqtt_sub"]);
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
  *
