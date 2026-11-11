@@ -73,8 +73,8 @@ android {
         applicationId = "com.dc.andagent"
         minSdk = 26
         targetSdk = 28
-        versionCode = 63
-        versionName = "0.34.0"
+        versionCode = 64
+        versionName = "0.35.0"
         // R101b: ABI 过滤——真机 99% 是 arm64；x86/x86_64 仅模拟器、armeabi-v7a
         // 是 32 位老设备（Termux bootstrap 本身也只内置 aarch64）。省 ~3.8MB。
         ndk { abiFilters += listOf("arm64-v8a") }

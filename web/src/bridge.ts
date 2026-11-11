@@ -245,6 +245,8 @@ interface AndroidBridge {
   termuxTerminalExec(reqId: string, command: string): string;
   termuxTerminalWrite(reqId: string, input: string): string;
   termuxTerminalPoll(reqId: string): string;
+  /* R83①: 独立全屏 TerminalActivity（真 pty）。可选，供浏览器预览模式兜底。 */
+  openTerminal?(): string;
   devtoolsStatus(): string;
   devtoolsSetEnabled(enabled: boolean): string;
   exportConversation(title: string, markdown: string): string;
@@ -1433,6 +1435,12 @@ export function termuxTerminalWrite(input: string): string {
 export function termuxTerminalPoll(): string {
   try { return bridge()?.termuxTerminalPoll(`tty-${Date.now()}-${++seq}`) ?? ""; }
   catch { return ""; }
+}
+
+/* R83①: 打开原生全屏终端页（真 pty，能跑 TUI）。与 R27 卡片管道会话相互独立。 */
+export function openTerminal(): string {
+  try { return bridge()?.openTerminal?.() ?? "ERROR: 设备桥不可用"; }
+  catch (e) { return `ERROR: ${String(e)}`; }
 }
 
 /** R39: 最近一次 shell_exec 的完整结果（终端卡片「查看 agent 输出」用）。 */

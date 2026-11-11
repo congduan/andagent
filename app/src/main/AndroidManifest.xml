@@ -140,6 +140,15 @@
             android:exported="false"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />
 
+        <!-- R83①: 独立全屏终端页（真 pty）。仅应用内启动；adjustResize 让软键盘
+             弹出时 TerminalView 收到 onSizeChanged 并同步 pty 窗口大小。 -->
+        <activity
+            android:name=".terminal.TerminalActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.AndAgent" />
+
         <receiver android:name=".cron.CronReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

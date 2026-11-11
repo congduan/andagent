@@ -11,6 +11,12 @@ target_link_libraries(memexec log)
 add_library(scriptinterrupt SHARED scriptinterrupt.c)
 target_link_libraries(scriptinterrupt dl)
 
+# ---- R83①: termux terminal-emulator PTY JNI (Apache-2.0, v0.118.1) --------
+# com.termux.terminal.JNI loads "termux"; createSubprocess forks a /dev/ptmx
+# subprocess with clearenv() + the supplied environment array.
+add_library(termux SHARED termux.c)
+target_link_libraries(termux log)
+
 # ---- R100 ③: adb_pair native client ----------------------------------------
 # AOSP libadb_pairing_auth sources (SPAKE2 over Ed25519 + AES-128-GCM) are
 # compiled verbatim; TLS 1.3 / X.509 come from a vendored BoringSSL static

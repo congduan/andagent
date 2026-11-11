@@ -1,6 +1,6 @@
 import { translate, useI18n } from "./i18n";
 import { useEffect, useRef, useState } from "react";
-import { lastShellResult, termuxTerminalExec, termuxTerminalPoll } from "./bridge";
+import { lastShellResult, openTerminal, termuxTerminalExec, termuxTerminalPoll } from "./bridge";
 import { ImageLightbox } from "./ImageLightbox";
 
 /**
@@ -150,6 +150,8 @@ export function TerminalCard({ code }: { code: string }) {
         <span className="terminal-title">⌨️ {title}</span>
         <button type="button" onClick={() => setShowAgentOutput(true)}>{t("assistantOutput")}</button>
         <button type="button" onClick={() => setFullscreen((v) => !v)}>{fullscreen ? t("exitFullscreen") : t("fullscreen")}</button>
+        {/* R83①: 并存的新入口——跳原生全屏 TerminalActivity；上面的 CSS 全屏按钮行为不变。 */}
+        <button type="button" onClick={() => openTerminal()}>{t("terminalSystemFullscreen")}</button>
         <button type="button" onClick={() => { setLines([]); pinned.current = true; }}>{t("clearScreen")}</button>
         <button type="button" onClick={() => { setClosed((v) => !v); }}>{closed ? t("reopen") : t("close")}</button>
       </div>

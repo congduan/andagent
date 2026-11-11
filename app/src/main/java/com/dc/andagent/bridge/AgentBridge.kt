@@ -709,6 +709,19 @@ class AgentBridge(
     fun termuxTerminalPoll(reqId: String): String =
         runCatching { termuxTerminalPoll() }.getOrElse { "" }
 
+    /** R83①: 打开独立全屏 TerminalActivity（真 pty 会话）。与已存在的
+     *  openAppSettings()/cronOpenExactSettings() 同类：仅启动应用内 Activity，
+     *  不读数据、不做破坏性动作，无需主帧凭证门。 */
+    @JavascriptInterface
+    fun openTerminal(): String = runCatching {
+        val context = requireNotNull(appContext)
+        context.startActivity(
+            android.content.Intent(context, com.dc.andagent.terminal.TerminalActivity::class.java)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        "OK"
+    }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+
     @JavascriptInterface
     fun exportConversation(title: String, markdown: String): String {
         val context = appContext ?: return "ERROR: Android 环境不可用"

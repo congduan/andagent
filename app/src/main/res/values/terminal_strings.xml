@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Vendored from termux/termux-app v0.118.1 terminal-view (Apache-2.0).
+         Keys keep their upstream names, referenced as com.dc.andagent.R.string.*. -->
+    <string name="paste_text">Paste</string>
+    <string name="copy_text">Copy</string>
+    <string name="text_selection_more">More…</string>
+
+    <!-- R83①: full-screen TerminalActivity UI. -->
+    <string name="terminal_title">Terminal</string>
+    <string name="terminal_close">Close</string>
+    <string name="terminal_not_ready">Embedded shell is not ready. Run termux_setup in Settings first.</string>
+</resources>

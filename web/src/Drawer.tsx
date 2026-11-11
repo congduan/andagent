@@ -6,6 +6,7 @@ import { fmtTokens, type UsageSum } from "./usage";
 import { appConfirm } from "./ConfirmDialog";
 import { CopyMenu, useLongPress, type CopyMenuAction } from "./CopyMenu";
 import { Icon } from "./icons";
+import { openTerminal } from "./bridge";
 
 /* --------------------------- 时间分组折叠 --------------------------- */
 
@@ -393,6 +394,15 @@ export function Drawer({
             <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           </svg>
           {t("newChat")}
+        </button>
+
+        {/* R83①: 独立全屏终端页（真 pty）。R27 对话流卡片仍保持原样。 */}
+        <button type="button" className="drawer-new" onClick={() => { onClose(); openTerminal(); }}>
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none">
+            <rect x="3.5" y="5" width="17" height="14" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+            <path d="M7 9.5l3 2.5-3 2.5M12.5 15H16.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {t("terminalEntry")}
         </button>
 
         <div className="drawer-manage-head">
