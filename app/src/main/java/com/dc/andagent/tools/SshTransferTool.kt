@@ -245,12 +245,16 @@ class SshTransferTool(private val context: Context, override val name: String,
             remoteIn.use { input ->
                 val buf = ByteArray(256 * 1024)
                 temp.outputStream().buffered(1 shl 20).use { output ->
+                    var lastDataAt = System.currentTimeMillis()
                     while (true) {
                         if (SshTransferCancel.isCancelled(key)) throw IOException("已被用户中断")
                         val n = input.read(buf, 0, buf.size)
                         if (n <= 0) break
                         if (!progress.count(n.toLong())) throw IOException("传输超过大小上限")
                         output.write(buf, 0, n)
+                        val now = System.currentTimeMillis()
+                        if (now - lastDataAt > 90_000) throw IOException("下载停滞超 90 秒，请检查服务器或网络后重试")
+                        lastDataAt = now
                     }
                 }
             }
