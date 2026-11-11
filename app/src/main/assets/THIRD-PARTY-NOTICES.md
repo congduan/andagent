@@ -151,6 +151,12 @@ AndAgent is licensed under Apache-2.0 (see [LICENSE](LICENSE)). The entries belo
 - Source: https://github.com/Genymobile/scrcpy
 - Copyright: Copyright Genymobile and scrcpy contributors; full license in app/src/main/assets/vendor/scrcpy-LICENSE.txt
 
+### Termux terminal-emulator / terminal-view 0.118.1 (vendored source)
+- License: Apache-2.0 (explicit exception in upstream `termux-app/LICENSE.md`; the rest of `termux-app` is GPLv3-only and was not copied)
+- Source: https://github.com/termux/termux-app/tree/v0.118.1
+- Copyright: Termux contributors (Fredrik Fornwall and contributors). Upstream files carry no per-file copyright header; the notice is recorded in root `ATTRIBUTION.md`.
+- Vendored into `app/src/main/java/com/termux/terminal/`, `app/src/main/java/com/termux/view/`, `app/src/main/cpp/termux.c` (`libtermux.so`) and `app/src/main/res/{values,values-zh,drawable}/`. Full file list, the two `com.termux.view.R` → `com.dc.andagent.R` import changes, and the five same-tag files added to complete the dependency graph are recorded in root `ATTRIBUTION.md`.
+
 ### Termux bootstrap (derived, version identified by archive SHA-256)
 - License: Mixed; package-specific notices inside archive
 - Source: https://github.com/termux/termux-packages

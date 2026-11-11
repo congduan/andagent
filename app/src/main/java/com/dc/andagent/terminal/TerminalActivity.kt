@@ -71,8 +71,11 @@ class TerminalActivity : Activity() {
         session = newSession
         terminalView.attachSession(newSession)
         terminalView.requestFocus()
-        terminalView.post { showKeyboard() }
+        terminalView.post(showKeyboardRunnable)
     }
+
+    /** 建议 1（Codex review）：以具名 Runnable 挂到视图队列，销毁时可 removeCallbacks 撤销。 */
+    private val showKeyboardRunnable = Runnable { showKeyboard() }
 
     private fun showKeyboard() {
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
@@ -83,9 +86,15 @@ class TerminalActivity : Activity() {
         getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
 
     override fun onDestroy() {
-        session?.finishIfRunning()
+        // 必修项（Codex review）：initializeEmulator 由视图首次 onSizeChanged 触发，
+        // 之前 mShellPid 保持字段默认值 0，而 isRunning() 判 `!= -1`——
+        // 此时 finishIfRunning() 会 kill(0, SIGKILL) 杀掉 app 自己的进程组。
+        // 只有真实 fork 出的 pid（>0）才允许回收。
+        session?.let { if (it.getPid() > 0) it.finishIfRunning() }
         session = null
         super.onDestroy()
+        // 建议项：destroy 后视图仍可能在队列里排着 showKeyboard，执行前检查有效性。
+        terminalView.removeCallbacks(showKeyboardRunnable)
     }
 
     /**
