@@ -1,6 +1,6 @@
 # andagent 推进事项清单（ROADMAP-TODO）
 
-> 当前状态：版本 **0.32.0 / code 61**，v0.32.0 = R124 后台存活加固 b8137a5（2026-11-11，两轮 Codex review 终审 APPROVE）。R139 相机预览旋转修复链收口：R139c fad80e2（2026-11-11，Codex 三轮 review 后 APPROVE）。
+> 当前状态：版本 **0.33.0 / code 62**，v0.33.0 = R85② GNSS+蜂窝刀收口 0532e84（2026-11-11，gnss_status/location_stream/sim_subscription/telephony_signal 四工具，Codex 两轮 review APPROVE，tag v0.33.0）。上一版 0.32.0 / code 61 = R124 后台存活加固 b8137a5。R139 相机预览旋转修复链收口：R139c fad80e2。
 >
 > **2026-11-11 账本对账轮（主控）**：发现 ROADMAP 与代码漂移——R125-R139 系列与多项 DOING 实际已提交入码但账本未记。本轮按代码证据收口 7 项（R103/R100/R110/R111分享/R88/R84/R108，见对应行 ✅ 标注），并盘点出**账外已完成序列**（R125 CNXN fail-fast c2fa06a → R126 shell localId 过滤 8a220be → R128 SYNC QUIT 05aa5cc/a786363 → R129 sync-fail shell-base64 兜底 9b7d02f/686108c → R131 ssh_download 停滞修复 3185bd1 → R132 mirror 证据链 fbd0940 → R133 镜像 server push 5e16d4a/d9e8f19/bc1fa96 + R133b/c 资源中心收口（dcba520/f9231dc → f405ea0）→ R135 bt_hid 12e4473/19459ca（注：d3a4f3f 属 R123② ESP 烧录收口，不属 R133/R135） → R136 a2ui 展示字段 db34fa1/0cdafb4 → R137 投屏浮窗 UI 重设计 ac8a38b → R106 a2ui 确认卡 714c62b → R138 相机浮窗尺寸 870ee52 → R139 相机旋转三连 bc85e73/70723ec/fad80e2）。**本轮主控复测认证（HEAD=006d6de）**：JVM 1012 tests / 0 failures / 0 skipped（testReleaseUnitTest）+ assembleDebug 绿 + web vitest 240 全绿 + tsc/vite build 绿（NODE_OPTIONS=--max-old-space-size=4096）。既有 TODO 刀中仍未落地的：R74（BLE/USB 串口部分落地——usb_serial/esp_flash 已有）、R76、R78a/c、R79、R80、R81、R83、R85a/b/e、R87c、R89、R96、R102（PrivilegeRouter.kt 在库，接入完成度待核）、R106 之后确认卡已落地、R117、R118b/c、R119。下一优先建议：R85 GNSS 刀或 R96 自定义搜索引擎（均为 1 轮中刀）。
 
