@@ -683,7 +683,7 @@ fun devtoolsStatusJson(context: Context): String {
         // web_embed 打开一个页面才有可调试 target。
         if (pages.getOrDefault(emptyList()).isEmpty() && !pages.isFailure) {
             put("hint", "列表为空。请先用 web_embed 打开你要调试的 HTML 页面再重试。诊断(R109)：")
-            put("diagnose", runCatching { DevToolsClient.diagnosePages() }.getOrDefault("diagnose fail").take(800))
+            put("diagnose", runCatching { DevToolsClient.diagnosePages() }.getOrDefault("diagnose fail").take(2400))
         }
     }.toString()
 }
