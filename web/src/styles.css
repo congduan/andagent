@@ -925,6 +925,65 @@ button:disabled {
   color: var(--muted, #8b93a3);
 }
 
+/* Autofix banner (success card) + structured error / copy button */
+.mermaid-autofix {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted, #8b93a3);
+}
+
+.mermaid-autofix-title {
+  color: var(--accent);
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.mermaid-autofix-list {
+  overflow-wrap: anywhere;
+}
+
+.mermaid-fix-suggestion {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  background: var(--wash-2);
+  font-size: 12px;
+}
+
+.mermaid-fix-suggestion-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.mermaid-fix-line {
+  color: var(--muted, #8b93a3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mermaid-fix-hint {
+  margin-top: 6px;
+  color: var(--danger);
+}
+
+.mermaid-copy-btn {
+  margin-top: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--wash-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.mermaid-copy-btn:active {
+  opacity: 0.7;
+}
+
 .mermaid-lightbox-body {
   max-width: 100%;
   max-height: 100%;
