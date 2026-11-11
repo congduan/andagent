@@ -488,6 +488,12 @@ class CameraOverlayTool(private val context: Context, private val permissions: P
             return overlayError
         }
         if (!permissions.ensure(listOf(Manifest.permission.CAMERA))) return "ERROR: 相机权限未授予"
+        // R140：show/update 后短暂回读服务侧 lastError——黑屏/开关循环时 AI 直接拿到
+        // 相机栈的真实失败原因（此前 fail() 只 stopSelf，AI 端完全无感）。
+        val prior = CameraOverlayService.lastError
+        if (prior != null) {
+            return "ERROR: 相机预览上次异常退出：$prior；请重试一次，若复现请截图浮窗状态并回报"
+        }
         val available = runCatching {
             val manager = context.getSystemService(CameraManager::class.java)
             val facing = if (spec.camera == "front") CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK

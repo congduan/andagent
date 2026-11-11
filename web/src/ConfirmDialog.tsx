@@ -98,26 +98,18 @@ export interface DecisionParts {
  */
 export function buildDecisionSpec(parts: DecisionParts): string | null {
   try {
-    const en = currentLanguage() === "en";
     const clip = (value: string, max: number) =>
       value.length > max ? `${value.slice(0, max)}…` : value;
+    // R142 交互重构：spec 只含风险摘要 CARD（展示）。确认/取消按钮由 ConfirmDialog
+    // 宿主在底部直接渲染（单步点击，标准 dialog 交互）——不再经 A2uiCard 的
+    // BUTTON_GROUP「选中+提交」两步流（用户反馈：提交按钮多余、按钮不在底部）。
     const spec = {
       title: parts.cardTitle,
       fields: [
         { type: "CARD", title: parts.cardTitle, text: clip(parts.riskText, 950) },
-        {
-          type: "BUTTON_GROUP",
-          key: "decision",
-          required: true,
-          buttons: [
-            { value: "cancel", label: en ? "Cancel" : "取消" },
-            { value: "confirm", label: en ? "Allow" : "允许执行" },
-          ],
-        },
       ],
     };
     const text = JSON.stringify(spec);
-    // R106: parse 不过 / 结构不可用的极端情况 → 交给调用方降级，不把坏 spec 丢给 A2uiCard。
     const parsed: unknown = JSON.parse(text);
     const fields = (parsed as { fields?: unknown }).fields;
     if (!Array.isArray(fields) || fields.length === 0) return null;
@@ -263,14 +255,18 @@ export function ConfirmDialog() {
           <A2uiCard
             key={req.id}
             code={req.specText}
-            onSubmit={(payload) => finishRich(payload)}
           />
           {/* R106 必修项1: 宿主自渲染完整参数全文，不进 spec、不 clip，只限高度滚动。 */}
           <div className="confirm-args-label">{req.argsLabel}</div>
           <pre className="confirm-args">{req.argsText}</pre>
+          {/* R142：确认/取消按钮固定底部、单步点击直接决策——不再走 A2uiCard 的
+              BUTTON_GROUP「选中+提交」两步流（用户反馈：提交按钮多余、效率低）。 */}
           <div className="confirm-actions">
             <button type="button" className="confirm-cancel" onClick={() => finishRich(null)}>
               {t("cancel")}
+            </button>
+            <button type="button" className="confirm-ok" onClick={() => finishRich({ decision: "confirm" })}>
+              {t("confirmOk")}
             </button>
           </div>
         </div>
