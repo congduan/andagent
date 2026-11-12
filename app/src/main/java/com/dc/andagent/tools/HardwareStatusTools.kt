@@ -135,6 +135,15 @@ object SensorStats {
 
     fun rateHz(count: Int, durationMs: Long): Double =
         if (durationMs <= 0) 0.0 else Math.round(count * 100_000.0 / durationMs) / 100.0
+
+    /**
+     * R146 必修 2：按「样本间隔数」折算实测采样率（纯函数，可单测）。
+     * count<=1 或窗口非正时返回 0.0（无间隔可计，不虚报、无除零）；否则以 count-1 个
+     * 间隔除以首末事件窗口 spanMs，避免 count/span 把 10 个等间隔 50Hz 样本少算成 55.56Hz。
+     * count 为该传感器事件总数（values 可能被 MAX_STREAM_ROWS 截断，但 count 准确）。
+     */
+    fun rateHzFromSpan(count: Int, spanMs: Long): Double =
+        if (count <= 1 || spanMs <= 0) 0.0 else (count - 1) * 1000.0 / spanMs
 }
 
 /**
@@ -802,13 +811,29 @@ class HardwareStatusTool(
         // 只挑声明了 direct report 能力的传感器；全部不支持则回落 polling。
         val supported = targets.filter { t ->
             runCatching {
-                t.sensor.isDirectChannelTypeSupported(t.sensor.type) &&
+                t.sensor.isDirectChannelTypeSupported(SensorDirectChannel.TYPE_MEMORY_FILE) &&
                     t.sensor.highestDirectReportRateLevel >= SensorDirectChannel.RATE_NORMAL
             }.getOrDefault(false)
         }
         if (supported.isEmpty()) {
             return fallbackToPolling(args, "设备/传感器未声明 direct report 能力")
         }
+
+        // R146 必修 1：所有 configure 的传感器统一用「共同支持的最低档」，避免某个只支持
+        // NORMAL 的传感器被谎报成 FAST/VERY_FAST。DirectChannel configure 本就是 per-channel
+        // 全局速率，统一档位语义更干净；输出 rateLevel/hz/nominalHz/samplingPeriodUs 均基于此档。
+        // 档位标称：RATE_NORMAL=50Hz / RATE_FAST=200Hz / RATE_VERY_FAST=800Hz，
+        // 实际速率约为标称的 55%~220%（Android 官方口径）。
+        val mapped = DirectChannelEventReader.rateLevelForHz(hz)
+        val commonLevel = minOf(mapped, supported.minOf { it.sensor.highestDirectReportRateLevel })
+        // 理论上不可能（supported 已过滤 >=RATE_NORMAL，mapped 最低也是 RATE_NORMAL），防御回落。
+        if (commonLevel < SensorDirectChannel.RATE_NORMAL) {
+            return fallbackToPolling(
+                args,
+                "共同支持档位=$commonLevel 不足 RATE_NORMAL（最低档），无法进行 direct report",
+            )
+        }
+        val nominalHz = DirectChannelEventReader.nominalHzForLevel(commonLevel)
 
         val slots = DIRECT_CHANNEL_SLOTS
         val size = DirectChannelEventReader.EVENT_SIZE * slots
@@ -823,7 +848,6 @@ class HardwareStatusTool(
 
         var ch: SensorDirectChannel? = null
         val configured = mutableListOf<StreamTarget>()
-        val levels = mutableMapOf<String, Int>()
         var events: List<DirectChannelEventReader.Event> = emptyList()
         var failure: String? = null
         try {
@@ -831,14 +855,9 @@ class HardwareStatusTool(
                 ?: error("createDirectChannel 返回 null")
             ch = direct
             for (t in supported) {
-                val maxLevel = t.sensor.highestDirectReportRateLevel
-                val rate = minOf(SensorDirectChannel.RATE_FAST, maxLevel)
-                    .coerceAtLeast(SensorDirectChannel.RATE_NORMAL)
-                val ret = direct.configure(t.sensor, rate)
-                if (ret > 0) {
-                    configured += t
-                    levels[t.channel.key] = rate
-                }
+                // 必修 1：全部 configure 到同一档位 commonLevel（per-channel 全局速率）。
+                val ret = direct.configure(t.sensor, commonLevel)
+                if (ret > 0) configured += t
             }
             if (configured.isEmpty()) {
                 failure = "configure 全部返回失败（设备拒绝 direct report）"
@@ -868,6 +887,10 @@ class HardwareStatusTool(
         // 事件按 type 字段（0x08 传感器类型）归属到对应 StreamChannel，
         // 复用既有 channelStats / vibrationOf / SensorCsv 管线。
         val byType = configured.associate { SENSOR_KINDS.getValue(it.channel.key).type to it }
+        // R146 必修 2：环形窗口按存留事件真实时序计时，不拿存留数除完整 durationMs。
+        val overwritten = DirectChannelEventReader.detectWrap(events, slots)
+        val windowMs = if (events.isEmpty()) 0L else
+            (events.maxOf { it.tsNs } - events.minOf { it.tsNs }) / 1_000_000L
         val snapshot = ArrayList<List<String>>(minOf(events.size, MAX_STREAM_ROWS))
         var baseTs: Long? = null
         for (e in events) {
@@ -897,10 +920,19 @@ class HardwareStatusTool(
         val stats = buildJsonObject {
             for (t in configured) {
                 if (t.channel.count.get() == 0) continue
-                put(t.channel.key, channelStats(t.channel, durationMs))
+                // 必修 2：measuredHz 用该传感器自身事件的窗口（按 e.type 过滤），
+                // 分母为样本间隔数，避免全局 windowMs 跨传感器失真 + 少算一个间隔。
+                val type = SENSOR_KINDS.getValue(t.channel.key).type
+                val own = events.filter { it.type == type }
+                val perSensorSpanMs = if (own.size > 1)
+                    maxOf(0L, (own.maxOf { it.tsNs } - own.minOf { it.tsNs }) / 1_000_000L)
+                else 0L
+                put(t.channel.key, channelStats(t.channel, windowMs, perSensorSpanMs))
             }
         }
-        val vibration = vibrationOf(configured.map { it.channel }, durationMs)
+        // 必修 2：vibrationOf 仍用全局 windowMs（幅值统计，窗口口径影响极小）；
+        // windowMs==0 时 SensorVibration.detect 直接返回 null，无除零，行为与现在一致。
+        val vibration = vibrationOf(configured.map { it.channel }, windowMs)
 
         var path = ""
         if (saveCsv) {
@@ -912,7 +944,6 @@ class HardwareStatusTool(
         }
 
         val tokens = events.map { it.reportToken }.distinct()
-        val level = levels.values.maxOrNull() ?: SensorDirectChannel.RATE_FAST
         return buildJsonObject {
             put("status", "OK")
             put("mode", "channel")
@@ -922,15 +953,22 @@ class HardwareStatusTool(
             put("unsupported", buildJsonArray {
                 (targets - configured.toSet()).forEach { add(it.channel.key) }
             })
-            put("hz", hz)
-            put("samplingPeriodUs", 1_000_000 / hz)
+            put("requestedHz", hz)
+            put("hz", nominalHz)              // 兼容保留 hz 键，值改为档位标称值
+            put("rateLevel", directRateLabel(commonLevel))
+            put("nominalHz", nominalHz)
+            put("samplingPeriodUs", 1_000_000 / nominalHz)
             put("durationMs", durationMs)
             put("count", events.size)
             put("events", events.size)
             put("slots", slots)
+            put("windowMs", windowMs)
+            // 必修 3：overwritten 实为 possibleWrap 语义（全槽写满/回绕特征均保守判为 true，
+            // 仅表示「可能已覆盖」而非「确定已覆盖」）；note 文案据此不再断言「更早事件已被覆盖」。
+            put("overwritten", overwritten)
             put("reportToken", buildJsonArray { tokens.forEach { add(it) } })
-            put("channelLevel", directRateLabel(level))
-            put("truncated", events.size >= MAX_STREAM_ROWS)
+            put("channelLevel", directRateLabel(commonLevel))
+            put("truncated", events.size >= slots)
             put("path", path)
             put("stats", stats)
             vibration?.let { put("vibration", it.toJson()) }
@@ -938,8 +976,13 @@ class HardwareStatusTool(
             put(
                 "note",
                 "mode=channel：SensorDirectChannel 共享内存快照（104B/条 little-endian，$slots 槽）；" +
-                    "按事件 type 归属传感器，counter 最大值判定写入边界；channelLevel 为请求档位，" +
-                    "实际写入速率取决于硬件。" + POLLING_NOTE,
+                    "事件按 counter 升序恢复写入顺序，按 type 归属传感器，counter 最大值判定写入边界；" +
+                    "hz 映射 RATE_NORMAL(50)/RATE_FAST(200)/RATE_VERY_FAST(800) 三档（多传感器取共同支持的最低档，如实输出），" +
+                    "实际速率为档位标称的 55%~220%（实测见 stats.measuredHz，按各传感器自身事件窗口的样本间隔数计算；windowMs 为存留事件首末时间差）；" +
+                    (if (overwritten)
+                        "环形缓冲可能已回绕（全槽写满或写指针回绕特征），结果仅含最近 $slots 槽窗口（若发生覆盖，更早事件已被覆盖）；"
+                    else "") +
+                    POLLING_NOTE,
             )
         }.toString()
     }
@@ -966,12 +1009,22 @@ class HardwareStatusTool(
             },
         )
 
-    private fun channelStats(channel: StreamChannel, durationMs: Long): JsonObject = buildJsonObject {
+    /**
+     * [perSensorSpanMs] 非空时（channel 模式）用 [SensorStats.rateHzFromSpan] 按该传感器
+     * 自身事件窗口 + 样本间隔数计算 measuredHz；为空时（polling 模式）保持既有 rateHz 口径不变。
+     */
+    private fun channelStats(
+        channel: StreamChannel,
+        durationMs: Long,
+        perSensorSpanMs: Long? = null,
+    ): JsonObject = buildJsonObject {
         val samples = synchronized(channel.values) { channel.values.toList() }
         val width = samples.firstOrNull()?.size ?: 0
         val axisNames = listOf("x", "y", "z")
         put("samples", channel.count.get())
-        put("measuredHz", SensorStats.rateHz(channel.count.get(), durationMs))
+        put("measuredHz", if (perSensorSpanMs != null)
+            SensorStats.rateHzFromSpan(channel.count.get(), perSensorSpanMs)
+        else SensorStats.rateHz(channel.count.get(), durationMs))
         if (width >= 3) {
             put("magnitude", SensorStats.of(samples.map { SensorStats.magnitude(it[0], it[1], it[2]).toFloat() }).toJson())
         }

@@ -1,6 +1,7 @@
 package com.dc.andagent.tools
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -35,6 +36,17 @@ class HardwareStatusToolsTest {
         assertEquals(0.0, empty.mean, 1e-9)
         assertEquals(200.0, SensorStats.rateHz(2000, 10_000L), 1e-9)
         assertEquals(0.0, SensorStats.rateHz(10, 0L), 1e-9)
+    }
+
+    @Test
+    fun sensorStatsRateHzFromSpan() {
+        // 10 个等间隔样本、窗口 180ms：按 9 个间隔折算 = 50Hz（不再少算成 55.56Hz）。
+        assertEquals(50.0, SensorStats.rateHzFromSpan(10, 180L), 1e-9)
+        // 单样本 / 空样本无间隔可计 → 0.0，不虚报。
+        assertEquals(0.0, SensorStats.rateHzFromSpan(1, 180L), 1e-9)
+        assertEquals(0.0, SensorStats.rateHzFromSpan(0, 0L), 1e-9)
+        // 窗口为 0 时同样不虚报（无除零 / Infinity）。
+        assertEquals(0.0, SensorStats.rateHzFromSpan(10, 0L), 1e-9)
     }
 
     @Test
@@ -398,8 +410,10 @@ class HardwareStatusToolsTest {
         val events = DirectChannelEventReader.parse(buffer, 5)
         assertEquals(5, events.size)
         assertEquals(3, events.count { it.counter == 2L })
-        assertEquals(listOf(10L, 20L, 30L, 40L, 50L), events.map { it.tsNs })
-        assertEquals(listOf(0, 1, 2, 3, 4), events.map { it.slot })
+        // parse 现按 counter 稳定升序输出；重复 counter 保持物理槽相对顺序。
+        assertEquals(listOf(2L, 2L, 2L, 5L, 9L), events.map { it.counter })
+        assertEquals(listOf(10L, 20L, 40L, 50L, 30L), events.map { it.tsNs })
+        assertEquals(listOf(0, 1, 3, 4, 2), events.map { it.slot })
     }
 
     @Test
@@ -462,5 +476,105 @@ class HardwareStatusToolsTest {
                 }
             }
         }
+    }
+
+    /* ------------- R146-fix 必修 2/3 新增纯函数与排序单测 ------------- */
+
+    @Test
+    fun directChannelParseSortsByCounterAscending() {
+        // 槽序 [5,3,4,1,2] 的 counter 乱序物理布局（环形窗口/并发写导致的物理错序）。
+        val buffer = bufferOf(
+            leSlot(counter = 5, tsNs = 50L),
+            leSlot(counter = 3, tsNs = 30L),
+            leSlot(counter = 4, tsNs = 40L),
+            leSlot(counter = 1, tsNs = 10L),
+            leSlot(counter = 2, tsNs = 20L),
+        )
+        val events = DirectChannelEventReader.parse(buffer, 5)
+        // 按 counter 升序恢复写入顺序（时间戳随之单调不减）。
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L), events.map { it.counter })
+        assertEquals(listOf(10L, 20L, 30L, 40L, 50L), events.map { it.tsNs })
+        // 物理槽号随事件保留，供 detectWrap 判定回绕。
+        assertEquals(listOf(3, 4, 1, 2, 0), events.map { it.slot })
+    }
+
+    @Test
+    fun directChannelDetectWrapByPositionSignature() {
+        // 8 槽中 5 个有效事件呈回绕布局：counter 4..8 写在物理槽 3,4,0,1,2，
+        // 其余 3 槽 counter=0（未写入/坏槽）。最大 counter 槽(2) < 最小 counter 槽(3)。
+        val events = DirectChannelEventReader.parse(
+            bufferOf(
+                leSlot(counter = 6, tsNs = 60L),
+                leSlot(counter = 7, tsNs = 70L),
+                leSlot(counter = 8, tsNs = 80L),
+                leSlot(counter = 4, tsNs = 40L),
+                leSlot(counter = 5, tsNs = 50L),
+                leSlot(counter = 0),
+                leSlot(counter = 0),
+                leSlot(counter = 0),
+            ),
+            8,
+        )
+        assertEquals(5, events.size)
+        assertEquals(listOf(4L, 5L, 6L, 7L, 8L), events.map { it.counter })
+        // events.size(5) < slots(8)，须由物理位置特征（而非「全槽写满」）检出回绕。
+        assertTrue(DirectChannelEventReader.detectWrap(events, 8))
+    }
+
+    @Test
+    fun directChannelDetectWrapFullNoWrapAndEmpty() {
+        // 顺序写入、未写满：最大 counter 槽(4) > 最小 counter 槽(0) → 无回绕。
+        val sequential = DirectChannelEventReader.parse(
+            bufferOf(
+                leSlot(counter = 1), leSlot(counter = 2), leSlot(counter = 3),
+                leSlot(counter = 4), leSlot(counter = 5),
+            ),
+            5,
+        )
+        assertEquals(5, sequential.size)
+        assertFalse(DirectChannelEventReader.detectWrap(sequential, 8))
+        // 全槽写满（events.size == slots）→ 保守视为可能已覆盖。
+        assertTrue(DirectChannelEventReader.detectWrap(sequential, 5))
+        // 空事件 → false。
+        assertFalse(DirectChannelEventReader.detectWrap(emptyList(), 5))
+    }
+
+    @Test
+    fun directChannelDetectWrapExactlyFullSequentialIsConservative() {
+        // 必修 3 边界：恰好写满 slots 且顺序写入（物理槽号递增、counter 递增，无 b) 回绕特征）。
+        // 仅凭快照无法区分「写满未覆盖」与「写满且已覆盖一轮」，按 a) 保守判为 true。
+        // 逻辑-文档-文案三者一致：KDoc 注明「全槽=保守可能覆盖 possibleWrap」，note 只说
+        // 「可能已回绕 / 若发生覆盖」，不谎称「更早事件已被覆盖」；本用例断言该保守判定。
+        val slots = 4
+        val events = DirectChannelEventReader.parse(
+            bufferOf(
+                leSlot(counter = 1), leSlot(counter = 2),
+                leSlot(counter = 3), leSlot(counter = 4),
+            ),
+            slots,
+        )
+        assertEquals(slots, events.size)
+        // 顺序写入特征：最小 counter 在槽 0、最大 counter 在槽 3，无写指针回绕。
+        assertEquals(0, events.single { it.counter == events.minOf { e -> e.counter } }.slot)
+        assertEquals(3, events.single { it.counter == events.maxOf { e -> e.counter } }.slot)
+        // 仅由「全槽写满」保守触发 true（possibleWrap，非确定覆盖）。
+        assertTrue(DirectChannelEventReader.detectWrap(events, slots))
+    }
+
+    @Test
+    fun directChannelRateLevelForHz() {
+        assertEquals(DirectChannelEventReader.RATE_NORMAL, DirectChannelEventReader.rateLevelForHz(1))
+        assertEquals(DirectChannelEventReader.RATE_NORMAL, DirectChannelEventReader.rateLevelForHz(110))
+        assertEquals(DirectChannelEventReader.RATE_FAST, DirectChannelEventReader.rateLevelForHz(111))
+        assertEquals(DirectChannelEventReader.RATE_FAST, DirectChannelEventReader.rateLevelForHz(440))
+        assertEquals(DirectChannelEventReader.RATE_VERY_FAST, DirectChannelEventReader.rateLevelForHz(441))
+        assertEquals(DirectChannelEventReader.RATE_VERY_FAST, DirectChannelEventReader.rateLevelForHz(500))
+    }
+
+    @Test
+    fun directChannelNominalHzForLevel() {
+        assertEquals(50, DirectChannelEventReader.nominalHzForLevel(DirectChannelEventReader.RATE_NORMAL))
+        assertEquals(200, DirectChannelEventReader.nominalHzForLevel(DirectChannelEventReader.RATE_FAST))
+        assertEquals(800, DirectChannelEventReader.nominalHzForLevel(DirectChannelEventReader.RATE_VERY_FAST))
     }
 }

@@ -30,6 +30,13 @@ object DirectChannelEventReader {
     private const val OFF_DATA = 0x18
     private const val DATA_FLOATS = 16
 
+    // R146 必修 3：SensorDirectChannel 的 rate 档位值（与 android.hardware.SensorDirectChannel
+    // 的 RATE_NORMAL/RATE_FAST/RATE_VERY_FAST 常量一致）。此处用 Int 字面量以保持本对象零
+    // Android framework 依赖，可在纯 JVM 单测中直接调用与断言。
+    const val RATE_NORMAL = 1
+    const val RATE_FAST = 2
+    const val RATE_VERY_FAST = 3
+
     data class Event(
         val tsNs: Long,
         val counter: Long,       // uint32 拓宽为 Long（1..0xFFFFFFFF）
@@ -91,6 +98,50 @@ object DirectChannelEventReader {
                 slot = i,
             )
         }
-        return out
+        // R146 必修 2：counter 单调递增即时间序，按 counter 升序稳定排序恢复写入顺序，
+        // 避免环形缓冲回绕后仍按物理槽顺序输出导致时间戳倒退/跳变。无 uint32 counter
+        // wrap 场景下有效；回绕后以 overwritten/windowMs 如实标注，不虚报。
+        return out.sortedBy { it.counter }
+    }
+
+    /**
+     * R146 必修 2/3：判断环形共享内存「可能已回绕」（possibleWrap 语义，可单测纯函数）。
+     * 返回值是保守的「可能覆盖」信号，而非「确定已覆盖」：满足其一即 true——
+     *   a) events.size >= slots —— 全槽写满。恰好写满且顺序写入时，仅凭快照无法区分
+     *      「写满未覆盖」与「写满且已覆盖一轮」，故保守判为 true（可能覆盖），不谎称已覆盖；
+     *   b) counter 最大槽的物理位置 < counter 最小槽的物理位置 —— 写指针回绕特征
+     *      （最新事件落在最旧事件之前）。
+     * 用 Event.slot（物理槽号）而非列表下标，故对已按 counter 排序的 parse 输出同样有效。
+     * 逻辑-文档-文案三者一致：possibleWrap 只说「可能已回绕 / 若发生覆盖」，不写「已覆盖」。
+     */
+    fun detectWrap(events: List<Event>, slots: Int): Boolean {
+        if (events.isEmpty()) return false
+        if (events.size >= slots) return true
+        val minCounter = events.minOf { it.counter }
+        val maxCounter = events.maxOf { it.counter }
+        val minSlot = events.filter { it.counter == minCounter }.minOf { it.slot }
+        val maxSlot = events.filter { it.counter == maxCounter }.maxOf { it.slot }
+        return maxSlot < minSlot
+    }
+
+    /**
+     * R146 必修 3：用户请求的 hz 映射到 direct-channel rate 档位（纯函数，可单测）。
+     *   hz <= 110 → RATE_NORMAL（标称 50Hz）
+     *   hz <= 440 → RATE_FAST（标称 200Hz）
+     *   否则（上限 500 内）→ RATE_VERY_FAST（标称 800Hz）
+     * 分界落在相邻档标称 55%~220% 交叠区，档位值见 RATE_* 常量。
+     */
+    fun rateLevelForHz(hz: Int): Int = when {
+        hz <= 110 -> RATE_NORMAL
+        hz <= 440 -> RATE_FAST
+        else -> RATE_VERY_FAST
+    }
+
+    /** 档位标称采样率（Hz）：NORMAL=50 / FAST=200 / VERY_FAST=800。 */
+    fun nominalHzForLevel(level: Int): Int = when (level) {
+        RATE_NORMAL -> 50
+        RATE_FAST -> 200
+        RATE_VERY_FAST -> 800
+        else -> 200 // 防御：钳制后 level 必在 [RATE_NORMAL, RATE_VERY_FAST]
     }
 }
