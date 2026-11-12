@@ -4,8 +4,10 @@ import android.Manifest
 import android.app.AppOpsManager
 import android.app.NotificationManager
 import android.app.WallpaperManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.hardware.camera2.CameraCharacteristics
@@ -40,7 +42,7 @@ val SYSTEM_API_TOOLS = listOf(
     "telephony_info", "data_usage", "audio_state", "audio_set_volume",
     "media_library", "ringtone_set", "wallpaper_set", "vibrate",
     "torch", "screen_state", "brightness_set", "volume_dnd",
-    "installed_app_details", "usage_stats", "biometric_check",
+    "installed_app_details", "usage_stats", "screen_events", "biometric_check",
 )
 
 /** R118: wallpaper_set target 归一化（纯函数，供 JVM 单测直接覆盖，非法值回退 home）。 */
@@ -72,6 +74,7 @@ class SystemApiTool(
         "volume_dnd" -> "设置勿扰模式：all/priority/alarms/silent（需要勿扰权限）。"
         "installed_app_details" -> "查询单个已安装应用的详细信息：版本、目标 SDK、权限、安装时间、APK 体积。"
         "usage_stats" -> "查询近 N 天应用前台使用时长（需要「使用情况访问」权限）。"
+        "screen_events" -> "查询近 days 天应用前台切换统计：前台切换次数（按相邻前台包变化计，同包重恢复不计）、回到桌面会话估计(sessionEstimate)、最近前台活动历史（需系统「使用情况访问」权限）；sessionEstimate 为「切回桌面」转场代理，非真实解锁次数。Query app foreground-switch stats (needs Usage Access): switches counted by adjacent foreground-package changes (same-package re-resumes excluded), sessionEstimate is a return-to-home transition proxy, not a real unlock count; recent is the recent foreground activity history."
         "biometric_check" -> "检查设备生物识别能力及是否已录入（不弹出认证框）。"
         else -> "系统状态工具"
     }
@@ -109,6 +112,10 @@ class SystemApiTool(
             "days" to intParam("查询最近 N 天，默认 1，上限 7"),
             "limit" to intParam("返回应用数，默认 20"),
         )
+        "screen_events" -> schemaOf(
+            "days" to intParam("查询最近 N 天，默认 1，范围 1-7"),
+            "history_limit" to intParam("最近前台活动历史条数，默认 50，上限 200"),
+        )
         else -> schemaOf()
     }
 
@@ -134,6 +141,7 @@ class SystemApiTool(
                 "volume_dnd" -> volumeDnd(args)
                 "installed_app_details" -> appDetails(args)
                 "usage_stats" -> usageStats(args)
+                "screen_events" -> screenEvents(args)
                 "biometric_check" -> biometricCheck()
                 else -> "ERROR: 未知系统工具 $name"
             }
@@ -456,6 +464,36 @@ class SystemApiTool(
                 stats.forEach { (pkg, millis) -> add(buildJsonObject { put("package", pkg); put("foregroundMs", millis) }) }
             }
         }.toString()
+    }
+
+    // R117①：UsageEvents 前台切换事件统计。复用 usage_stats 同款 AppOps 检查；
+    // sessionEstimate 是「回到桌面」启发式代理，非真实解锁计数（见 UsageEventStats 的 note）。
+    private fun screenEvents(args: JsonObject): String {
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val allowed = appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName) == AppOpsManager.MODE_ALLOWED
+        if (!allowed) return "ERROR: 需要「使用情况访问」权限，请先在系统设置中为 AndAgent 开启"
+        val days = (args.intArg("days") ?: 1).coerceIn(1, 7)
+        val historyLimit = (args.intArg("history_limit") ?: 50).coerceIn(1, 200)
+        val now = System.currentTimeMillis()
+        val begin = now - days * 86_400_000L
+        val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        // 遍历中即时过滤：仅 ACTIVITY_RESUMED 事件以 (pkg, ts) 入列，paused/其它类型读完即弃，
+        // 避免 7 天高活跃设备把全类型事件全量装入 List 导致内存/耗时风险。
+        val events = mutableListOf<Pair<String, Long>>()
+        val usageEvents = manager.queryEvents(begin, now)
+        val event = UsageEvents.Event()
+        while (usageEvents.hasNextEvent()) {
+            usageEvents.getNextEvent(event)
+            if (event.eventType == UsageEventStats.ACTIVITY_RESUMED) {
+                events.add((event.packageName ?: "") to event.timeStamp)
+            }
+        }
+        // CATEGORY_HOME 解析桌面包名；无 launcher 时 resolveActivity 返回 null → sessionEstimate 置 null 不虚报。
+        val launcherPkg = runCatching {
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                .resolveActivity(context.packageManager)?.packageName
+        }.getOrNull()
+        return UsageEventStats.aggregate(events, launcherPkg, now, days, historyLimit).toString()
     }
 
     private fun biometricCheck(): String {

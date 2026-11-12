@@ -127,6 +127,7 @@ export const EXTRA_TOOL_DEFS = [
   { name: "volume_dnd", description: "设置勿扰模式 mode=all|priority|alarms|silent，需勿扰访问权限。", parameters: { type: "object", properties: { mode: { type: "string" } }, required: ["mode"] } },
   { name: "installed_app_details", description: "查询指定包名应用的版本、目标 SDK、权限、安装时间与 APK 体积。", parameters: { type: "object", properties: { package: { type: "string" } }, required: ["package"] } },
   { name: "usage_stats", description: "查询近 days 天应用前台使用时长，需系统「使用情况访问」权限。", parameters: { type: "object", properties: { days: { type: "integer" }, limit: { type: "integer" } }, required: [] } },
+  { name: "screen_events", description: "查询近 days 天应用前台切换统计：前台切换次数（按相邻前台包变化计，同包重恢复不计）、回到桌面会话估计(sessionEstimate)、最近前台活动历史（需系统「使用情况访问」权限）；sessionEstimate 为「切回桌面」转场代理，非真实解锁次数。Query app foreground-switch stats (needs Usage Access): switches counted by adjacent foreground-package changes (same-package re-resumes excluded), sessionEstimate is a return-to-home transition proxy, not a real unlock count; recent is the recent foreground activity history.", parameters: { type: "object", properties: { days: { type: "integer" }, history_limit: { type: "integer" } }, required: [] } },
   { name: "biometric_check", description: "检查设备生物识别硬件与录入状态，不弹认证框。", parameters: { type: "object", properties: {}, required: [] } },
 
   { name: "alarm_wait", description: "读取系统下一个闹钟的时间与剩余毫秒数。", parameters: { type: "object", properties: {}, required: [] } },

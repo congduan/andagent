@@ -101,10 +101,16 @@ class EventNotificationListener : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         if (!EventFlags.enabled(this, "notif") || EventHistory.excluded(sbn.packageName, packageName, EventFlags.excludes(this))) return
         val extras = sbn.notification.extras
+        val title = extras.getCharSequence("android.title")?.toString()?.take(200) ?: ""
+        val text = extras.getCharSequence("android.text")?.toString()?.take(500) ?: ""
+        // R117①：通知智能分类，event JSON 追加 category（始终有）、code（仅提取到时写键）；既有字段不动。
+        val classification = NotifClassifier.classify(title, text, sbn.packageName)
         EventStore.put(this, "notif_events", EventStore.event("posted", buildJsonObject {
             put("package", sbn.packageName)
-            put("title", extras.getCharSequence("android.title")?.toString()?.take(200) ?: "")
-            put("text", extras.getCharSequence("android.text")?.toString()?.take(500) ?: "")
+            put("title", title)
+            put("text", text)
+            put("category", classification.category)
+            classification.code?.let { put("code", it) }
         }))
     }
 }
