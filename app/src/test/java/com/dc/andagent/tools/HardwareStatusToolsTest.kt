@@ -50,6 +50,21 @@ class HardwareStatusToolsTest {
     }
 
     @Test
+    fun sensorStatsRateHzFromSpanNsKeepsSubMillisecondPrecision() {
+        // 二轮必修 B：窗口保留纳秒原值到除法，避免整除 1e6 丢精度。
+        // 0.8ms 两样本：旧 ms 路径整除成 0ms→0Hz；ns 路径 = (2-1)*1e9/800_000 = 1250Hz。
+        assertEquals(1250.0, SensorStats.rateHzFromSpanNs(2, 800_000L), 1e-9)
+        // 1.9ms 两样本：旧 ms 路径整除成 1ms→1000Hz；ns 路径 = 10000/19 ≈ 526.315789...，Double 精度断言。
+        assertEquals(526.3157894736842, SensorStats.rateHzFromSpanNs(2, 1_900_000L), 1e-9)
+        // 与旧 ms 口径等价：10 样本 / 180ms(=180_000_000ns) → 50Hz。
+        assertEquals(50.0, SensorStats.rateHzFromSpanNs(10, 180_000_000L), 1e-9)
+        // 边界保护不变：count<=1 或 spanNs<=0 → 0.0（无间隔可计、无除零）。
+        assertEquals(0.0, SensorStats.rateHzFromSpanNs(1, 800_000L), 1e-9)
+        assertEquals(0.0, SensorStats.rateHzFromSpanNs(0, 0L), 1e-9)
+        assertEquals(0.0, SensorStats.rateHzFromSpanNs(10, 0L), 1e-9)
+    }
+
+    @Test
     fun magnitudeKeepsGravity() {
         assertEquals(9.8, SensorStats.magnitude(0f, 0f, 9.8f), 1e-6)
         assertEquals(5.0, SensorStats.magnitude(3f, 4f, 0f), 1e-6)
@@ -559,6 +574,59 @@ class HardwareStatusToolsTest {
         assertEquals(3, events.single { it.counter == events.maxOf { e -> e.counter } }.slot)
         // 仅由「全槽写满」保守触发 true（possibleWrap，非确定覆盖）。
         assertTrue(DirectChannelEventReader.detectWrap(events, slots))
+    }
+
+    /* --------- R146 二轮必修 A：determinate-overwrite 判据单测 --------- */
+
+    @Test
+    fun hasWrapSignatureExactlyFullSequentialIsFalse() {
+        // 二轮必修 A：恰好写满且顺序写入（条件 a 成立、条件 b 不成立）——无确定覆盖证据。
+        // overwritten / truncated 据此为 false，possibleWrap(detectWrap) 仍为 true（保守「可能」）。
+        // 旧实现把 detectWrap 直接当 overwritten 用，会在此场景虚报覆盖，本用例锁定修复。
+        val slots = 4
+        val sequential = DirectChannelEventReader.parse(
+            bufferOf(
+                leSlot(counter = 1), leSlot(counter = 2),
+                leSlot(counter = 3), leSlot(counter = 4),
+            ),
+            slots,
+        )
+        assertEquals(slots, sequential.size)
+        assertFalse(DirectChannelEventReader.hasWrapSignature(sequential)) // 确定覆盖=false
+        assertTrue(DirectChannelEventReader.detectWrap(sequential, slots))  // 可能回绕=true
+        assertFalse(DirectChannelEventReader.hasWrapSignature(emptyList())) // 空=false
+    }
+
+    @Test
+    fun hasWrapSignatureWrapLayoutIsTrueEvenWhenFull() {
+        // 二轮必修 A：写指针回绕布局（最大 counter 槽 < 最小 counter 槽）——确定覆盖。
+        // 关键：即便 events.size == slots（全槽写满），hasWrapSignature 仍须独立判出条件 b；
+        // 而 detectWrap 因条件 a 短路恒 true。两函数分离，overwritten 才不虚报恰好写满场景。
+        val slots = 5
+        val wrappedFull = DirectChannelEventReader.parse(
+            bufferOf(
+                leSlot(counter = 6, tsNs = 60L),
+                leSlot(counter = 7, tsNs = 70L),
+                leSlot(counter = 8, tsNs = 80L),
+                leSlot(counter = 4, tsNs = 40L),
+                leSlot(counter = 5, tsNs = 50L),
+            ),
+            slots,
+        )
+        assertEquals(slots, wrappedFull.size)
+        assertTrue(DirectChannelEventReader.hasWrapSignature(wrappedFull)) // 确定覆盖=true
+        assertTrue(DirectChannelEventReader.detectWrap(wrappedFull, slots))
+        // 非写满的回绕布局（5 事件 / 8 槽，3 槽未写入）同样为 true。
+        val partial = DirectChannelEventReader.parse(
+            bufferOf(
+                leSlot(counter = 6), leSlot(counter = 7), leSlot(counter = 8),
+                leSlot(counter = 4), leSlot(counter = 5),
+                leSlot(counter = 0), leSlot(counter = 0), leSlot(counter = 0),
+            ),
+            8,
+        )
+        assertEquals(5, partial.size)
+        assertTrue(DirectChannelEventReader.hasWrapSignature(partial))
     }
 
     @Test

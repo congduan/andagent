@@ -144,6 +144,16 @@ object SensorStats {
      */
     fun rateHzFromSpan(count: Int, spanMs: Long): Double =
         if (count <= 1 || spanMs <= 0) 0.0 else (count - 1) * 1000.0 / spanMs
+
+    /**
+     * R146 二轮必修 B：窗口以纳秒原值到除法折算实测采样率（纯函数，可单测）。
+     * 旧 [rateHzFromSpan] 先把纳秒差整除 1e6 成毫秒，会在亚毫秒窗口丢精度甚至归零
+     * （0.8ms→0ms 报 0Hz、1.9ms→1ms 报 1000Hz）。本函数直接收 spanNs，保留全部精度。
+     * count<=1 或窗口非正时返回 0.0（无间隔可计，不虚报、无除零）。
+     * channel 模式的 perSensor 窗口用此函数；全局 windowMs 输出仍可用毫秒（仅展示）。
+     */
+    fun rateHzFromSpanNs(count: Int, spanNs: Long): Double =
+        if (count <= 1 || spanNs <= 0) 0.0 else (count - 1) * 1e9 / spanNs
 }
 
 /**
@@ -887,8 +897,12 @@ class HardwareStatusTool(
         // 事件按 type 字段（0x08 传感器类型）归属到对应 StreamChannel，
         // 复用既有 channelStats / vibrationOf / SensorCsv 管线。
         val byType = configured.associate { SENSOR_KINDS.getValue(it.channel.key).type to it }
-        // R146 必修 2：环形窗口按存留事件真实时序计时，不拿存留数除完整 durationMs。
-        val overwritten = DirectChannelEventReader.detectWrap(events, slots)
+        // R146 二轮必修 A：possibleWrap（a∨b，保守「可能已回绕」）与确定覆盖判据分离。
+        // overwritten / truncated 仅在写指针回绕特征（条件 b）成立时为 true；
+        // 恰好写满未覆盖（仅条件 a）时保持 false + possibleWrap=true，不虚报。
+        val possibleWrap = DirectChannelEventReader.detectWrap(events, slots)
+        val overwritten = DirectChannelEventReader.hasWrapSignature(events)
+        // R146 必修 2：环形窗口按存留事件真实时序计时，不拿存留数除完整 durationMs（展示用毫秒）。
         val windowMs = if (events.isEmpty()) 0L else
             (events.maxOf { it.tsNs } - events.minOf { it.tsNs }) / 1_000_000L
         val snapshot = ArrayList<List<String>>(minOf(events.size, MAX_STREAM_ROWS))
@@ -922,12 +936,13 @@ class HardwareStatusTool(
                 if (t.channel.count.get() == 0) continue
                 // 必修 2：measuredHz 用该传感器自身事件的窗口（按 e.type 过滤），
                 // 分母为样本间隔数，避免全局 windowMs 跨传感器失真 + 少算一个间隔。
+                // 二轮必修 B：窗口传纳秒原值（不再整除 1e6 成毫秒），由 rateHzFromSpanNs 保留精度。
                 val type = SENSOR_KINDS.getValue(t.channel.key).type
                 val own = events.filter { it.type == type }
-                val perSensorSpanMs = if (own.size > 1)
-                    maxOf(0L, (own.maxOf { it.tsNs } - own.minOf { it.tsNs }) / 1_000_000L)
+                val perSensorSpanNs = if (own.size > 1)
+                    maxOf(0L, own.maxOf { it.tsNs } - own.minOf { it.tsNs })
                 else 0L
-                put(t.channel.key, channelStats(t.channel, windowMs, perSensorSpanMs))
+                put(t.channel.key, channelStats(t.channel, windowMs, perSensorSpanNs))
             }
         }
         // 必修 2：vibrationOf 仍用全局 windowMs（幅值统计，窗口口径影响极小）；
@@ -963,12 +978,16 @@ class HardwareStatusTool(
             put("events", events.size)
             put("slots", slots)
             put("windowMs", windowMs)
-            // 必修 3：overwritten 实为 possibleWrap 语义（全槽写满/回绕特征均保守判为 true，
-            // 仅表示「可能已覆盖」而非「确定已覆盖」）；note 文案据此不再断言「更早事件已被覆盖」。
+            // 二轮必修 A：possibleWrap = detectWrap（a∨b，保守「可能已回绕」，兼容旧语义）；
+            // overwritten 仅在写指针回绕特征（条件 b）成立时为 true（确定覆盖）。
+            // truncated 改为「实际截断」语义：channel 快照无行数截断（snapshot 全量进 CSV），
+            // 旧事件丢失只可能来自环形覆盖，故与 overwritten 同判据（回绕特征），
+            // 恰好写满未覆盖时二者均为 false，不虚报。
+            put("possibleWrap", possibleWrap)
             put("overwritten", overwritten)
             put("reportToken", buildJsonArray { tokens.forEach { add(it) } })
             put("channelLevel", directRateLabel(commonLevel))
-            put("truncated", events.size >= slots)
+            put("truncated", overwritten)
             put("path", path)
             put("stats", stats)
             vibration?.let { put("vibration", it.toJson()) }
@@ -979,8 +998,12 @@ class HardwareStatusTool(
                     "事件按 counter 升序恢复写入顺序，按 type 归属传感器，counter 最大值判定写入边界；" +
                     "hz 映射 RATE_NORMAL(50)/RATE_FAST(200)/RATE_VERY_FAST(800) 三档（多传感器取共同支持的最低档，如实输出），" +
                     "实际速率为档位标称的 55%~220%（实测见 stats.measuredHz，按各传感器自身事件窗口的样本间隔数计算；windowMs 为存留事件首末时间差）；" +
-                    (if (overwritten)
-                        "环形缓冲可能已回绕（全槽写满或写指针回绕特征），结果仅含最近 $slots 槽窗口（若发生覆盖，更早事件已被覆盖）；"
+                    (if (possibleWrap)
+                        "环形缓冲可能已回绕（possibleWrap=true：全槽写满或写指针回绕特征，快照不足以区分写满未覆盖与已覆盖）；" +
+                            (if (overwritten)
+                                "检测到写指针回绕特征，更早事件已被覆盖，结果仅含最近 $slots 槽窗口；"
+                            else
+                                "若发生覆盖，更早事件会被丢弃（本次未检测到确定覆盖特征）；")
                     else "") +
                     POLLING_NOTE,
             )
@@ -1010,20 +1033,20 @@ class HardwareStatusTool(
         )
 
     /**
-     * [perSensorSpanMs] 非空时（channel 模式）用 [SensorStats.rateHzFromSpan] 按该传感器
-     * 自身事件窗口 + 样本间隔数计算 measuredHz；为空时（polling 模式）保持既有 rateHz 口径不变。
+     * [perSensorSpanNs] 非空时（channel 模式）用 [SensorStats.rateHzFromSpanNs] 按该传感器
+     * 自身事件窗口（纳秒原值）+ 样本间隔数计算 measuredHz；为空时（polling 模式）保持既有 rateHz 口径不变。
      */
     private fun channelStats(
         channel: StreamChannel,
         durationMs: Long,
-        perSensorSpanMs: Long? = null,
+        perSensorSpanNs: Long? = null,
     ): JsonObject = buildJsonObject {
         val samples = synchronized(channel.values) { channel.values.toList() }
         val width = samples.firstOrNull()?.size ?: 0
         val axisNames = listOf("x", "y", "z")
         put("samples", channel.count.get())
-        put("measuredHz", if (perSensorSpanMs != null)
-            SensorStats.rateHzFromSpan(channel.count.get(), perSensorSpanMs)
+        put("measuredHz", if (perSensorSpanNs != null)
+            SensorStats.rateHzFromSpanNs(channel.count.get(), perSensorSpanNs)
         else SensorStats.rateHz(channel.count.get(), durationMs))
         if (width >= 3) {
             put("magnitude", SensorStats.of(samples.map { SensorStats.magnitude(it[0], it[1], it[2]).toFloat() }).toJson())

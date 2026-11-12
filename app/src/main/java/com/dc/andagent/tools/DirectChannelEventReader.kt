@@ -105,23 +105,39 @@ object DirectChannelEventReader {
     }
 
     /**
-     * R146 必修 2/3：判断环形共享内存「可能已回绕」（possibleWrap 语义，可单测纯函数）。
-     * 返回值是保守的「可能覆盖」信号，而非「确定已覆盖」：满足其一即 true——
-     *   a) events.size >= slots —— 全槽写满。恰好写满且顺序写入时，仅凭快照无法区分
-     *      「写满未覆盖」与「写满且已覆盖一轮」，故保守判为 true（可能覆盖），不谎称已覆盖；
-     *   b) counter 最大槽的物理位置 < counter 最小槽的物理位置 —— 写指针回绕特征
-     *      （最新事件落在最旧事件之前）。
+     * R146 二轮必修 A：写指针回绕特征（条件 b）——「确定已覆盖 / 实际截断」判据，纯函数可单测。
+     * counter 最大槽的物理位置 < counter 最小槽的物理位置 ⇒ 最新事件落在最旧事件之前，
+     * 写指针已回绕并重写了中间槽，旧事件必已被覆盖。该信号纯快照可得、可证伪、是覆盖的充分条件。
+     *
+     * 充分性前提（AOSP direct-channel 模型）：写指针自槽 0 起、只前进、counter 每次写入 +1，
+     * 故未覆盖时 slot=(counter-1) 随 counter 单调递增，不会出现「最大 counter 落在更小槽」的假阳性。
      * 用 Event.slot（物理槽号）而非列表下标，故对已按 counter 排序的 parse 输出同样有效。
-     * 逻辑-文档-文案三者一致：possibleWrap 只说「可能已回绕 / 若发生覆盖」，不写「已覆盖」。
+     * 注意：恰为 slots 整数倍的全量覆盖会让快照再次呈顺序写入特征而漏判（充分但非必要），
+     * 此时由 [detectWrap] 的条件 a) 兜底为 possibleWrap=true、overwritten=false，宁可少报不虚报。
+     * 与 [detectWrap] 不同：本函数不受 events.size 影响，全槽写满时仍独立判 b。
      */
-    fun detectWrap(events: List<Event>, slots: Int): Boolean {
+    fun hasWrapSignature(events: List<Event>): Boolean {
         if (events.isEmpty()) return false
-        if (events.size >= slots) return true
         val minCounter = events.minOf { it.counter }
         val maxCounter = events.maxOf { it.counter }
         val minSlot = events.filter { it.counter == minCounter }.minOf { it.slot }
         val maxSlot = events.filter { it.counter == maxCounter }.maxOf { it.slot }
         return maxSlot < minSlot
+    }
+
+    /**
+     * R146 二轮必修 A：判断环形共享内存「可能已回绕」（possibleWrap 语义，可单测纯函数）。
+     * 返回保守的「可能覆盖」信号，而非「确定已覆盖」：满足其一即 true（a∨b）——
+     *   a) events.size >= slots —— 全槽写满。恰好写满且顺序写入时，仅凭快照无法区分
+     *      「写满未覆盖」与「写满且已覆盖一轮」，故保守判为 true（可能覆盖），不谎称已覆盖；
+     *   b) [hasWrapSignature] —— 写指针回绕特征（最新事件落在最旧事件之前），确定覆盖。
+     * 逻辑-文档-文案三者一致：possibleWrap 只说「可能已回绕 / 若发生覆盖」，不写「已覆盖」。
+     * 需要「确定覆盖」判据请直接调用 [hasWrapSignature]，不要用本函数的返回值代替。
+     */
+    fun detectWrap(events: List<Event>, slots: Int): Boolean {
+        if (events.isEmpty()) return false
+        if (events.size >= slots) return true
+        return hasWrapSignature(events)
     }
 
     /**
