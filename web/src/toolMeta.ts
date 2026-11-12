@@ -193,6 +193,15 @@ export const TOOL_META: Record<string, ToolMeta> = {
   esp_flash: { label: "ESP32 烧录", labelEn: "ESP32 flash", icon: "download", destructive: true },
   esp_monitor: { label: "ESP32 监视器", labelEn: "ESP32 monitor", icon: "monitor" },
   usb_midi: { label: "USB MIDI", labelEn: "USB MIDI", icon: "music" },
+  // R74 收口刀: BLE GATT / SPP / USB bulk（与 Kotlin destructive 对齐；destructive 为工具级，含写动作的工具整体过确认闸）
+  ble_gatt: { label: "BLE GATT", labelEn: "BLE GATT", icon: "bluetooth", destructive: true },
+  ble_gatt_descriptors: { label: "GATT 描述符", labelEn: "GATT descriptors", icon: "bluetooth", destructive: true },
+  bt_spp_open: { label: "打开 SPP", labelEn: "Open SPP", icon: "bluetooth" },
+  bt_spp_read: { label: "读取 SPP", labelEn: "Read SPP", icon: "bluetooth" },
+  bt_spp_write: { label: "写入 SPP", labelEn: "Write SPP", icon: "bluetooth", destructive: true },
+  bt_spp_close: { label: "关闭 SPP", labelEn: "Close SPP", icon: "bluetooth" },
+  usb_bulk: { label: "USB bulk", labelEn: "USB bulk", icon: "plug", destructive: true },
+  usb_bulk_close: { label: "关闭 USB bulk", labelEn: "Close USB bulk", icon: "plug" },
   // R113: 蜂窝深度（全部只读）
   cell_info: { label: "基站信号诊断", labelEn: "Cell signal diagnostics", icon: "antenna" },
   cell_scan: { label: "邻区扫描", labelEn: "Neighbor scan", icon: "antenna" },
