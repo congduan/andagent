@@ -25,8 +25,10 @@ object TerminalFonts {
     fun assetPath(fileName: String): String = "$ASSET_DIR/$fileName"
 
     /**
-     * never-crash 回退：loader 正常返回则采用；返回 null 或抛异常则回退到 [fallback]。
-     * 泛型化以便纯 JVM 单测覆盖三条分支，不引用 `android.graphics.Typeface`。
+     * 资产加载异常时回退：loader 正常返回则采用；返回 null 或抛 {@link Exception} 则回退到
+     * [fallback]。注意不捕获 `OutOfMemoryError` 等 `Error`（解码超大损坏字体时仍可能上抛，
+     * 由调用方 TerminalActivity 的创建时机保证不影响主流程）。泛型化以便纯 JVM 单测覆盖
+     * 三条分支，不引用 `android.graphics.Typeface`。
      */
     fun <T : Any> loadOrFallback(fallback: T, loader: () -> T?): T =
         try {

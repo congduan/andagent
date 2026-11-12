@@ -81,7 +81,8 @@ class TerminalActivity : Activity() {
         fontSizeDp = prefs.readFontSizeDp()
 
         // R147：内置 JetBrains Mono（OFL-1.1）。createFromAsset 资产缺失会抛异常，
-        // loadOrFallback 统一兜底到系统等宽字体，任何情况下都不让终端页崩溃。
+        // loadOrFallback 统一兜底到系统等宽字体；常规加载异常（IOException 等）回退，
+        // 极端 Error（如 OOM）不在此吞掉。
         terminalTypeface = TerminalFonts.loadOrFallback(Typeface.MONOSPACE) {
             Typeface.createFromAsset(assets, TerminalFonts.assetPath(TerminalFonts.REGULAR_FILE))
         }

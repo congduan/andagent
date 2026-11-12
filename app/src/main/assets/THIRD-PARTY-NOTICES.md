@@ -178,7 +178,7 @@ AndAgent is licensed under Apache-2.0 (see [LICENSE](LICENSE)). The entries belo
 - License: SIL Open Font License 1.1（全文见 `app/src/main/assets/fonts/OFL.txt`）
 - Source: https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304 — `JetBrainsMono-2.304.zip` 内 `fonts/ttf/JetBrainsMono-Regular.ttf` 与 `fonts/ttf/JetBrainsMono-Bold.ttf`
 - Copyright: Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
-- 注：Regular 经 `TerminalView.setTypeface` 接入；Bold 随包保留，SGR bold 由 termux renderer 的 `Paint.setFakeBoldText` 假粗渲染（与 Termux 官方一致）。三文件 SHA-256 见 `/tmp/andagent-r147-run.md`。
+- 注：Regular 经 `TerminalView.setTypeface` 接入；Bold 随包保留，SGR bold 由 termux renderer 的 `Paint.setFakeBoldText` 假粗渲染（与 Termux 官方一致）。SHA-256：Regular `a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f`、Bold `5590990c82e097397517f275f430af4546e1c45cff408bde4255dad142479dcb`、OFL.txt `30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad`。
 
 ## Build-only frontend tool
 
