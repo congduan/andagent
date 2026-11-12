@@ -125,7 +125,9 @@ class TerminalActivity : Activity() {
             shellPath,
             homePath,
             // termux.c 的 execvp(cmd, argv) 直接消费该数组，argv[0] 必须是程序名。
-            arrayOf(shellPath, "-i", "--noprofile", "--norc"),
+            // R83①b：GNU bash 的 long options 必须在 short options 之前——
+            // "-i --noprofile" 会让 bash 报「--: invalid option」（服务器复现实锤）。
+            arrayOf(shellPath, "--noprofile", "--norc", "-i"),
             envArray,
             TRANSCRIPT_ROWS,
             client,
