@@ -20,6 +20,7 @@ import com.dc.andagent.tools.IR_CODE_TOOLS
 import com.dc.andagent.tools.IrCodeTool
 import com.dc.andagent.tools.NfcMifareTool
 import com.dc.andagent.tools.WebEmbedTool
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.res.Configuration
 import android.content.pm.ApplicationInfo
@@ -55,6 +56,10 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.dc.andagent.bridge.AgentBridge
+import com.dc.andagent.events.CLIP_CHANNEL
+import com.dc.andagent.events.ClipEvents
+import com.dc.andagent.events.ClipboardForeground
+import com.dc.andagent.events.EventFlags
 import com.dc.andagent.bridge.DbGuiBridge
 import com.dc.andagent.bridge.PermissionBroker
 import com.dc.andagent.bridge.UiCommands
@@ -282,6 +287,40 @@ class MainActivity : ComponentActivity() {
 
     private val healthPermissionResult = AtomicReference<Set<String>?>(null)
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * R117②: 剪贴板变更监听只在 app 前台（本 Activity resumed）时挂载。
+     * Android 10+（API 29+）系统限制后台应用收不到 OnPrimaryClipChangedListener，
+     * 故不进 EventMonitorService，也不声称后台可感知。
+     */
+    private var clipListener: ClipboardManager.OnPrimaryClipChangedListener? = null
+
+    private fun syncClipListener() {
+        if (EventFlags.enabled(this, CLIP_CHANNEL)) attachClipListener() else detachClipListener()
+    }
+
+    private fun attachClipListener() {
+        if (clipListener != null) return
+        val manager = getSystemService(ClipboardManager::class.java) ?: return
+        val listener = ClipboardManager.OnPrimaryClipChangedListener {
+            // 「停止全部」或 clip_events_off 可能只清 flag 而不走 onPause；每次回调复核开关。
+            if (!EventFlags.enabled(this, CLIP_CHANNEL)) return@OnPrimaryClipChangedListener
+            val clip = runCatching { manager.primaryClip }.getOrNull()
+            val text = if (clip != null && clip.itemCount > 0)
+                runCatching { clip.getItemAt(0).coerceToText(this)?.toString() }.getOrNull()
+            else null
+            // 只落 length + ≤120 字符 preview，绝不落全文（剪贴板可能含密码）。
+            ClipEvents.log(this, text)
+        }
+        runCatching { manager.addPrimaryClipChangedListener(listener) }.onSuccess { clipListener = listener }
+    }
+
+    private fun detachClipListener() {
+        clipListener?.let { listener ->
+            runCatching { getSystemService(ClipboardManager::class.java)?.removePrimaryClipChangedListener(listener) }
+        }
+        clipListener = null
+    }
 
     /** 沉浸式顶栏：状态栏高度（CSS px = dp），由 insets 监听刷新后注入页面。 */
     private var safeTopCssPx = 0f
@@ -966,6 +1005,9 @@ class MainActivity : ComponentActivity() {
         if (::nfcSession.isInitialized) nfcSession.onResume()
         // R105: 解锁/回前台时补渲染待填的 cron a2ui 表单（幂等，消费后队列清空）。
         if (::bridge.isInitialized) bridge.flushA2ui()
+        // R117②: 仅当 clip 开关开启时挂监听；on 状态持久化，重启 app 前台自动恢复。
+        ClipboardForeground.sync = ::syncClipListener
+        syncClipListener()
     }
 
     /**
@@ -1111,6 +1153,9 @@ class MainActivity : ComponentActivity() {
         if (::nfcSession.isInitialized) nfcSession.onPause()
         // R102: 退到后台就镜像一次——卸载前已经落盘，不依赖卸载时机。
         externalState?.autoSync(force = true)
+        // R117②: 退到后台即摘掉剪贴板 listener，杜绝任何后台注册。
+        ClipboardForeground.sync = null
+        detachClipListener()
         super.onPause()
     }
 

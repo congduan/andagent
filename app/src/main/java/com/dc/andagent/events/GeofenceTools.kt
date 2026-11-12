@@ -489,7 +489,8 @@ class GeofenceTool(
         if (remaining.isEmpty()) {
             EventFlags.set(context, GEOFENCE_CHANNEL, false)
         }
-        val othersEnabled = listOf("media", "notif", "audio").any { EventFlags.enabled(context, it) }
+        // R117②：sys 触发器也占用同一前台服务，撤防后不能误停掉仍在监听的通道。
+        val othersEnabled = EVENT_CHANNELS.filter { it != GEOFENCE_CHANNEL }.any { EventFlags.enabled(context, it) }
         val geofenceEnabled = remaining.isNotEmpty()
         if (othersEnabled || geofenceEnabled) {
             if (EventMonitorService.instance != null || geofenceEnabled) {
