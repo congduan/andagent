@@ -242,6 +242,9 @@
         </service>
         <service android:name=".pods.PodsService" android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+        <!-- R148: BLE 温湿度计广播前台监听（沿用 BLUETOOTH_SCAN neverForLocation）。 -->
+        <service android:name=".pods.ThermoService" android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <receiver
             android:name=".shell.TermuxResultReceiver"

@@ -242,6 +242,12 @@ export const TOOL_META: Record<string, ToolMeta> = {
   // R87c: 屏幕增强刀（screen_lock_now 破坏性，与 Kotlin destructive 对齐；display_mode 非破坏性）
   screen_lock_now: { label: "立即锁屏", labelEn: "Lock screen", icon: "lock", destructive: true },
   display_mode: { label: "显示模式", labelEn: "Display mode", icon: "smartphone", destructive: false },
+  // R148: BLE 温湿度计广播监控（只读工具，不标 destructive）。
+  thermo_scan: { label: "温湿度扫描", labelEn: "Thermo scan", icon: "thermometer" },
+  thermo_status: { label: "温湿度状态", labelEn: "Thermo status", icon: "activity" },
+  thermo_monitor_start: { label: "开启温湿度监听", labelEn: "Start thermo monitor", icon: "bluetooth" },
+  thermo_monitor_stop: { label: "停止温湿度监听", labelEn: "Stop thermo monitor", icon: "stop" },
+  thermo_history: { label: "温湿度历史", labelEn: "Thermo history", icon: "bar-chart" },
 };
 
 export const TOOL_DESTRUCTIVE = new Set(

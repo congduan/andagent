@@ -614,6 +614,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(IR_CODE_TOOLS.associateWith { IrCodeTool(appContext, liveKv, it) })
         tools.putAll(com.dc.andagent.events.EVENT_TOOLS.associateWith { com.dc.andagent.events.EventTool(appContext, it) })
         tools.putAll(com.dc.andagent.pods.PODS_TOOLS.associateWith { com.dc.andagent.pods.PodsTool(appContext, permissionBroker, it) })
+        // R148: BLE 温湿度计明文广播监控（扫描即读，无需配对）。
+        tools.putAll(com.dc.andagent.pods.THERMO_TOOLS.associateWith { com.dc.andagent.pods.ThermoTool(appContext, permissionBroker, it) })
         // R12/R13 system APIs + R14 automation.
         tools.putAll(SYSTEM_API_TOOLS.associateWith { SystemApiTool(appContext, permissionBroker, it) })
         tools.putAll(AUTOMATION_TOOLS.associateWith { AutomationTool(appContext, permissionBroker, it) })
