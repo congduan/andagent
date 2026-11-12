@@ -50,3 +50,15 @@ The initial source drop omitted five classes referenced by the staged files; the
 ### R83① integration note
 
 `com.dc.andagent.terminal.TerminalActivity` creates an independent real-pty `TerminalSession` (`cmd` = embedded bash, `cwd` = embedded home, `env` = `AndagentTermuxPaths.environment` plus `TERM=xterm-256color`). It does **not** share state with the R27 pipe-based `TermuxEnv` session. `TERM` is required because `JNI.createSubprocess()` calls `clearenv()` and only `putenv()`s the supplied array; without it TUI programs cannot start.
+
+## R147 terminal UI (font + color scheme)
+
+Additional modification on top of the v0.118.1 vendoring above, recorded per Apache-2.0 §4(b):
+
+- `app/src/main/java/com/termux/terminal/TerminalColorScheme.java` — the `DEFAULT_COLORSCHEME` constant table was edited:
+  - the first 16 ANSI colors were replaced with the One Dark Pro palette to match the app's `#0B0D11` theme;
+  - the default foreground slot (`TextStyle.COLOR_INDEX_FOREGROUND` = index 256) was changed to `#abb2bf`. There is no hardcoded `mDefaultForeground` in `TerminalEmulator`; this palette slot is the default, and the OSC 10 / OSC 110 override-and-reset path is untouched.
+  - the 216-color cube, the 24-step grey ramp, the default background (index 257), and the cursor (index 258) are unchanged from upstream; the shell can still override colors via OSC 4 / OSC 10.
+  - No JNI, emulator, or renderer logic was changed.
+
+- `app/src/main/assets/fonts/` — JetBrains Mono 2.304 (Regular + Bold TTF) and its `OFL.txt` (SIL Open Font License 1.1) were bundled from the official release `JetBrainsMono-2.304.zip`. License, source, and SHA-256 are also recorded in `app/src/main/assets/THIRD-PARTY-NOTICES.md` and `/tmp/andagent-r147-run.md`. The Regular face is attached via the public `TerminalView.setTypeface(Typeface)` API; bold rendering continues to use the renderer's single-paint fake-bold, so no renderer code was modified.

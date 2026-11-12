@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
@@ -55,6 +56,8 @@ class TerminalActivity : Activity() {
     private val bindings = LinkedHashMap<Int, TabBinding>()
 
     private var fontSizeDp: Int = ExtraKeysCodec.DEFAULT_FONT_DP
+    /** R147：JetBrains Mono Regular（资产缺失时回退 Typeface.MONOSPACE，never-crash）。 */
+    private lateinit var terminalTypeface: Typeface
     private lateinit var defaultTitle: String
     private lateinit var shellPath: String
     private lateinit var homePath: String
@@ -76,6 +79,12 @@ class TerminalActivity : Activity() {
         defaultTitle = getString(R.string.terminal_title)
         prefs = TerminalPrefs.from(this)
         fontSizeDp = prefs.readFontSizeDp()
+
+        // R147：内置 JetBrains Mono（OFL-1.1）。createFromAsset 资产缺失会抛异常，
+        // loadOrFallback 统一兜底到系统等宽字体，任何情况下都不让终端页崩溃。
+        terminalTypeface = TerminalFonts.loadOrFallback(Typeface.MONOSPACE) {
+            Typeface.createFromAsset(assets, TerminalFonts.assetPath(TerminalFonts.REGULAR_FILE))
+        }
 
         findViewById<Button>(R.id.terminal_font_minus).setOnClickListener { changeFontSize(-FONT_STEP) }
         findViewById<Button>(R.id.terminal_font_plus).setOnClickListener { changeFontSize(FONT_STEP) }
@@ -256,7 +265,16 @@ class TerminalActivity : Activity() {
 
     private fun applyFontSize() {
         val px = (fontSizeDp * resources.displayMetrics.density).toInt().coerceAtLeast(MIN_FONT_PX)
-        for (binding in bindings.values) binding.view.setTextSize(px)
+        for (binding in bindings.values) {
+            // R147：TerminalView 的 mRenderer 初始为 null，setTextSize 会先建 renderer；
+            // setTypeface 内部读取 mRenderer.mTextSize，必须排在其后，否则 NPE。
+            // setTypeface 重建 renderer 并按新字体重新度量（advance/行距/asciiMeasures），
+            // 且保留 mTextSize；setTextSize 也保留 mTypeface，故 A+/A-、pinch、新建 tab
+            // 切换字号后仍使用同一 JetBrains Mono。CJK 回退字形宽度由 renderer 的
+            // fontWidthMismatch / WcWidth 缩放机制处理，不在此改动。
+            binding.view.setTextSize(px)
+            binding.view.setTypeface(terminalTypeface)
+        }
     }
 
     private fun changeFontSize(delta: Int) {

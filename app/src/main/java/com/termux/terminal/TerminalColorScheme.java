@@ -11,25 +11,26 @@ import java.util.Properties;
  */
 public final class TerminalColorScheme {
 
-    /** http://upload.wikimedia.org/wikipedia/en/1/15/Xterm_256color_chart.svg, but with blue color brighter. */
+    /** R147: 16 ANSI colors use One Dark Pro (aligned with app theme #0B0D11);
+     *  the 216-color cube and 24-step grey ramp below keep upstream xterm values. */
     private static final int[] DEFAULT_COLORSCHEME = {
-        // 16 original colors. First 8 are dim.
-        0xff000000, // black
-        0xffcd0000, // dim red
-        0xff00cd00, // dim green
-        0xffcdcd00, // dim yellow
-        0xff6495ed, // dim blue
-        0xffcd00cd, // dim magenta
-        0xff00cdcd, // dim cyan
-        0xffe5e5e5, // dim white
+        // 16 original colors (R147: One Dark Pro). First 8 are normal.
+        0xff282c34, // black
+        0xffe06c75, // red
+        0xff98c379, // green
+        0xffe5c07b, // yellow
+        0xff61afef, // blue
+        0xffc678dd, // magenta
+        0xff56b6c2, // cyan
+        0xffabb2bf, // white
         // Second 8 are bright:
-        0xff7f7f7f, // medium grey
-        0xffff0000, // bright red
-        0xff00ff00, // bright green
-        0xffffff00, // bright yellow
-        0xff5c5cff, // light blue
-        0xffff00ff, // bright magenta
-        0xff00ffff, // bright cyan
+        0xff5c6370, // bright black
+        0xffe06c75, // bright red
+        0xff98c379, // bright green
+        0xffd19a66, // bright yellow
+        0xff61afef, // bright blue
+        0xffc678dd, // bright magenta
+        0xff56b6c2, // bright cyan
         0xffffffff, // bright white
 
         // 216 color cube, six shades of each color:
@@ -57,7 +58,10 @@ public final class TerminalColorScheme {
         0xff808080, 0xff8a8a8a, 0xff949494, 0xff9e9e9e, 0xffa8a8a8, 0xffb2b2b2, 0xffbcbcbc, 0xffc6c6c6, 0xffd0d0d0, 0xffdadada, 0xffe4e4e4, 0xffeeeeee,
 
         // COLOR_INDEX_DEFAULT_FOREGROUND, COLOR_INDEX_DEFAULT_BACKGROUND and COLOR_INDEX_DEFAULT_CURSOR:
-        0xffffffff, 0xff000000, 0xffffffff};
+        // R147: default foreground set to One Dark #abb2bf. No mDefaultForeground hardcode exists
+        // in TerminalEmulator — the default is this palette slot (TextStyle.COLOR_INDEX_FOREGROUND),
+        // which OSC 10 can still override and OSC 110 resets back to. Background/cursor unchanged.
+        0xffabb2bf, 0xff000000, 0xffffffff};
 
     public final int[] mDefaultColors = new int[TextStyle.NUM_INDEXED_COLORS];
 

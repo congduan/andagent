@@ -174,6 +174,12 @@ AndAgent is licensed under Apache-2.0 (see [LICENSE](LICENSE)). The entries belo
 - Copyright: Copyright 2024-2026 Espressif Systems (Shanghai) CO LTD and esp-flasher-stub contributors
 - 注：本目录的 .bin 是把官方 JSON 里的 base64 `text`/`data` 解码后，加上 36 字节元数据头（magic `ESTB`、schema version、entry、text_start/text_len、data_start/data_len、chip_id、stub 版本标签 0x00010401）重新封装的容器，未修改固件本体；各文件来源 URL 与 SHA-256 见 /tmp/andagent-r143-run.md。
 
+### JetBrains Mono 2.304（内置等宽字体，app/src/main/assets/fonts/）
+- License: SIL Open Font License 1.1（全文见 `app/src/main/assets/fonts/OFL.txt`）
+- Source: https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304 — `JetBrainsMono-2.304.zip` 内 `fonts/ttf/JetBrainsMono-Regular.ttf` 与 `fonts/ttf/JetBrainsMono-Bold.ttf`
+- Copyright: Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+- 注：Regular 经 `TerminalView.setTypeface` 接入；Bold 随包保留，SGR bold 由 termux renderer 的 `Paint.setFakeBoldText` 假粗渲染（与 Termux 官方一致）。三文件 SHA-256 见 `/tmp/andagent-r147-run.md`。
+
 ## Build-only frontend tool
 
 ### Vite 6.4.5
