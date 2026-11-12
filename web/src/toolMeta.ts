@@ -266,6 +266,16 @@ export const TOOL_META: Record<string, ToolMeta> = {
   geofence_off: { label: "撤防地理围栏", labelEn: "Disarm geofence", icon: "compass", destructive: false },
   geofence_list: { label: "围栏状态", labelEn: "Geofence status", icon: "compass" },
   geofence_read: { label: "围栏事件", labelEn: "Geofence events", icon: "activity" },
+  // R117②: 事件感知层第二刀（dnd_set 改设备勿扰状态 → destructive，web 确认闸必须覆盖，与 Kotlin EventTool.destructive 同步）。
+  clip_events_on: { label: "剪贴板监听", labelEn: "Clipboard monitor", icon: "clipboard", destructive: false },
+  clip_events_off: { label: "停止剪贴板监听", labelEn: "Stop clipboard monitor", icon: "clipboard" },
+  clip_events_read: { label: "剪贴板事件", labelEn: "Clipboard events", icon: "activity" },
+  dnd_read: { label: "勿扰/铃声状态", labelEn: "DND / ringer state", icon: "bell" },
+  dnd_set: { label: "设置勿扰模式", labelEn: "Set DND mode", icon: "bell", destructive: true },
+  dnd_permission: { label: "勿扰权限设置", labelEn: "DND permission", icon: "settings" },
+  sys_triggers_on: { label: "系统触发器", labelEn: "System triggers", icon: "zap", destructive: false },
+  sys_triggers_off: { label: "停止系统触发器", labelEn: "Stop system triggers", icon: "stop" },
+  sys_triggers_read: { label: "系统触发事件", labelEn: "System trigger events", icon: "activity" },
 };
 
 export const TOOL_DESTRUCTIVE = new Set(

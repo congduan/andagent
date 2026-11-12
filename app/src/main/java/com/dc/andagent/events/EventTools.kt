@@ -43,6 +43,7 @@ import com.dc.andagent.tools.schemaOf
 import com.dc.andagent.tools.strArg
 import com.dc.andagent.tools.strParam
 import com.dc.andagent.tools.KvStore
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -61,8 +62,13 @@ internal const val SYS_CHANNEL = "sys"
 internal const val CLIP_EVENTS_NAMESPACE = "clip_events"
 internal const val SYS_EVENTS_NAMESPACE = "sys_events"
 
-private const val CLIP_READ_NOTE = "preview 仅为前 120 字符预览；剪贴板全文从不落盘（可能含密码）。仅 app 前台时生效，Android 10+ 系统限制后台无法接收剪贴板变更。"
-private const val SYS_READ_NOTE = "ssidUnknown=true 表示设备无定位权限、未能读取 SSID，事件仅为「连接了某 WiFi」，未伪造 SSID。事件只写入 KV，不自动执行任务。"
+/** Codex 必修1：剪贴板预览敏感内容启发式（密码/令牌/验证码等关键词命中即不落 preview）。 */
+private val SENSITIVE_CLIP_HINT = Regex(
+    "(?i)(password|passwd|pwd|secret|token|api[ _-]?key|access[ _-]?key|authorization|bearer|credential|otp|totp|verification[ _-]?code|verify[ _-]?code|one[ _-]?time[ _-]?code|confirm[ _-]?code|security[ _-]?code|验证码|校验码|授权码|动态码|口令|密钥|密码)",
+)
+
+private const val CLIP_READ_NOTE = "preview 仅为前 120 字符预览；内容疑似密码/令牌/验证码时不落 preview（只记长度）。剪贴板全文从不落盘。仅 app 前台时生效，Android 10+ 系统限制后台无法接收剪贴板变更。"
+private const val SYS_READ_NOTE = "ssidUnknown=true 表示设备无定位权限、未能读取 SSID。指定 wifi_ssid 时只有确认连上目标 SSID 才记 wifi_connected（无定位权限时目标 SSID 触发器无法证实命中）。事件只写入 KV，不自动执行任务。"
 private const val DND_GUIDE = "请先在系统「设置 → 通知 → 勿扰访问权限」中允许 AndAgent，或调用 dnd_permission 直接跳转设置页；未授权时 dnd_set 返回 ERROR，不会静默切换。"
 
 /** Channels owned by [EventMonitorService]; "geofence" was added by R76, "sys" by R117②. */
@@ -77,12 +83,33 @@ internal object EventPure {
         return value.length to value.take(CLIP_PREVIEW_MAX)
     }
 
+    /** Codex 必修1：疑似凭据（密码/令牌/验证码等）即使 ≤120 字符也不落 preview，防短密文进普通 KV。 */
+    fun clipLooksSensitive(text: String?): Boolean =
+        SENSITIVE_CLIP_HINT.containsMatchIn(text.orEmpty())
+
     /** sys_triggers_on 参数校验：至少一个有效触发器，否则返回 null（调用方报 ERROR）。 */
-    fun sysTriggerConfig(wifiSsid: String?, power: Boolean?): SysTriggerConfig? {
-        val wifi = !wifiSsid.isNullOrBlank()
+    fun sysTriggerConfig(wifiSsid: String?, power: Boolean?, wifiAny: Boolean? = null): SysTriggerConfig? {
+        // 二轮必修2补强：空串/全空白 SSID 归一化为 null——避免空串入库后被当成「指定 SSID 过滤」永不命中。
+        val trimmed = wifiSsid?.trim()?.takeIf { it.isNotEmpty() }
+        val namedWifi = trimmed != null
+        // Codex 必修2：wifi_any=true 显式开启「任意 WiFi 连接」触发器；不再把缺省 SSID 悄悄当任意。
+        // 二轮必修2：wifi_any=true 与 wifi_ssid 互斥——两者同传语义冲突（名义任意、实际按 SSID 过滤），直接拒绝。
+        if (namedWifi && wifiAny == true) return null
+        val wifi = namedWifi || wifiAny == true
         val pwr = power == true
         if (!wifi && !pwr) return null
-        return SysTriggerConfig(wifi, wifiSsid?.trim(), pwr)
+        return SysTriggerConfig(wifi, trimmed, pwr)
+    }
+
+    /**
+     * 二轮必修3补强：wifi_connected 事件过滤纯函数（工具层用同一判定，测试直接断言）。
+     * 指定 SSID 过滤时读不到 SSID（unknown）或读到其他 SSID 都不落事件——未证实命中绝不落盘；
+     * 任意 WiFi 模式（filter 为 null）时 unknown 也照发。
+     */
+    fun shouldEmitWifiConnected(filterSsid: String?, ssid: String?): Boolean = when {
+        filterSsid == null -> true
+        ssid == null -> false
+        else -> ssid == filterSsid
     }
 
     /** WifiInfo.getSSID() 常态带引号；无定位权限时返回 "<unknown ssid>" 等占位，统一判为未知。 */
@@ -108,9 +135,11 @@ internal data class SysTriggerConfig(val wifi: Boolean, val ssid: String?, val p
 internal object ClipEvents {
     fun log(context: Context, text: String?) {
         val (length, preview) = EventPure.clipPreview(text)
+        // Codex 必修1：疑似凭据（密码/令牌/验证码）不落 preview，只记长度——120 字符内的短密文也不进普通 KV。
+        val safePreview = if (EventPure.clipLooksSensitive(text)) null else preview
         EventStore.put(context, CLIP_EVENTS_NAMESPACE, EventStore.event("clip", buildJsonObject {
             put("length", length)
-            put("preview", preview)
+            safePreview?.let { put("preview", it) }
         }))
     }
 }
@@ -205,8 +234,6 @@ class EventMonitorService : Service() {
     private var geofenceEngine: GeofenceEngine? = null
     private var connectivityManager: ConnectivityManager? = null
     private var wifiManager: WifiManager? = null
-    private var wifiRegistered = false
-    private var powerReceiver: BroadcastReceiver? = null
     private var lastWifiEventKey: String? = null
     private val knownAudioIds = mutableSetOf<Int>()
     private val callbacks = mutableMapOf<MediaSession.Token, Pair<MediaController, MediaController.Callback>>()
@@ -323,22 +350,34 @@ class EventMonitorService : Service() {
     fun geofenceListening(): Boolean = geofenceEngine?.listening == true
     fun geofenceError(): String? = geofenceEngine?.lastError
 
+    /** 二轮必修5：sys 触发器注册诊断——refreshTriggers 结束时统一发布（WiFi/充电分别收集，注册成功清空）。 */
+    @Volatile var lastSysError: String? = null
+    /** 二轮必修5：refreshTriggers 完成代号——sys_triggers_on 等待本次（而非上次）刷新完成，固定 sleep 不可靠。 */
+    @Volatile var sysRefreshSeq: Int = 0
+    @Volatile private var wifiRegistered = false
+    @Volatile private var powerReceiver: BroadcastReceiver? = null
+    fun sysWifiListening(): Boolean = wifiRegistered
+    fun sysPowerListening(): Boolean = powerReceiver != null
+
     /** R117②: 每次 startCommand 重读 sys 配置，与 refreshGeofence 同模式；只落事件，不联动任务。 */
     private fun refreshTriggers() {
         val enabled = EventFlags.enabled(this, SYS_CHANNEL)
         val wantWifi = enabled && EventFlags.sysWifi(this)
         val wantPower = enabled && EventFlags.sysPower(this)
         if (connectivityManager == null) connectivityManager = getSystemService(ConnectivityManager::class.java)
+        var wifiErr: String? = null
+        var powerErr: String? = null
         if (wantWifi && !wifiRegistered) {
             wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             val request = NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build()
-            connectivityManager?.let { cm ->
-                runCatching {
-                    cm.registerNetworkCallback(request, sysWifiCallback, handler)
-                    wifiRegistered = true
-                    lastWifiEventKey = null
-                }
-            }
+            val cm = connectivityManager
+            if (cm == null) {
+                wifiErr = "ConnectivityManager 不可用"
+            } else runCatching {
+                cm.registerNetworkCallback(request, sysWifiCallback, handler)
+                wifiRegistered = true
+                lastWifiEventKey = null
+            }.onFailure { wifiErr = it.message ?: it.javaClass.simpleName }
         } else if (!wantWifi && wifiRegistered) {
             runCatching { connectivityManager?.unregisterNetworkCallback(sysWifiCallback) }
             wifiRegistered = false; lastWifiEventKey = null
@@ -358,21 +397,30 @@ class EventMonitorService : Service() {
             runCatching {
                 ContextCompat.registerReceiver(this, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
                 powerReceiver = receiver
-            }
+            }.onFailure { powerErr = it.message ?: it.javaClass.simpleName }
         } else if (!wantPower && powerReceiver != null) {
             runCatching { unregisterReceiver(powerReceiver) }
             powerReceiver = null
         }
+        // 二轮必修5：WiFi/充电分别收集、结束时统一发布——修复「WiFi 失败写 lastSysError 后充电成功立即清空」。
+        lastSysError = listOfNotNull(
+            wifiErr?.let { "WiFi 触发器注册失败：$it" },
+            powerErr?.let { "充电触发器注册失败：$it" },
+        ).joinToString("；").ifEmpty { null }
+        sysRefreshSeq++
     }
 
     private fun onWifiConnected() {
         @Suppress("DEPRECATION")
         val rawSsid = wifiManager?.connectionInfo?.ssid
         val ssid = EventPure.normalizeSsid(rawSsid)
+        val filter = EventFlags.sysSsid(this)
+        // 二轮必修3补强：过滤判定收敛到 EventPure.shouldEmitWifiConnected（纯函数可测）。
+        // 指定 SSID 过滤时读不到 SSID（unknown）绝不记 wifi_connected——未证实命中不落盘。
+        if (!EventPure.shouldEmitWifiConnected(filter, ssid)) return
         val key = ssid ?: "unknown"
         if (key == lastWifiEventKey) return
         lastWifiEventKey = key
-        val filter = EventFlags.sysSsid(this)
         // 已知 SSID 但与目标不符：不落事件，绝不伪造命中。
         if (ssid != null && filter != null && filter != ssid) return
         EventStore.put(this, SYS_EVENTS_NAMESPACE, EventStore.event("wifi_connected", buildJsonObject {
@@ -392,7 +440,21 @@ class EventMonitorService : Service() {
 }
 
 class EventTool(private val context: Context, override val name: String) : Tool {
-    override val description = when (name) {
+    /** 二轮必修5：sys_triggers_on 失败回滚——清 flag/配置并触发服务重刷新（真正撤销已注册监听），服务不存在时才 stopService。 */
+    private fun rollbackSysTriggers(context: Context, reason: String) {
+        EventFlags.set(context, SYS_CHANNEL, false)
+        EventFlags.setSysTriggers(context, false, null, false)
+        val svc = EventMonitorService.instance
+        if (svc != null) {
+            if (EVENT_CHANNELS.any { EventFlags.enabled(context, it) }) {
+                ContextCompat.startForegroundService(context, Intent(context, EventMonitorService::class.java))
+            } else {
+                context.stopService(Intent(context, EventMonitorService::class.java))
+            }
+        }
+    }
+
+    override val description: String = when (name) {
         "media_sessions" -> "列出活动媒体会话的播放状态和曲目；需要通知使用权限。"
         "media_events_on" -> "监听活动媒体会话的播放、暂停和曲目变化，写入 media_events KV；需要通知使用权限。"
         "media_events_off" -> "停止媒体事件监听。"
@@ -405,17 +467,18 @@ class EventTool(private val context: Context, override val name: String) : Tool 
         "audio_events_on" -> "监听音频设备添加和移除，写入 audio_events KV。"
         "audio_events_off" -> "停止音频设备监听。"
         "audio_events_read" -> "读取最近音频设备事件。"
-        "clip_events_on" -> "开启剪贴板事件监听，写入 clip_events KV；仅 app 前台时生效（Android 10+ 系统限制，后台无法接收剪贴板变更）。不记录全文，只保存文本长度与前 120 字符预览。"
+        "clip_events_on" -> "开启剪贴板事件监听，写入 clip_events KV；仅 app 前台时生效（Android 10+ 系统限制，后台无法接收剪贴板变更）。不记录全文，只保存文本长度与前 120 字符预览；内容疑似密码/令牌/验证码时不落预览（只记长度）。"
         "clip_events_off" -> "停止剪贴板事件监听。"
-        "clip_events_read" -> "读取最近剪贴板事件；preview 仅为前 120 字符预览，剪贴板全文从不落盘（可能含密码）。仅 app 前台时生效，Android 10+ 系统限制。"
+        "clip_events_read" -> "读取最近剪贴板事件；preview 仅为前 120 字符预览且疑似密码/令牌/验证码时不落预览（只记长度），剪贴板全文从不落盘。仅 app 前台时生效，Android 10+ 系统限制。"
         "dnd_read" -> "读取勿扰/铃声模式：currentMode（ALL/PRIORITY/NONE/ALARMS/UNKNOWN）、ringerMode（normal/silent/vibrate）、notificationPolicyAccessGranted；未授权时给出设置指引。"
         "dnd_set" -> "设置勿扰模式 mode=off/priority/none/alarms，需勿扰访问权限；未授权返回 ERROR（可调用 dnd_permission 跳转设置页）。"
         "dnd_permission" -> "打开系统「勿扰访问权限」设置页，供用户授权后使用 dnd_set。"
-        "sys_triggers_on" -> "开启系统事件触发器并写入 sys_events KV：wifi_ssid 指定 WiFi SSID（缺省任意 WiFi 连接）、power=true 监听充电插拔；至少给一个。无定位权限时 SSID 记为 ssidUnknown 不伪造。只落事件，不自动执行任务。"
+        "sys_triggers_on" -> "开启系统事件触发器并写入 sys_events KV：wifi_any=true 监听任意 WiFi 连接、wifi_ssid 指定目标 SSID（需有定位权限才能读取 SSID 确认命中，无定位权限时不会记命中；与 wifi_any 互斥）、power=true 监听充电插拔；至少给一个。只落事件，不自动执行任务。"
         "sys_triggers_off" -> "关闭全部系统事件触发器（WiFi 与充电）。"
-        "sys_triggers_read" -> "读取最近系统触发事件（wifi_connected/power_connected/power_disconnected）；ssidUnknown=true 表示无定位权限，未能读取 SSID。"
+        "sys_triggers_read" -> "读取最近系统触发事件（wifi_connected/power_connected/power_disconnected）；ssidUnknown=true 表示无定位权限，未能读取 SSID（指定 SSID 的触发器此期间不记命中）。"
         else -> "读取最近音频设备事件。"
     }
+    override val destructive: Boolean = name == "dnd_set"
     override val parameters = when (name) {
         "media_events_read", "audio_events_read", "clip_events_read", "sys_triggers_read" -> schemaOf("duration_min" to intParam("最近分钟数，默认 10，范围 1-1440"))
         "notif_events_read" -> schemaOf("duration_min" to intParam("最近分钟数，默认 10，范围 1-1440"), "package" to strParam("可选包名"))
@@ -423,7 +486,8 @@ class EventTool(private val context: Context, override val name: String) : Tool 
         "media_send_key" -> schemaOf("keycode" to strParam("play、pause、toggle、next、prev"), required = listOf("keycode"))
         "dnd_set" -> schemaOf("mode" to strParam("off|priority|none|alarms"), required = listOf("mode"))
         "sys_triggers_on" -> schemaOf(
-            "wifi_ssid" to strParam("可选：只在连上该 SSID 时触发；缺省=任意 WiFi 连接事件"),
+            "wifi_any" to boolParam("监听任意 WiFi 连接事件（不指定 SSID）"),
+            "wifi_ssid" to strParam("可选：只在连上该 SSID 时触发；需有定位权限才能读取 SSID 确认命中（无定位权限时不会记命中）。与 wifi_any 互斥"),
             "power" to boolParam("是否监听充电插拔事件（ACTION_POWER_CONNECTED/DISCONNECTED）"),
         )
         else -> schemaOf()
@@ -529,29 +593,70 @@ class EventTool(private val context: Context, override val name: String) : Tool 
                 } catch (e: Exception) {
                     return "ERROR: setInterruptionFilter 失败（${e.message ?: e.javaClass.simpleName}）；$DND_GUIDE"
                 }
-                val applied = runCatching { nm.currentInterruptionFilter }.getOrNull()
+                // Codex 必修4：回读校验唯一成功通道——严格等于目标值才算成功；抛错/null/未知值一律 ERROR，绝不虚报。
+                val applied = try { nm.currentInterruptionFilter } catch (e: Exception) { null }
                 val known = setOf(
                     NotificationManager.INTERRUPTION_FILTER_ALL, NotificationManager.INTERRUPTION_FILTER_PRIORITY,
                     NotificationManager.INTERRUPTION_FILTER_NONE, NotificationManager.INTERRUPTION_FILTER_ALARMS,
                 )
-                if (applied != null && applied in known && applied != filter)
+                if (applied == null || applied !in known)
+                    return "ERROR: 切换后无法回读勿扰状态（可能个别 ROM 异步生效，请用 dnd_read 复核），不报成功；$DND_GUIDE"
+                if (applied != filter)
                     return "ERROR: 系统未接受勿扰模式切换（目标 $mode，当前仍为 ${EventPure.dndModeName(applied)}）；$DND_GUIDE"
                 "WRITTEN: 勿扰模式已切换为 $mode（系统 UI 可随时手动改回）。"
             }
             "sys_triggers_on" -> {
                 val ssid = (args.strArg("wifi_ssid") ?: args.strArg("ssid"))?.trim()
-                val config = EventPure.sysTriggerConfig(ssid, args.boolArg("power"))
-                    ?: return "ERROR: 至少提供一个触发器：wifi_ssid（WiFi 连接）或 power=true（充电插拔）"
+                val wifiAny = args.boolArg("wifi_any") == true
+                val config = EventPure.sysTriggerConfig(ssid, args.boolArg("power"), wifiAny)
+                    ?: return "ERROR: 参数无效或互斥（wifi_any 与 wifi_ssid 不能同传）；至少提供一个触发器：wifi_any=true（任意 WiFi 连接）、wifi_ssid（指定 SSID）或 power=true（充电插拔）"
+                if (config.wifi && config.ssid.isNullOrBlank() && !wifiAny)
+                    return "ERROR: wifi_ssid 为空时若要监听任意 WiFi 连接，请显式传 wifi_any=true"
                 EventFlags.setSysTriggers(context, config.wifi, config.ssid, config.power)
                 EventFlags.set(context, SYS_CHANNEL, true)
+                // 二轮必修5：等服务跑完本次 refreshTriggers 后核对注册结果——用 sysRefreshSeq 代号等待本次刷新，
+                // 注册失败/未生效回滚 flag 并触发服务重刷新（真正撤销已注册监听），不虚报 ok=true。
+                // 基线须在 startForegroundService 之前捕获：否则本次刷新已完成时 baseline 会被写成新值，
+                // 等待循环空转 4 秒后误回滚。
+                val svc = EventMonitorService.instance
+                val baseline = svc?.sysRefreshSeq ?: -1
+                // 既有服务需 seq 超过原值；冷启动 baseline=-1 时新服务 seq 须达到 1（首次 refreshTriggers 跑完），
+                // 统一用 maxOf(baseline, 0) 作阈值，避免 seq=0 时 0 > -1 提前 break、在 refresh 完成前核对。
+                val threshold = maxOf(baseline, 0)
+                // 注：基线与派发之间既有服务被其它路径触发刷新的极窄窗口可接受——flag 已写好，
+                // 任何一次 refresh 读的都是新配置，监听状态核对仍正确；Int 回绕需 2^31 次刷新，记为已接受边界。
                 ContextCompat.startForegroundService(context, Intent(context, EventMonitorService::class.java))
+                var seq = baseline
+                var waited = 0
+                while (waited < 4000) {
+                    val cur = EventMonitorService.instance
+                    seq = cur?.sysRefreshSeq ?: -1
+                    if (cur != null && seq > threshold) break
+                    delay(100); waited += 100
+                }
+                val live = EventMonitorService.instance
+                if (live == null || seq <= threshold) {
+                    rollbackSysTriggers(context, "前台服务未在预期时间内完成触发器注册")
+                    return "ERROR: 前台服务未在预期时间内完成触发器注册；已回滚触发器开关（可重试或改用其它触发器）"
+                }
+                val err = live.lastSysError
+                val wifiOk = !config.wifi || live.sysWifiListening()
+                val powerOk = !config.power || live.sysPowerListening()
+                if (err != null || !wifiOk || !powerOk) {
+                    val reason = err ?: listOfNotNull(
+                        if (!wifiOk) "WiFi 监听注册未生效" else null,
+                        if (!powerOk) "充电监听注册未生效" else null,
+                    ).joinToString("、")
+                    rollbackSysTriggers(context, reason)
+                    return "ERROR: $reason；已回滚触发器开关（可重试或改用其它触发器）"
+                }
                 buildJsonObject {
                     put("ok", true)
                     put("wifi", config.wifi)
                     config.ssid?.let { put("wifi_ssid_filter", it) }
                     put("power", config.power)
                     put("kvNamespace", SYS_EVENTS_NAMESPACE)
-                    put("note", "事件写入 ${SYS_EVENTS_NAMESPACE}/latest 与 history，可用 sys_triggers_read 或 live 轮询；无定位权限时 SSID 记为 ssidUnknown，不伪造。只落事件，不自动执行任务（R119 联动留下一轮）。")
+                    put("note", "事件写入 ${SYS_EVENTS_NAMESPACE}/latest 与 history，可用 sys_triggers_read 或 live 轮询；无定位权限时指定 SSID 的触发器不记命中（不伪造）。只落事件，不自动执行任务（R119 联动留下一轮）。")
                 }.toString()
             }
             "sys_triggers_off" -> {
