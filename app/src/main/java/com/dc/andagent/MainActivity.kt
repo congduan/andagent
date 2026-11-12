@@ -11,6 +11,9 @@ import android.nfc.NfcAdapter
 import com.dc.andagent.tools.NfcApduTool
 import com.dc.andagent.tools.NfcSession
 import com.dc.andagent.tools.NfcTool
+import com.dc.andagent.tools.buildNfcPrompt
+import com.dc.andagent.tools.nfcTagDedupKey
+import com.dc.andagent.tools.NfcTagDedup
 import com.dc.andagent.tools.IrTool
 import com.dc.andagent.tools.IR_TOOLS
 import com.dc.andagent.tools.IR_CODE_TOOLS
@@ -252,6 +255,8 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
     private lateinit var nfcSession: NfcSession
+    /** R145: 碰一碰 NFC 注入去重（同 tag id 3 秒窗口内只注入一次）。 */
+    private val nfcTagDedup = NfcTagDedup()
     private var embeddedDialog: Dialog? = null
     private var dbGuiDialog: Dialog? = null
     private lateinit var assetLoader: WebViewAssetLoader
@@ -936,6 +941,8 @@ class MainActivity : ComponentActivity() {
         requestMediaPermissions()
         handleDeeplink(intent)
         handleShareIntent(intent)
+        // R145: 从系统 NFC 弹窗冷启动进来时，launch intent 就带 TAG/NDEF extras。
+        injectNfcTagIfAny(intent)
     }
 
     override fun onResume() {
@@ -1096,6 +1103,24 @@ class MainActivity : ComponentActivity() {
         if (::nfcSession.isInitialized) nfcSession.onNewIntent(intent)
         handleDeeplink(intent)
         handleShareIntent(intent)
+        injectNfcTagIfAny(intent)
+    }
+
+    /**
+     * R145: 碰一碰 NFC → 自动创建对话并分析 NFC 数据。
+     * tag intent（用户从系统 NFC 弹窗选了 AndAgent，或 app 在前台收到 dispatch）真正
+     * 进入本 app 时才触发：解析 tag → 构造中文提示词 → 复用 andagent://send deeplink
+     * 通道（auto=1，与 R77 磁贴一致）自动发新对话，引导 AI 调 nfc_read 读完整数据。
+     * 正在进行的 nfc_read 前台读取不受影响（此时 engine.send 会因 running 自动 no-op）。
+     * 解析全程 runCatching，无 NFC 适配器的设备静默不触发，never-crash。
+     */
+    private fun injectNfcTagIfAny(intent: Intent?) {
+        if (intent == null || !::bridge.isInitialized) return
+        val prompt = buildNfcPrompt(intent) ?: return
+        if (!nfcTagDedup.shouldInject(nfcTagDedupKey(intent))) return
+        bridge.queueDeeplink(
+            Uri.parse("andagent://send?prompt=${Uri.encode(prompt)}&auto=1"),
+        )
     }
 
     /** andagent://send?prompt=...&auto=1, plus widget refresh / credentials / session links (#14, R91.5, R97). */
