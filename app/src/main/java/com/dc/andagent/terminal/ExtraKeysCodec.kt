@@ -39,17 +39,20 @@ class ExtraKeysCodec {
         const val DEFAULT_FONT_DP = 13
 
         /**
-         * ESC=codepoint 27，TAB=codepoint 9；箭头键为 CSI 序列；CTRL 无 payload（切换粘滞）。
+         * ESC=codepoint 27，TAB=codepoint 9；CTRL 无 payload（切换粘滞）。
+         * 箭头键默认发 CSI（ESC [ A/B/C/D）；应用光标模式（DECCKM，vim 等 TUI）下按
+         * vendored TerminalView.java:843 / KeyHandler.java:163-170 改发 SS3（ESC O A/B/C/D），
+         * 与真实方向键一致。ESC/TAB/CTRL 不受该模式影响。
          * ESC/TAB 的单字符经 TerminalOutput.write(String) 按 UTF-8 编码为单字节，
          * 与 writeCodePoint(false, 27|9) 等价（TerminalSession.java:182 实证，A6）。
          */
-        fun payload(action: ExtraKeyAction): String? = when (action) {
+        fun payload(action: ExtraKeyAction, applicationCursorKeys: Boolean = false): String? = when (action) {
             ExtraKeyAction.ESC -> "\u001B"
             ExtraKeyAction.TAB -> "\u0009"
-            ExtraKeyAction.UP -> "\u001B[A"
-            ExtraKeyAction.DOWN -> "\u001B[B"
-            ExtraKeyAction.RIGHT -> "\u001B[C"
-            ExtraKeyAction.LEFT -> "\u001B[D"
+            ExtraKeyAction.UP -> if (applicationCursorKeys) "\u001BOA" else "\u001B[A"
+            ExtraKeyAction.DOWN -> if (applicationCursorKeys) "\u001BOB" else "\u001B[B"
+            ExtraKeyAction.RIGHT -> if (applicationCursorKeys) "\u001BOC" else "\u001B[C"
+            ExtraKeyAction.LEFT -> if (applicationCursorKeys) "\u001BOD" else "\u001B[D"
             ExtraKeyAction.CTRL -> null
         }
 

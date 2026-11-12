@@ -20,6 +20,15 @@ class TerminalTabStateTest {
     }
 
     @Test
+    fun `activeTabId is null on empty state before initialize`() {
+        // bash 未就绪时 onCreate 提前 return，tabs 为空；activeTabId 不应越界崩溃。
+        val s = TerminalTabState()
+        assertEquals(0, s.size)
+        assertNull(s.activeTabId)
+        assertNull(s.activeTab) // review 建议项：activeTab 同样空态安全
+    }
+
+    @Test
     fun `initialize clamps zero negative and huge counts to 1 and 5`() {
         assertEquals(1, TerminalTabState().initialize(0).size)
         assertEquals(1, TerminalTabState().initialize(-5).size)

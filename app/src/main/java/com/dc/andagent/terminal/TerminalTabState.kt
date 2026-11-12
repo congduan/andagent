@@ -21,8 +21,10 @@ class TerminalTabState(private val maxTabs: Int = MAX_TABS) {
     val tabs: List<Tab> get() = _tabs.toList()
     val size: Int get() = _tabs.size
     val isAtCap: Boolean get() = _tabs.size >= maxTabs
-    val activeTab: Tab get() = _tabs[activeIndex]
-    val activeTabId: Int get() = _tabs[activeIndex].id
+    /** 活跃 tab；tabs 为空时返回 null（防未来调用者在空态越界崩溃）。 */
+    val activeTab: Tab? get() = _tabs.getOrNull(activeIndex)
+    /** 活跃 tab 的 id；tabs 为空（bash 未就绪、onCreate 提前 return）时返回 null，防越界崩溃。 */
+    val activeTabId: Int? get() = _tabs.getOrNull(activeIndex)?.id
 
     /**
      * 按持久化的 tab 数量恢复（钳制 1..maxTabs）。返回全部 tab id 供 Activity 建会话。

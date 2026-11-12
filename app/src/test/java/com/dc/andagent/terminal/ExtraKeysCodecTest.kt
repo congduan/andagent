@@ -21,6 +21,31 @@ class ExtraKeysCodecTest {
     }
 
     @Test
+    fun `arrow keys send SS3 sequences in application cursor mode`() {
+        // 用 "\u001B" + "O" 显式拼出 SS3 前缀，避免 \u001BOA 字面量的转义歧义。
+        val escO = "\u001B" + "O"
+        assertEquals(escO + "A", ExtraKeysCodec.payload(ExtraKeyAction.UP, true))
+        assertEquals(escO + "B", ExtraKeysCodec.payload(ExtraKeyAction.DOWN, true))
+        assertEquals(escO + "C", ExtraKeysCodec.payload(ExtraKeyAction.RIGHT, true))
+        assertEquals(escO + "D", ExtraKeysCodec.payload(ExtraKeyAction.LEFT, true))
+        // false 仍发 CSI（现状），显式覆盖另一分支。
+        assertEquals("\u001B[A", ExtraKeysCodec.payload(ExtraKeyAction.UP, false))
+        assertEquals("\u001B[B", ExtraKeysCodec.payload(ExtraKeyAction.DOWN, false))
+        assertEquals("\u001B[C", ExtraKeysCodec.payload(ExtraKeyAction.RIGHT, false))
+        assertEquals("\u001B[D", ExtraKeysCodec.payload(ExtraKeyAction.LEFT, false))
+    }
+
+    @Test
+    fun `ESC TAB and CTRL are unaffected by application cursor mode`() {
+        assertEquals("\u001B", ExtraKeysCodec.payload(ExtraKeyAction.ESC, true))
+        assertEquals("\u0009", ExtraKeysCodec.payload(ExtraKeyAction.TAB, true))
+        assertNull(ExtraKeysCodec.payload(ExtraKeyAction.CTRL, true))
+        assertEquals("\u001B", ExtraKeysCodec.payload(ExtraKeyAction.ESC, false))
+        assertEquals("\u0009", ExtraKeysCodec.payload(ExtraKeyAction.TAB, false))
+        assertNull(ExtraKeysCodec.payload(ExtraKeyAction.CTRL, false))
+    }
+
+    @Test
     fun `ESC and TAB are single control bytes 27 and 9`() {
         assertEquals("\u001B", ExtraKeysCodec.payload(ExtraKeyAction.ESC))
         assertEquals("\u0009", ExtraKeysCodec.payload(ExtraKeyAction.TAB))

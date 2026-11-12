@@ -170,7 +170,7 @@ class TerminalActivity : Activity() {
 
     /** 把活跃 tab 的视图提到最前、聚焦、刷新 tab 条与状态行、唤起键盘。 */
     private fun activateCurrentTab() {
-        val binding = bindings[tabState.activeTabId] ?: return
+        val binding = tabState.activeTabId?.let { bindings[it] } ?: return
         binding.view.bringToFront()
         binding.view.requestFocus()
         refreshTabBar()
@@ -222,12 +222,20 @@ class TerminalActivity : Activity() {
 
     // ---------------- 活跃会话 / 状态 ----------------
 
-    private fun activeSession(): TerminalSession? = bindings[tabState.activeTabId]?.session
-    private fun activeView(): TerminalView? = bindings[tabState.activeTabId]?.view
+    private fun activeSession(): TerminalSession? = tabState.activeTabId?.let { bindings[it] }?.session
+    private fun activeView(): TerminalView? = tabState.activeTabId?.let { bindings[it] }?.view
     private fun hasActiveSession(): Boolean = activeSession() != null
 
     private fun updateStatus() {
         statusView.text = TerminalSessionConfig.sessionTitle(activeSession()?.title, defaultTitle)
+    }
+
+    /**
+     * CTRL 粘滞被 TerminalViewClient.readControlKey() 消费后回调：只熄灭附加键行 CTRL 高亮，
+     * 不动 codec 状态（codec 已在 readControlKey 内自行清位），避免用户误判「再按一次是取消」。
+     */
+    private fun onControlLatchConsumed() {
+        extraKeysView.setControlLatched(false)
     }
 
     /** 附加键行 / 音量上键回调：payload 写进当前活跃 session。 */
@@ -236,7 +244,9 @@ class TerminalActivity : Activity() {
             extraKeysView.setControlLatched(codec.onControlKey())
             return
         }
-        val payload = ExtraKeysCodec.payload(action) ?: return
+        // 方向键按应用光标模式在 CSI/SS3 间切换，与真实方向键（TerminalView.java:843）一致。
+        val applicationCursorKeys = activeSession()?.emulator?.isCursorKeysApplicationMode() ?: false
+        val payload = ExtraKeysCodec.payload(action, applicationCursorKeys) ?: return
         activeSession()?.write(payload)
     }
 
@@ -393,7 +403,11 @@ class TerminalActivity : Activity() {
         override fun onKeyDown(keyCode: Int, e: KeyEvent, session: TerminalSession): Boolean = false
         override fun onKeyUp(keyCode: Int, e: KeyEvent): Boolean = false
         override fun onLongPress(event: MotionEvent): Boolean = false
-        override fun readControlKey(): Boolean = codec.readControlKey()
+        override fun readControlKey(): Boolean {
+            val consumed = codec.readControlKey()
+            if (consumed) onControlLatchConsumed() // 只刷 CTRL 按钮 UI，不动 codec 状态
+            return consumed
+        }
         override fun readAltKey(): Boolean = false
         override fun readShiftKey(): Boolean = false
         override fun readFnKey(): Boolean = false
