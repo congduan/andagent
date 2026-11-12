@@ -3,6 +3,7 @@ package com.dc.andagent.tools
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import com.dc.andagent.i18n.tr
@@ -461,6 +462,9 @@ class AccessibilityTool(
     override val description: String = when (name) {
         "a11y_status" ->
             "查询无障碍服务状态：是否已启用/已连接、当前前台包名与窗口、可用能力；未启用时返回开启路径。只读。"
+        "screen_lock_now" ->
+            "立即锁屏（熄屏并回到锁屏界面）。依赖无障碍服务的系统锁屏动作（Android 9+）；" +
+                "未开启无障碍服务时返回开启路径引导。DevicePolicyManager 管理员路径已明确不采用。"
         "a11y_screen" ->
             "读取当前前台窗口的无障碍节点树（viewId/text/contentDescription/class/bounds/可点击性），" +
                 "默认最多 80 节点、单条文本 200 字符；密码框内容不输出。只读；使用前先把目标应用切到前台。"
@@ -482,6 +486,7 @@ class AccessibilityTool(
 
     override val parameters: JsonElement = when (name) {
         "a11y_status" -> schemaOf()
+        "screen_lock_now" -> schemaOf()
         "a11y_screen" -> schemaOf(
             "max_nodes" to intParam("最多返回节点数，默认 80，范围 1-400"),
         )
@@ -511,12 +516,18 @@ class AccessibilityTool(
 
     override val destructive: Boolean
         get() = name == "a11y_click" || name == "a11y_long_click" ||
-            name == "a11y_text" || name == "a11y_action"
+            name == "a11y_text" || name == "a11y_action" || name == "screen_lock_now"
 
     override suspend fun execute(args: JsonObject): String = runCatching {
         val service = AndagentAccessibilityService.instance()
         if (name == "a11y_status") {
             status(service)
+        } else if (name == "screen_lock_now") {
+            // R87c: 锁屏只依赖服务实例存在（GLOBAL_ACTION_LOCK_SCREEN 为 API 28+ 常量，
+            // 编译期引用不受 targetSdk 28 影响）。与其他 a11y 全局动作一致，统一在
+            // Dispatchers.Main.immediate 执行（performGlobalAction 的主线程纪律），无需节点读取。
+            if (service == null) missingServiceError()
+            else withContext(Dispatchers.Main.immediate) { lockScreen(service) }
         } else if (service == null) {
             missingServiceError()
         } else {
@@ -533,6 +544,30 @@ class AccessibilityTool(
             }
         }
     }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+
+    /** R87c: GLOBAL_ACTION_LOCK_SCREEN 熄屏；false = 系统/ROM 拒绝，如实报错不虚报。 */
+    private fun lockScreen(service: AndagentAccessibilityService): String {
+        // review 必修1：GLOBAL_ACTION_LOCK_SCREEN 是 API 28+ 动作，API 26-27 系统
+        // 不支持该动作（调用只会失败），必须先给明确门槛而不是把失败归因 ROM/服务限制。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            return "ERROR: " + tr(
+                "锁屏动作需要 Android 9+（本机 API " + Build.VERSION.SDK_INT + " 不支持无障碍锁屏）",
+                "lock screen requires Android 9+ (API " + Build.VERSION.SDK_INT + " does not support the accessibility lock action)",
+            )
+        }
+        val ok = runCatching { service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN) }
+            .getOrDefault(false)
+        if (!ok) {
+            return "ERROR: " + tr(
+                "系统拒绝锁屏动作（部分 ROM 不支持无障碍锁屏，或服务能力被限制）",
+                "the system rejected the lock-screen action (some ROMs do not support it or restrict the service)",
+            )
+        }
+        return buildJsonObject {
+            put("ok", true)
+            put("action", "lock_screen")
+        }.toString()
+    }
 
     private suspend fun status(service: AndagentAccessibilityService?): String {
         val connected = service != null && AndagentAccessibilityService.isConnected()

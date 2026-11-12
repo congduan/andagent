@@ -134,6 +134,7 @@ import com.dc.andagent.tools.SensorListTool
 import com.dc.andagent.tools.SensorReadTool
 import com.dc.andagent.tools.StepsHistoryTool
 import com.dc.andagent.tools.MicListTool
+import com.dc.andagent.tools.DisplayModeTool
 import com.dc.andagent.tools.OrientationTool
 import com.dc.andagent.tools.OtgTool
 import com.dc.andagent.tools.MicRecordTool
@@ -597,6 +598,7 @@ class MainActivity : ComponentActivity() {
         tools.putAll(
             listOf(
                 "a11y_status",
+                "screen_lock_now",
                 "a11y_screen",
                 "a11y_click",
                 "a11y_long_click",
@@ -605,6 +607,8 @@ class MainActivity : ComponentActivity() {
                 "a11y_action",
             ).associateWith { AccessibilityTool(appContext, it) },
         )
+        // R87c: display_mode（刷新率/HDR 读取 + 窗口级刷新率切换）。
+        tools.put("display_mode", DisplayModeTool(appContext) { this })
         tools.putAll(IR_TOOLS.associateWith { IrTool(appContext, it) })
         // R113: 内置红外码表（assets/ir/ir-codes.json + ir_codes KV 用户码）。
         tools.putAll(IR_CODE_TOOLS.associateWith { IrCodeTool(appContext, liveKv, it) })

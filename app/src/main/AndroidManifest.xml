@@ -287,8 +287,11 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <intent-filter><action android:name="android.nfc.action.NDEF_DISCOVERED" /><category android:name="android.intent.category.DEFAULT" /><data android:mimeType="text/plain" /></intent-filter>
+            <intent-filter><action android:name="android.nfc.action.NDEF_DISCOVERED" /><category android:name="android.intent.category.DEFAULT" /><data android:mimeType="text/plain" /><data android:mimeType="vnd.android.com/uri" /><data android:mimeType="application/vnd.wfa.wsc" /></intent-filter>
             <intent-filter><action android:name="android.nfc.action.TECH_DISCOVERED" /><category android:name="android.intent.category.DEFAULT" /></intent-filter>
+            <!-- R145b: TECH_DISCOVERED 必须 meta-data 指向 tech 过滤表，否则系统
+                 永不将 TECH tag（Mifare 门禁卡等无 NDEF 卡）分发给本 activity。 -->
+            <meta-data android:name="android.nfc.action.TECH_DISCOVERED" android:resource="@xml/nfc_tech_filter" />
             <intent-filter><action android:name="android.nfc.action.TAG_DISCOVERED" /><category android:name="android.intent.category.DEFAULT" /></intent-filter>
             <!-- Health Connect rationale screen, Android 13 and below -->
             <intent-filter>

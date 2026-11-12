@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execTool } from "./bridge";
 import { setConfirmMode } from "./confirmMode";
 import { setLanguageMode } from "./i18n";
+import { TOOL_DESTRUCTIVE } from "./toolMeta";
 
 const appConfirm = vi.hoisted(() => vi.fn<(_: string) => Promise<boolean>>());
 const appRichConfirm = vi.hoisted(() =>
@@ -68,6 +69,17 @@ describe("operation confirmation gate", () => {
   it("asks for every native tool in all mode", async () => {
     setConfirmMode("all");
     await execTool("file_read", { path: "/all" });
+    expect(appRichConfirm).toHaveBeenCalledOnce();
+    expect(toolExec).toHaveBeenCalledOnce();
+  });
+
+  // R87c 必修1: Kotlin 侧 screen_lock_now destructive=true，web 端确认闸必须覆盖它；
+  // display_mode 非破坏性，不应进 TOOL_DESTRUCTIVE。
+  it("routes screen_lock_now through the destructive confirmation gate", async () => {
+    expect(TOOL_DESTRUCTIVE.has("screen_lock_now")).toBe(true);
+    expect(TOOL_DESTRUCTIVE.has("display_mode")).toBe(false);
+    setConfirmMode("destructive");
+    expect(await execTool("screen_lock_now", {})).toEqual({ ok: true, result: "done" });
     expect(appRichConfirm).toHaveBeenCalledOnce();
     expect(toolExec).toHaveBeenCalledOnce();
   });

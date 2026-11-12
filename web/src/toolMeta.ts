@@ -239,6 +239,9 @@ export const TOOL_META: Record<string, ToolMeta> = {
   pcap_summary: { label: "抓包总览", labelEn: "PCAP summary", icon: "activity" },
   pcap_dns: { label: "抓包 DNS 记录", labelEn: "PCAP DNS", icon: "globe" },
   pcap_http: { label: "抓包 HTTP/TLS 记录", labelEn: "PCAP HTTP/TLS", icon: "file-code" },
+  // R87c: 屏幕增强刀（screen_lock_now 破坏性，与 Kotlin destructive 对齐；display_mode 非破坏性）
+  screen_lock_now: { label: "立即锁屏", labelEn: "Lock screen", icon: "lock", destructive: true },
+  display_mode: { label: "显示模式", labelEn: "Display mode", icon: "smartphone", destructive: false },
 };
 
 export const TOOL_DESTRUCTIVE = new Set(
