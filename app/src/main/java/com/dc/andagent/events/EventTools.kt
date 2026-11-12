@@ -45,6 +45,9 @@ import java.util.ArrayDeque
 
 val EVENT_TOOLS = listOf("media_sessions", "media_events_on", "media_events_off", "media_events_read", "media_send_key", "notif_events_on", "notif_events_off", "notif_events_read", "notif_permission", "audio_events_on", "audio_events_off", "audio_events_read")
 
+/** Channels owned by [EventMonitorService]; "geofence" was added by R76. */
+internal val EVENT_CHANNELS = listOf("media", "notif", "audio", GEOFENCE_CHANNEL)
+
 internal object EventHistory {
     private const val MAX = 100
     fun accept(old: JsonArray?, event: JsonObject): JsonArray {
@@ -112,6 +115,7 @@ class EventMonitorService : Service() {
     private var audioManager: AudioManager? = null
     private var mediaListening = false
     private var audioListening = false
+    private var geofenceEngine: GeofenceEngine? = null
     private val knownAudioIds = mutableSetOf<Int>()
     private val callbacks = mutableMapOf<MediaSession.Token, Pair<MediaController, MediaController.Callback>>()
     private val activeListener = MediaSessionManager.OnActiveSessionsChangedListener { sessions -> syncSessions(sessions ?: emptyList()) }
@@ -123,17 +127,17 @@ class EventMonitorService : Service() {
     override fun onCreate() { super.onCreate(); instance = this }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            listOf("media", "notif", "audio").forEach { EventFlags.set(this, it, false) }
+            EVENT_CHANNELS.forEach { EventFlags.set(this, it, false) }
             stopSelf(); return START_NOT_STICKY
         }
-        if (!listOf("media", "notif", "audio").any { EventFlags.enabled(this, it) }) { stopSelf(); return START_NOT_STICKY }
+        if (EVENT_CHANNELS.none { EventFlags.enabled(this, it) }) { stopSelf(); return START_NOT_STICKY }
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("event_monitor", "系统事件监听", NotificationManager.IMPORTANCE_LOW))
         val stop = PendingIntent.getService(this, 0, Intent(this, javaClass).setAction(ACTION_STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         startForeground(6502, NotificationCompat.Builder(this, "event_monitor")
             .setSmallIcon(R.drawable.ic_stat_andagent).setContentTitle("系统事件监听中")
-            .setContentText("媒体、通知和音频设备事件").setOngoing(true).addAction(0, "停止全部", stop).build())
-        refreshMedia(); refreshAudio()
+            .setContentText("媒体、通知、音频设备与地理围栏事件").setOngoing(true).addAction(0, "停止全部", stop).build())
+        refreshMedia(); refreshAudio(); refreshGeofence()
         return START_STICKY
     }
     fun refreshMedia() {
@@ -201,7 +205,31 @@ class EventMonitorService : Service() {
             put("direction", if (device.isSink) "output" else "input")
         })) }
     }
-    override fun onDestroy() { clearMedia(); if (audioListening) audioManager?.unregisterAudioDeviceCallback(deviceCallback); instance = null; super.onDestroy() }
+    private fun refreshGeofence() {
+        if (!EventFlags.enabled(this, GEOFENCE_CHANNEL)) {
+            geofenceEngine?.stop(); geofenceEngine = null; return
+        }
+        // Every start command re-reads the persisted fences so replacements and
+        // individual disarm operations take effect without a new service.
+        geofenceEngine?.stop()
+        val engine = GeofenceEngine(this)
+        val started = engine.start()
+        geofenceEngine = engine
+        // No fences (KV corrupt or all disarmed): keep lastError for diagnostics
+        // but drop the flag so the service does not idle behind a notification.
+        // Other channels keep the service alive when they are still enabled.
+        if (!started && engine.fences.isEmpty()) {
+            EventFlags.set(this, GEOFENCE_CHANNEL, false)
+            if (EVENT_CHANNELS.none { EventFlags.enabled(this, it) }) stopSelf()
+        }
+    }
+    fun geofenceListening(): Boolean = geofenceEngine?.listening == true
+    fun geofenceError(): String? = geofenceEngine?.lastError
+    override fun onDestroy() {
+        clearMedia(); if (audioListening) audioManager?.unregisterAudioDeviceCallback(deviceCallback)
+        geofenceEngine?.stop(); geofenceEngine = null
+        instance = null; super.onDestroy()
+    }
     companion object { const val ACTION_STOP = "com.dc.andagent.events.STOP"; @Volatile var instance: EventMonitorService? = null }
 }
 
@@ -273,7 +301,7 @@ class EventTool(private val context: Context, override val name: String) : Tool 
             }
             "media_events_off", "notif_events_off", "audio_events_off" -> {
                 val channel = name.substringBefore('_'); EventFlags.set(context, channel, false)
-                if (listOf("media", "notif", "audio").any { EventFlags.enabled(context, it) }) EventMonitorService.instance?.let { ContextCompat.startForegroundService(context, Intent(context, EventMonitorService::class.java)) }
+                if (EVENT_CHANNELS.any { EventFlags.enabled(context, it) }) EventMonitorService.instance?.let { ContextCompat.startForegroundService(context, Intent(context, EventMonitorService::class.java)) }
                 else context.stopService(Intent(context, EventMonitorService::class.java))
                 "$channel 事件监听已停止"
             }

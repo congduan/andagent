@@ -261,6 +261,11 @@ export const TOOL_META: Record<string, ToolMeta> = {
   pdf_generate: { label: "生成 PDF", labelEn: "Generate PDF", icon: "file-text" },
   pdf_from_images: { label: "图片转 PDF", labelEn: "Images to PDF", icon: "image" },
   wallpaper_set: { label: "设置壁纸", labelEn: "Set wallpaper", icon: "palette", destructive: true },
+  // R76: 地理围栏（布防/撤防/查询/读事件均不改设备状态，不标 destructive）。
+  geofence_on: { label: "布防地理围栏", labelEn: "Arm geofence", icon: "compass", destructive: false },
+  geofence_off: { label: "撤防地理围栏", labelEn: "Disarm geofence", icon: "compass", destructive: false },
+  geofence_list: { label: "围栏状态", labelEn: "Geofence status", icon: "compass" },
+  geofence_read: { label: "围栏事件", labelEn: "Geofence events", icon: "activity" },
 };
 
 export const TOOL_DESTRUCTIVE = new Set(

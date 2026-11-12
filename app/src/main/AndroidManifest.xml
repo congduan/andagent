@@ -217,7 +217,7 @@
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <service android:name=".events.EventMonitorService" android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|location" />
         <!-- R71: 无障碍控件自动化。系统通过 BIND_ACCESSIBILITY_SERVICE 绑定；用户须在
              系统设置 → 无障碍中手动开启。服务只读取当前窗口，不持久化屏幕内容。 -->
         <service

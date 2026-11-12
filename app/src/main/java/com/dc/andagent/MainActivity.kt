@@ -617,6 +617,8 @@ class MainActivity : ComponentActivity() {
         // R113: 内置红外码表（assets/ir/ir-codes.json + ir_codes KV 用户码）。
         tools.putAll(IR_CODE_TOOLS.associateWith { IrCodeTool(appContext, liveKv, it) })
         tools.putAll(com.dc.andagent.events.EVENT_TOOLS.associateWith { com.dc.andagent.events.EventTool(appContext, it) })
+        // R76: 地理围栏（前台定位监听，事件写 geofence_events KV）。
+        tools.putAll(com.dc.andagent.events.GEOFENCE_TOOLS.associateWith { com.dc.andagent.events.GeofenceTool(appContext, permissionBroker, it) })
         tools.putAll(com.dc.andagent.pods.PODS_TOOLS.associateWith { com.dc.andagent.pods.PodsTool(appContext, permissionBroker, it) })
         // R148: BLE 温湿度计明文广播监控（扫描即读，无需配对）。
         tools.putAll(com.dc.andagent.pods.THERMO_TOOLS.associateWith { com.dc.andagent.pods.ThermoTool(appContext, permissionBroker, it) })
