@@ -237,4 +237,230 @@ class HardwareStatusToolsTest {
         assertNull(BatteryMath.watts(null, 4.2))
         assertNull(BatteryMath.watts(500.0, null))
     }
+
+    /* ------------------ R146 DirectChannelEventReader ------------------- */
+
+    private fun ByteArray.putIntLe(off: Int, v: Int) {
+        this[off] = (v and 0xFF).toByte()
+        this[off + 1] = (v ushr 8 and 0xFF).toByte()
+        this[off + 2] = (v ushr 16 and 0xFF).toByte()
+        this[off + 3] = (v ushr 24 and 0xFF).toByte()
+    }
+
+    private fun ByteArray.putLongLe(off: Int, v: Long) {
+        putIntLe(off, (v and 0xFFFF_FFFFL).toInt())
+        putIntLe(off + 4, (v ushr 32 and 0xFFFF_FFFFL).toInt())
+    }
+
+    /** 用 Kotlin stdlib 的 IEEE-754 位表示精确比对 float 读回，不做近似。 */
+    private fun floatBits(f: Float): Int = f.toRawBits()
+
+    private fun ByteArray.putFloatLe(off: Int, v: Float) =
+        putIntLe(off, floatBits(v))
+
+    /** 手工按 little-endian 逐字节拼一条 104B 事件（不借 ByteBuffer，真正校验内存序）。 */
+    private fun leSlot(
+        counter: Int,
+        size: Int = DirectChannelEventReader.EVENT_SIZE,
+        reportToken: Int = 0,
+        type: Int = 1,
+        tsNs: Long = 0L,
+        floats: FloatArray = FloatArray(16) { 0f },
+        reserved: Int = 0,
+    ): ByteArray = ByteArray(DirectChannelEventReader.EVENT_SIZE).also { b ->
+        b.putIntLe(0x00, size)
+        b.putIntLe(0x04, reportToken)
+        b.putIntLe(0x08, type)
+        b.putIntLe(0x0C, counter)
+        b.putLongLe(0x10, tsNs)
+        for (i in 0 until 16) b.putFloatLe(0x18 + i * 4, floats[i])
+        for (i in 0 until 4) b.putIntLe(0x58 + i * 4, reserved)
+    }
+
+    private fun bufferOf(vararg slots: ByteArray): ByteArray {
+        val out = ByteArray(slots.sumOf { it.size })
+        var off = 0
+        for (s in slots) {
+            s.copyInto(out, off)
+            off += s.size
+        }
+        return out
+    }
+
+    @Test
+    fun directChannelLittleEndianFields() {
+        val floats = FloatArray(16)
+        floats[0] = 1.5f
+        floats[15] = -0.25f
+        val one = leSlot(
+            counter = 0x0102_0304,
+            reportToken = 0x1122_3344,
+            type = 9,
+            tsNs = 0x0102_0304_0506_0708L,
+            floats = floats,
+        )
+        // 手工字节断言：确证构造端用的是 little-endian（低位在前）。
+        assertEquals(0x68.toByte(), one[0x00])          // size 104 -> 68 00 00 00
+        assertEquals(0x00.toByte(), one[0x01])
+        assertEquals(0x04.toByte(), one[0x0C])          // counter -> 04 03 02 01
+        assertEquals(0x03.toByte(), one[0x0D])
+        assertEquals(0x02.toByte(), one[0x0E])
+        assertEquals(0x01.toByte(), one[0x0F])
+        assertEquals(0x08.toByte(), one[0x10])          // ts -> 08 07 06 05 04 03 02 01
+        assertEquals(0x01.toByte(), one[0x17])
+
+        val events = DirectChannelEventReader.parse(one, 1)
+        assertEquals(1, events.size)
+        val e = events[0]
+        assertEquals(0x0102_0304L, e.counter)
+        assertEquals(0x1122_3344, e.reportToken)
+        assertEquals(9, e.type)
+        assertEquals(0x0102_0304_0506_0708L, e.tsNs)
+        assertEquals(0, e.slot)
+        assertEquals(
+            floatBits(1.5f),
+            floatBits(e.values[0]),
+        )
+        assertEquals(
+            floatBits(-0.25f),
+            floatBits(e.values[15]),
+        )
+    }
+
+    @Test
+    fun directChannelSkipsBadSizeAndZeroCounter() {
+        val badSize = leSlot(counter = 8, size = 96)
+        val zeroCounter = leSlot(counter = 0, type = 1)
+        val good = leSlot(counter = 7, type = 1, tsNs = 1000L)
+        val buffer = bufferOf(badSize, zeroCounter, good)
+
+        val events = DirectChannelEventReader.parse(buffer, 3)
+        assertEquals(1, events.size)
+        assertEquals(7L, events[0].counter)
+        assertEquals(1000L, events[0].tsNs)
+        assertEquals(2, events[0].slot)
+        // 坏槽（size!=104，counter=8）不参与 maxCounter，否则 maxC 会被误判成 8。
+        assertEquals(7L, DirectChannelEventReader.maxCounter(buffer, 3))
+    }
+
+    @Test
+    fun directChannelUnsignedCounter() {
+        // uint32 最大值：写入 Int -1，读回必须是 4294967295 而不是 -1/被判为小于 1。
+        val one = leSlot(counter = 1, tsNs = 7L)
+        val wrap = leSlot(counter = -1, tsNs = 42L)
+        val buffer = bufferOf(one, wrap)
+        assertEquals(0xFFFF_FFFFL, DirectChannelEventReader.maxCounter(buffer, 2))
+        val events = DirectChannelEventReader.parse(buffer, 2)
+        assertEquals(2, events.size)
+        assertEquals(1L, events[0].counter)
+        assertEquals(0xFFFF_FFFFL, events[1].counter)
+    }
+
+    @Test
+    fun directChannelFloatReadbackAll16() {
+        val floats = FloatArray(16) { i -> i * 1.25f - 3.5f }
+        val e = DirectChannelEventReader.parse(leSlot(counter = 3, floats = floats), 1).single()
+        assertEquals(16, e.values.size)
+        for (i in 0 until 16) {
+            assertEquals(
+                floatBits(floats[i]),
+                floatBits(e.values[i]),
+            )
+        }
+    }
+
+    @Test
+    fun directChannelBoundaryExcludesNewerCounters() {
+        // 先取边界=5，模拟硬件又并发写入 counter=6 的「半写/新写」槽：
+        // 显式 boundary 下，counter>boundary 的槽必须被排除，防读到写一半的数据。
+        val s5 = leSlot(counter = 5, tsNs = 50L)
+        val s6 = leSlot(counter = 6, tsNs = 60L)
+        val buffer = bufferOf(s5, s6)
+        val events = DirectChannelEventReader.parse(buffer, 2, boundary = 5L)
+        assertEquals(1, events.size)
+        assertEquals(5L, events[0].counter)
+        // 单阶段（boundary 默认就地取 maxC=6）则两槽都在边界内，全收。
+        assertEquals(2, DirectChannelEventReader.parse(buffer, 2).size)
+        assertEquals(6L, DirectChannelEventReader.maxCounter(buffer, 2))
+    }
+
+    @Test
+    fun directChannelDuplicateCountersAllCollected() {
+        // 同一 counter（硬件重复或 wrap）出现多次，全部收集、不去重。
+        val buffer = bufferOf(
+            leSlot(counter = 2, tsNs = 10L, reportToken = 11),
+            leSlot(counter = 2, tsNs = 20L, reportToken = 11),
+            leSlot(counter = 9, tsNs = 30L),            // maxC
+            leSlot(counter = 2, tsNs = 40L, reportToken = 12),
+            leSlot(counter = 5, tsNs = 50L),
+        )
+        assertEquals(9L, DirectChannelEventReader.maxCounter(buffer, 5))
+        val events = DirectChannelEventReader.parse(buffer, 5)
+        assertEquals(5, events.size)
+        assertEquals(3, events.count { it.counter == 2L })
+        assertEquals(listOf(10L, 20L, 30L, 40L, 50L), events.map { it.tsNs })
+        assertEquals(listOf(0, 1, 2, 3, 4), events.map { it.slot })
+    }
+
+    @Test
+    fun directChannelEmptyTruncatedAndSlotLimit() {
+        assertTrue(DirectChannelEventReader.parse(ByteArray(0)).isEmpty())
+        assertEquals(0L, DirectChannelEventReader.maxCounter(ByteArray(0)))
+        assertEquals(0L, DirectChannelEventReader.maxCounter(ByteArray(0), 5))
+
+        // 全部 counter==0（未写入）→ 无有效事件、无写入边界。
+        val zeros = bufferOf(leSlot(0), leSlot(0))
+        assertTrue(DirectChannelEventReader.parse(zeros, 2).isEmpty())
+        assertEquals(0L, DirectChannelEventReader.maxCounter(zeros, 2))
+
+        // slots 限定参与扫描的槽数，超出部分不读。
+        val buf = bufferOf(leSlot(1), leSlot(2), leSlot(3))
+        assertEquals(2L, DirectChannelEventReader.maxCounter(buf, 2))
+        assertEquals(2, DirectChannelEventReader.parse(buf, 2).size)
+
+        // 尾部非整槽字节不 crash，按整槽数读取。
+        val partial = buf + byteArrayOf(1, 2, 3)
+        assertEquals(3, DirectChannelEventReader.parse(partial).size)
+        assertEquals(3L, DirectChannelEventReader.maxCounter(partial))
+    }
+
+    @Test
+    fun directChannelRandomRoundTrip() {
+        val rnd = java.util.Random(0x5EEDL)
+        repeat(20) {
+            val n = 1 + rnd.nextInt(40)
+            val slots = ArrayList<ByteArray>(n)
+            val expectedBySlot = HashMap<Int, Triple<Long, Long, FloatArray>>()
+            for (i in 0 until n) {
+                when (rnd.nextInt(5)) {
+                    0 -> slots += leSlot(counter = 1 + rnd.nextInt(1000), size = 96) // 坏槽
+                    1 -> slots += leSlot(counter = 0)                                  // 未写入
+                    else -> {
+                        val c = 1 + rnd.nextInt(1000)
+                        val ts = rnd.nextLong()
+                        val f = FloatArray(16) { rnd.nextFloat() * 20f - 10f }
+                        slots += leSlot(counter = c, tsNs = ts, floats = f)
+                        expectedBySlot[i] = Triple(c.toLong(), ts, f)
+                    }
+                }
+            }
+            val buffer = bufferOf(*slots.toTypedArray())
+            val boundary = DirectChannelEventReader.maxCounter(buffer, n)
+            val events = DirectChannelEventReader.parse(buffer, n, boundary)
+            // 所有有效槽的 counter 都 <= maxC，故应全收（坏槽/未写入跳过，不 crash）。
+            assertEquals(expectedBySlot.size, events.size)
+            for (e in events) {
+                assertTrue(e.counter in 1..boundary)
+                val exp = expectedBySlot[e.slot]!!
+                assertEquals(exp.first, e.counter)
+                assertEquals(exp.second, e.tsNs)
+                for (j in 0 until 16) {
+                    assertEquals(
+                        floatBits(exp.third[j]),
+                        floatBits(e.values[j]),
+                    )
+                }
+            }
+        }
+    }
 }

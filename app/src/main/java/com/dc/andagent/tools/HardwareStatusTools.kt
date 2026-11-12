@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.Sensor
+import android.hardware.SensorDirectChannel
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
@@ -22,17 +23,20 @@ import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.MemoryFile
 import android.os.PowerManager
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.MediaStore
 import com.dc.andagent.bridge.PermissionBroker
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -521,7 +525,8 @@ class HardwareStatusTool(
     override val description: String = when (name) {
         "sensor_stream" ->
             "高频连续采样一个或多个运动/环境传感器（默认 200Hz，最高 500Hz）落 CSV 到 Downloads/AndAgent，" +
-                "返回每轴均值/标准差/极值与振动强度判定（still/light/moderate/strong），用于振动检测、姿态监测。"
+                "返回每轴均值/标准差/极值与振动强度判定（still/light/moderate/strong），用于振动检测、姿态监测。" +
+                "mode=channel 走 SensorDirectChannel 硬件 FIFO 直读共享内存（API26+ 省电高频，200Hz+ 可持续），设备/传感器不支持时自动回落 polling 并标注 fallback。"
         "sensor_batch" ->
             "用硬件 FIFO 批量上传方式采样（maxReportLatency），低功耗采长序列；报告 FIFO 容量、平均批大小与批延迟。" +
                 "设备无 FIFO 时自动退回连续采样并如实标注。"
@@ -554,6 +559,7 @@ class HardwareStatusTool(
             "hz" to intParam("采样频率，默认 200，范围 1..500（>200Hz 在 Android 12+ 需要 HIGH_SAMPLING_RATE_SENSORS）"),
             "duration_ms" to intParam("采样时长毫秒，默认 5000，范围 200..30000"),
             "save_csv" to boolParam("是否落 CSV 到 Downloads/AndAgent，默认 true"),
+            "mode" to strParam("采样模式：polling（默认，应用层回调轮询，零破坏）/ channel（SensorDirectChannel 硬件 FIFO 直读共享内存，省电高频 200Hz+，需 Android 8.0+/API26+；设备或传感器不支持时自动回落 polling 并返回 fallback=true）"),
         )
         "sensor_batch" -> schemaOf(
             "sensors" to strParam("逗号分隔的传感器名，默认 accelerometer"),
@@ -634,6 +640,25 @@ class HardwareStatusTool(
     }
 
     private suspend fun sensorStream(args: JsonObject): String {
+        // R146: mode=polling 为默认（零破坏）；mode=channel 走 SensorDirectChannel 硬件 FIFO 直读。
+        val mode = args.strArg("mode")?.trim()?.lowercase() ?: "polling"
+        if (mode == "channel") {
+            // SensorDirectChannel 是 API 26 引入的公开 API；minSdk 26 下不可达，仍显式护栏，
+            // 避免日后下调 minSdk 时静默走进空路径。
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                return "ERROR: channel 模式需要 Android 8.0+ (API26+)"
+            }
+            return sensorStreamChannel(args)
+        }
+        return sensorStreamPolling(args)
+    }
+
+    /** 默认 polling 路径：应用层 SensorEventListener 回调轮询（R84 原逻辑，零破坏）。 */
+    private suspend fun sensorStreamPolling(
+        args: JsonObject,
+        noteOverride: String? = null,
+        extra: JsonObjectBuilder.() -> Unit = {},
+    ): String {
         val (channels, unknown) = resolveSensors(args.strArg("sensors"))
         if (unknown.isNotEmpty()) {
             return "ERROR: 不支持的传感器 ${unknown.joinToString(",")}（可选：${SENSOR_KINDS.keys.joinToString("|")}）"
@@ -737,9 +762,209 @@ class HardwareStatusTool(
             put("stats", stats)
             vibration?.let { put("vibration", it.toJson()) }
             put("preview", csv.lineSequence().take(5).joinToString("\n"))
-            put("note", "数值同时含原始 axes 列（含重力的加速度约 9.8 m/s²）；vibration 基于合成幅值相对均值的偏离估计")
+            put("note", noteOverride ?: POLLING_NOTE)
+            extra()
         }.toString()
     }
+
+    /**
+     * R146 mode=channel：SensorDirectChannel 硬件 FIFO 直读共享内存。
+     *
+     * 公开 API 实际签名（android.jar / compileSdk 34 反编译核实，与简报假设不同，见战报）：
+     *   SensorManager.createDirectChannel(MemoryFile) -> SensorDirectChannel
+     *   SensorDirectChannel.configure(Sensor, rate) -> int（>0 成功，0=STOP，<0 失败）
+     *   SensorDirectChannel.close()
+     *   rate 常量：RATE_STOP=0 / RATE_NORMAL=1 / RATE_FAST=2 / RATE_VERY_FAST=3
+     *   Sensor.isDirectChannelTypeSupported(int) / getHighestDirectReportRateLevel()（均为实例方法）
+     * 简报里的 registerSensorListener(...)/closeDirectChannel/SENSOR_RATE_FAST 在公开 SDK 中不存在，
+     * 故不凭印象写 JNI/隐藏 API，改走上述公开路径；事件布局仍以 developer.android.com 的 104B LE 为准。
+     */
+    private suspend fun sensorStreamChannel(args: JsonObject): String {
+        val (channels, unknown) = resolveSensors(args.strArg("sensors"))
+        if (unknown.isNotEmpty()) {
+            return "ERROR: 不支持的传感器 ${unknown.joinToString(",")}（可选：${SENSOR_KINDS.keys.joinToString("|")}）"
+        }
+        if (channels.isEmpty()) return "ERROR: 至少指定一个传感器"
+        val hz = (args.intArg("hz") ?: 200).coerceIn(1, 500)
+        val durationMs = (args.longArg("duration_ms") ?: 5000L).coerceIn(200L, 30_000L)
+        val saveCsv = args.boolArg("save_csv") ?: true
+        val manager = context.getSystemService(SensorManager::class.java)
+            ?: return "ERROR: 传感器服务不可用"
+
+        val targets = mutableListOf<StreamTarget>()
+        val missing = mutableListOf<String>()
+        for (channel in channels) {
+            val sensor = manager.getDefaultSensor(SENSOR_KINDS.getValue(channel.key).type)
+            if (sensor == null) missing += channel.key else targets += StreamTarget(channel, sensor)
+        }
+        if (targets.isEmpty()) return "ERROR: 设备不支持 ${missing.joinToString(",")} 传感器"
+
+        // 只挑声明了 direct report 能力的传感器；全部不支持则回落 polling。
+        val supported = targets.filter { t ->
+            runCatching {
+                t.sensor.isDirectChannelTypeSupported(t.sensor.type) &&
+                    t.sensor.highestDirectReportRateLevel >= SensorDirectChannel.RATE_NORMAL
+            }.getOrDefault(false)
+        }
+        if (supported.isEmpty()) {
+            return fallbackToPolling(args, "设备/传感器未声明 direct report 能力")
+        }
+
+        val slots = DIRECT_CHANNEL_SLOTS
+        val size = DirectChannelEventReader.EVENT_SIZE * slots
+        val memoryFile = try {
+            MemoryFile("andagent-direct-channel", size).also {
+                // 禁止 ashmem 回收，保证采样快照可读。
+                runCatching { it.allowPurging(false) }
+            }
+        } catch (e: Exception) {
+            return fallbackToPolling(args, "创建共享内存失败：${e.message}")
+        }
+
+        var ch: SensorDirectChannel? = null
+        val configured = mutableListOf<StreamTarget>()
+        val levels = mutableMapOf<String, Int>()
+        var events: List<DirectChannelEventReader.Event> = emptyList()
+        var failure: String? = null
+        try {
+            val direct = manager.createDirectChannel(memoryFile)
+                ?: error("createDirectChannel 返回 null")
+            ch = direct
+            for (t in supported) {
+                val maxLevel = t.sensor.highestDirectReportRateLevel
+                val rate = minOf(SensorDirectChannel.RATE_FAST, maxLevel)
+                    .coerceAtLeast(SensorDirectChannel.RATE_NORMAL)
+                val ret = direct.configure(t.sensor, rate)
+                if (ret > 0) {
+                    configured += t
+                    levels[t.channel.key] = rate
+                }
+            }
+            if (configured.isEmpty()) {
+                failure = "configure 全部返回失败（设备拒绝 direct report）"
+            } else {
+                delay(durationMs)
+                // 停写 → 关通道 → 读快照，避免读到「新写一半」的槽。
+                for (t in configured) {
+                    runCatching { direct.configure(t.sensor, SensorDirectChannel.RATE_STOP) }
+                }
+                direct.close()
+                ch = null
+                val buffer = ByteArray(size)
+                memoryFile.readBytes(buffer, 0, 0, size)
+                val boundary = DirectChannelEventReader.maxCounter(buffer, slots)
+                events = DirectChannelEventReader.parse(buffer, slots, boundary)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            failure = "direct channel 采样失败：${e.message}"
+        } finally {
+            runCatching { ch?.close() }
+            runCatching { memoryFile.close() }
+        }
+        if (failure != null) return fallbackToPolling(args, failure)
+
+        // 事件按 type 字段（0x08 传感器类型）归属到对应 StreamChannel，
+        // 复用既有 channelStats / vibrationOf / SensorCsv 管线。
+        val byType = configured.associate { SENSOR_KINDS.getValue(it.channel.key).type to it }
+        val snapshot = ArrayList<List<String>>(minOf(events.size, MAX_STREAM_ROWS))
+        var baseTs: Long? = null
+        for (e in events) {
+            if (baseTs == null) baseTs = e.tsNs
+            val target = byType[e.type]
+            if (target != null) {
+                target.channel.count.incrementAndGet()
+                if (target.channel.values.size < MAX_STREAM_ROWS) {
+                    target.channel.values += e.values.copyOf(minOf(target.channel.axes, e.values.size))
+                }
+            }
+            val tMs = (e.tsNs - baseTs!!) / 1_000_000.0
+            snapshot += listOf(
+                String.format(Locale.US, "%.3f", tMs),
+                target?.channel?.key ?: "type_${e.type}",
+                e.counter.toString(),
+                e.values.getOrElse(0) { 0f }.toString(),
+                e.values.getOrElse(1) { 0f }.toString(),
+                e.values.getOrElse(2) { 0f }.toString(),
+                e.reportToken.toString(),
+            )
+        }
+        val csv = SensorCsv.build(
+            listOf("t_ms", "sensor", "counter", "x", "y", "z", "token"),
+            snapshot,
+        )
+        val stats = buildJsonObject {
+            for (t in configured) {
+                if (t.channel.count.get() == 0) continue
+                put(t.channel.key, channelStats(t.channel, durationMs))
+            }
+        }
+        val vibration = vibrationOf(configured.map { it.channel }, durationMs)
+
+        var path = ""
+        if (saveCsv) {
+            val dir = sensorCsvDir(context)
+            val suffix = configured.joinToString("-") { it.channel.key }
+            val file = File(dir, "sensor_stream_${suffix}_${stamp()}.csv")
+            file.writeText(csv, Charsets.UTF_8)
+            path = file.absolutePath
+        }
+
+        val tokens = events.map { it.reportToken }.distinct()
+        val level = levels.values.maxOrNull() ?: SensorDirectChannel.RATE_FAST
+        return buildJsonObject {
+            put("status", "OK")
+            put("mode", "channel")
+            put("fallback", false)
+            put("sensors", buildJsonArray { configured.forEach { add(it.channel.key) } })
+            put("missing", buildJsonArray { missing.forEach { add(it) } })
+            put("unsupported", buildJsonArray {
+                (targets - configured.toSet()).forEach { add(it.channel.key) }
+            })
+            put("hz", hz)
+            put("samplingPeriodUs", 1_000_000 / hz)
+            put("durationMs", durationMs)
+            put("count", events.size)
+            put("events", events.size)
+            put("slots", slots)
+            put("reportToken", buildJsonArray { tokens.forEach { add(it) } })
+            put("channelLevel", directRateLabel(level))
+            put("truncated", events.size >= MAX_STREAM_ROWS)
+            put("path", path)
+            put("stats", stats)
+            vibration?.let { put("vibration", it.toJson()) }
+            put("preview", csv.lineSequence().take(5).joinToString("\n"))
+            put(
+                "note",
+                "mode=channel：SensorDirectChannel 共享内存快照（104B/条 little-endian，$slots 槽）；" +
+                    "按事件 type 归属传感器，counter 最大值判定写入边界；channelLevel 为请求档位，" +
+                    "实际写入速率取决于硬件。" + POLLING_NOTE,
+            )
+        }.toString()
+    }
+
+    /** 把 direct-channel rate 档位字符串化，便于结构化输出。 */
+    private fun directRateLabel(level: Int): String = when (level) {
+        SensorDirectChannel.RATE_STOP -> "DIRECT_REPORT_STOP"
+        SensorDirectChannel.RATE_NORMAL -> "DIRECT_REPORT_NORMAL"
+        SensorDirectChannel.RATE_FAST -> "DIRECT_REPORT_FAST"
+        SensorDirectChannel.RATE_VERY_FAST -> "DIRECT_REPORT_VERY_FAST"
+        else -> "DIRECT_REPORT_$level"
+    }
+
+    /** channel 路径不可用时如实回落 polling，并标注 fallback=true。 */
+    private suspend fun fallbackToPolling(args: JsonObject, reason: String): String =
+        sensorStreamPolling(
+            args,
+            noteOverride = "mode=channel 不可用（$reason），已自动回落 polling（行为兼容，结果按 polling 口径解读）；" + POLLING_NOTE,
+            extra = {
+                put("mode", "channel")
+                put("fallback", true)
+                put("channelUnsupported", true)
+                put("channelReason", reason)
+            },
+        )
 
     private fun channelStats(channel: StreamChannel, durationMs: Long): JsonObject = buildJsonObject {
         val samples = synchronized(channel.values) { channel.values.toList() }
@@ -1588,5 +1813,9 @@ class HardwareStatusTool(
     private companion object {
         const val MAX_STREAM_ROWS = 120_000
         const val BURST_GAP_NS = 5_000_000L
+        // R146: SensorDirectChannel 共享内存槽位数（104B × 2048 ≈ 208KB）。
+        const val DIRECT_CHANNEL_SLOTS = 2048
+        const val POLLING_NOTE =
+            "数值同时含原始 axes 列（含重力的加速度约 9.8 m/s²）；vibration 基于合成幅值相对均值的偏离估计"
     }
 }
