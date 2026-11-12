@@ -248,6 +248,10 @@ export const TOOL_META: Record<string, ToolMeta> = {
   thermo_monitor_start: { label: "开启温湿度监听", labelEn: "Start thermo monitor", icon: "bluetooth" },
   thermo_monitor_stop: { label: "停止温湿度监听", labelEn: "Stop thermo monitor", icon: "stop" },
   thermo_history: { label: "温湿度历史", labelEn: "Thermo history", icon: "bar-chart" },
+  // R118: PDF 输出 + 壁纸（wallpaper_set 在 Kotlin SystemApiTool.destructive=true，web 确认闸须覆盖）。
+  pdf_generate: { label: "生成 PDF", labelEn: "Generate PDF", icon: "file-text" },
+  pdf_from_images: { label: "图片转 PDF", labelEn: "Images to PDF", icon: "image" },
+  wallpaper_set: { label: "设置壁纸", labelEn: "Set wallpaper", icon: "palette", destructive: true },
 };
 
 export const TOOL_DESTRUCTIVE = new Set(

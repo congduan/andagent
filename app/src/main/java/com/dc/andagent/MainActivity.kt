@@ -233,6 +233,8 @@ import com.dc.andagent.tools.VpnTool
 import com.dc.andagent.tools.VPN_TOOLS
 import com.dc.andagent.tools.CellularTool
 import com.dc.andagent.tools.CELLULAR_TOOLS
+import com.dc.andagent.tools.PdfTool
+import com.dc.andagent.tools.PDF_TOOLS
 import com.dc.andagent.tools.EsimTool
 import com.dc.andagent.tools.ESIM_TOOLS
 import com.dc.andagent.tools.AndroidReflectTool
@@ -668,6 +670,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(VPN_TOOLS.associateWith { VpnTool(appContext, permissionBroker, it) })
         // R113: 蜂窝深度（CellInfo/RSRP 诊断、requestNetworkScan 邻区扫描、5G NR 频段/带宽、流量配额）。
         tools.putAll(CELLULAR_TOOLS.associateWith { CellularTool(appContext, permissionBroker, it) })
+        // R118: PDF 输出（文本排版 / 图片集拼页），落 Download/AndAgentDocs/；无需权限 broker。
+        tools.putAll(PDF_TOOLS.associateWith { PdfTool(appContext, it) })
         // R122: eSIM 管理（EuiccManager：状态/下载/启用/停用/删除；LPA 缺失或权限被拒时如实降级）。
         tools.putAll(ESIM_TOOLS.associateWith { EsimTool(appContext, permissionBroker, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.

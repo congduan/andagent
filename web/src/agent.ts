@@ -983,6 +983,23 @@ const HARDWARE_GUIDE_EN = [
   "Audio effect chain: audio_effect plays a local file with MediaPlayer and attaches eq/bass/reverb/virtualizer to that audio session. play returns immediately while audio keeps playing in the background, so use action=set to adjust live and always action=stop when done (otherwise playback continues). eq_preset uses device preset names; per-band shaping uses eq_bands=60:4,230:-2; reverb_preset defaults to mediumroom. Check effects[].enabled/hasControl for what actually took effect instead of trusting the request. audio_focus manages preemption: playback requests gain by default, and loss/loss_transient callbacks (auto-pause or ducking) are recorded in status.events; only call request/abandon manually when the user asks. spatial_audio exists on Android 12+ only; when it returns RESTRICTED or available=false, say so instead of claiming spatial audio is on. For audio_record_ex, only source=unprocessed yields the raw source (AGC/noise suppression/EQ bypassed); use rawSource/sourceFallback to verify, and note that fallback=true silently falls back to voice_recognition on unsupported devices.",
 ].join("\n");
 
+// R118: PDF 输出 + 壁纸锁屏目标（中英双语，随语言注入 systemPrompt）。
+const DOCS_GUIDE = [
+  "文档输出：要「导出/生成 PDF」「把文字整理成 PDF」用 pdf_generate——lines 传字符串数组或 {text,style:title|heading|body} 混合，或直接给 body 纯文本按行拆；可选 title 首页大标题、file_name 文件名。",
+  "把多张照片/截图合成一份 PDF（一图一页）用 pdf_from_images：ids_or_uris 传图片源 JSON 数组（相册 id、content:// URI、本地路径、base64 都行）；page_size=fit 让页尺寸贴合图片、a4 固定 A4 页留边距居中，title 可加首页标题。",
+  "两个 PDF 工具都保存到 Download/AndAgentDocs/，返回 ok/file_name/savedPath/pages/bytes；file_name 非法字符转成 _、重名自动加序号不覆盖，务必把 savedPath 回复给用户，别只说「已生成」。",
+  "护栏：pdf_generate 单行 ≤5000 字符、总输入 ≤200KB、≤1000 行；pdf_from_images ≤30 页、总像素 ≤32MP；超限会明确报错，如实转述并建议分批，不要谎称已生成。",
+  "wallpaper_set 支持 target=home(桌面)/lock(锁屏)/both；部分 ROM 不支持锁屏壁纸，返回 lock_failed 时说明桌面已设、锁屏未设，不要声称两侧都成功。",
+].join("\n");
+
+const DOCS_GUIDE_EN = [
+  "Document output: for 'export/generate a PDF' or 'turn text into a PDF' use pdf_generate — pass lines as an array of strings or {text,style:title|heading|body} objects, or give body as plain text split into lines; optional title (cover heading) and file_name.",
+  "Combine several photos/screenshots into one PDF (one image per page) with pdf_from_images: ids_or_uris is a JSON array of image sources (album id, content:// URI, local path or base64); page_size=fit sizes each page to the image, a4 uses a fixed A4 page with centred margins; title adds a heading on the first page.",
+  "Both PDF tools save to Download/AndAgentDocs/ and return ok/file_name/savedPath/pages/bytes; illegal characters in file_name become _ and duplicate names get a numeric suffix instead of overwriting — always report savedPath back to the user, don't just say 'done'.",
+  "Limits: pdf_generate allows ≤5000 chars per line, ≤200KB total input, ≤1000 lines; pdf_from_images allows ≤30 pages and ≤32MP total pixels; oversized input errors clearly — relay it and suggest splitting into batches, never claim a PDF was produced.",
+  "wallpaper_set supports target=home/lock/both; some ROMs cannot set the lock-screen wallpaper — when lock_failed is reported say the home screen was set but the lock screen was not, never claim both succeeded.",
+].join("\n");
+
 const SHORTCUT_GUIDE = [
   "桌面一键任务：用户说‘帮我做个一键打卡的桌面图标’等需求时，调用 shortcut_create，提供显示名和点击后自动发送的完整 prompt，可选单个 emoji 图标。启动器会要求用户确认 pin。",
   "小组件 widget_generate 是桌面常驻信息卡；快捷方式 shortcut_create 是点击后执行预置任务。列出已有图标用 shortcut_list；shortcut_delete 只能停用，彻底移除需用户长按桌面图标拖到卸载。",
@@ -1744,6 +1761,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? LIVE_GUIDE_EN : LIVE_GUIDE,
               currentLanguage() === "en" ? WEB_DEV_GUIDE_EN : WEB_DEV_GUIDE,
               currentLanguage() === "en" ? HARDWARE_GUIDE_EN : HARDWARE_GUIDE,
+              currentLanguage() === "en" ? DOCS_GUIDE_EN : DOCS_GUIDE,
               currentLanguage() === "en" ? NETWORK_GUIDE_EN : NETWORK_GUIDE,
               currentLanguage() === "en" ? WIFI_GUIDE_EN : WIFI_GUIDE,
               currentLanguage() === "en" ? A11Y_GUIDE_EN : A11Y_GUIDE,

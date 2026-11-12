@@ -43,6 +43,15 @@ val SYSTEM_API_TOOLS = listOf(
     "installed_app_details", "usage_stats", "biometric_check",
 )
 
+/** R118: wallpaper_set target 归一化（纯函数，供 JVM 单测直接覆盖，非法值回退 home）。 */
+object WallpaperTarget {
+    fun normalize(raw: String?): String = when (raw?.trim()?.lowercase()) {
+        "lock" -> "lock"
+        "both" -> "both"
+        else -> "home"
+    }
+}
+
 class SystemApiTool(
     private val context: Context,
     private val permissions: PermissionBroker,
@@ -55,7 +64,7 @@ class SystemApiTool(
         "audio_set_volume" -> "设置指定音量流的音量（music/ring/alarm/notification/system/voice）。"
         "media_library" -> "查询 MediaStore 媒体集合：audio（音乐）、video（影片）、files（全部文件）。"
         "ringtone_set" -> "列出系统铃声或设置来电铃声（需要 WRITE_SETTINGS）。"
-        "wallpaper_set" -> "把本地图片或 content:// 图片设为桌面壁纸。"
+        "wallpaper_set" -> "把本地图片或 content:// 图片设为壁纸，可指定 target=home(桌面)/lock(锁屏)/both(两者)，默认 home；部分 ROM 不支持锁屏壁纸，失败时如实标注 lock_failed。"
         "vibrate" -> "让设备振动，可指定时长或波形。"
         "torch" -> "开启或关闭手电筒。"
         "screen_state" -> "读取屏幕状态（亮屏/熄屏、亮度、休眠超时）。"
@@ -81,7 +90,11 @@ class SystemApiTool(
             "uri" to strParam("铃声 content:// URI；省略则列出可用铃声"),
             "type" to strParam("ringtone|notification|alarm，默认 ringtone"),
         )
-        "wallpaper_set" -> schemaOf("source" to strParam("本地文件路径或 content:// 图片 URI"), required = listOf("source"))
+        "wallpaper_set" -> schemaOf(
+            "source" to strParam("本地文件路径或 content:// 图片 URI"),
+            "target" to strParam("home|lock|both，默认 home"),
+            required = listOf("source"),
+        )
         "vibrate" -> schemaOf(
             "duration_ms" to intParam("振动时长，默认 200ms，上限 5000"),
             "pattern" to strParam("逗号分隔的波形毫秒序列，如 0,100,50,100；提供时忽略 duration_ms"),
@@ -297,6 +310,7 @@ class SystemApiTool(
 
     private fun wallpaperSet(args: JsonObject): String {
         val source = args.strArg("source") ?: return "ERROR: 缺少 source"
+        val target = WallpaperTarget.normalize(args.strArg("target"))
         val stream = when {
             source.startsWith("content://") -> context.contentResolver.openInputStream(Uri.parse(source))
             source.startsWith("/") -> File(source).takeIf { it.isFile }?.inputStream()
@@ -305,9 +319,32 @@ class SystemApiTool(
         val bitmap = stream.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = 2 })
         } ?: return "ERROR: 图片解码失败"
-        WallpaperManager.getInstance(context).setBitmap(bitmap)
-        bitmap.recycle()
-        return "WRITTEN: 壁纸已更新（$source）"
+        val wm = WallpaperManager.getInstance(context)
+        var homeOk = false
+        var lockFailed: String? = null
+        try {
+            if (target == "home" || target == "both") {
+                wm.setBitmap(bitmap)
+                homeOk = true
+            }
+            if (target == "lock" || target == "both") {
+                try {
+                    // API 24+；minSdk 26 无需门槛分支。第 3 参 allowBackup 为 boolean（不能传 null）。
+                    wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_LOCK)
+                } catch (e: IllegalArgumentException) {
+                    lockFailed = e.message ?: "该 ROM 不支持锁屏壁纸"
+                }
+            }
+        } finally {
+            bitmap.recycle()
+        }
+        return when {
+            lockFailed != null && homeOk ->
+                "WRITTEN: 桌面壁纸已更新，但锁屏壁纸设置失败（$lockFailed）；部分 ROM 不支持锁屏壁纸（lock_failed）"
+            lockFailed != null ->
+                "ERROR: 锁屏壁纸设置失败（$lockFailed）；该 ROM 可能不支持锁屏壁纸（lock_failed）"
+            else -> "WRITTEN: 壁纸已更新（target=$target，$source）"
+        }
     }
 
     private fun vibrate(args: JsonObject): String {
