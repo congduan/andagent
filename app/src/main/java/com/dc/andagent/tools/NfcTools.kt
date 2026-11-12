@@ -59,7 +59,13 @@ class NfcSession(private val activity: Activity, private val prompt: (String) ->
         if (intent.action !in setOf(NfcAdapter.ACTION_TAG_DISCOVERED, NfcAdapter.ACTION_TECH_DISCOVERED, NfcAdapter.ACTION_NDEF_DISCOVERED)) return
         val tag = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(NfcAdapter.EXTRA_TAG, Tag::class.java)
             else @Suppress("DEPRECATION") intent.getParcelableExtra<Tag>(NfcAdapter.EXTRA_TAG)
-        if (tag != null) finish(tag)
+        if (tag != null) {
+            // R145c: 标记该 tag 已被正在进行的 nfc_read/write 前台读取消费。
+            // injectNfcTagIfAny 随后拿到同一个 intent，buildNfcPrompt 见标记便跳过碰卡缓存写入，
+            // 避免缓存后台读卡与前台读卡同时 connect 同一个 Tag（手动贴卡路径零破坏）。
+            intent.putExtra(NFC_CONSUMED_BY_READ_EXTRA, true)
+            finish(tag)
+        }
     }
     fun close() { finish(null); disable() }
     private fun finish(tag: Tag?) {
@@ -88,10 +94,85 @@ class NfcSession(private val activity: Activity, private val prompt: (String) ->
 
 private fun ByteArray.hex() = joinToString("") { "%02X".format(it) }
 
+/**
+ * R145c: 把 nfc_read 的完整读卡结果抽成顶层函数，供 [NfcTool.read] 与碰卡缓存
+ * [readCachedTagJson] 共用（复用同一套解析，缓存与实时读卡 JSON 结构一致）。
+ * 需要 connect 读取 NDEF 消息，调用方负责在卡在场时执行；异常由调用方 runCatching 兜底。
+ */
+private fun buildNfcReadJson(tag: Tag): JsonObject {
+    val ndef = Ndef.get(tag)
+    val message = if (ndef != null) {
+        try { ndef.connect(); ndef.ndefMessage } finally { runCatching { ndef.close() } }
+    } else null
+    return buildJsonObject {
+        put("uid", tag.id.hex())
+        put("idSize", tag.id.size)
+        putJsonArray("techList") { tag.techList.forEach { add(it) } }
+        put("isNdef", ndef != null)
+        if (ndef != null) {
+            put("maxSize", ndef.maxSize)
+            put("writable", ndef.isWritable)
+            put("canMakeReadOnly", runCatching { ndef.canMakeReadOnly() }.getOrDefault(false))
+        }
+        if (message != null) {
+            put("size", message.toByteArray().size)
+            putJsonArray("records") { message.records.forEach { add(buildNfcRecordJson(it)) } }
+        }
+    }
+}
+
+private fun buildNfcRecordJson(record: NdefRecord): JsonObject = buildJsonObject {
+    put("tnf", record.tnf.toInt()); put("typeHex", record.type.hex()); put("idHex", record.id.hex())
+    put("payloadHex", record.payload.hex()); put("size", record.payload.size)
+    if (record.tnf == NdefRecord.TNF_WELL_KNOWN) when {
+        record.type.contentEquals(NdefRecord.RTD_TEXT) && record.payload.isNotEmpty() -> {
+            val n = record.payload[0].toInt() and 0x3f
+            if (record.payload.size >= 1 + n) {
+                val charset = if (record.payload[0].toInt() and 0x80 != 0) Charsets.UTF_16 else Charsets.UTF_8
+                put("kind", "text"); put("language", String(record.payload, 1, n, Charsets.US_ASCII))
+                put("text", String(record.payload, 1 + n, record.payload.size - 1 - n, charset))
+            }
+        }
+        record.type.contentEquals(NdefRecord.RTD_URI) -> { put("kind", "uri"); put("uri", record.toUri()?.toString() ?: "") }
+        record.type.contentEquals(NdefRecord.RTD_SMART_POSTER) -> {
+            put("kind", "smart_poster")
+            runCatching { NdefMessage(record.payload).records }.getOrNull()?.let { nested ->
+                putJsonArray("records") { nested.forEach { add(buildNfcRecordJson(it)) } }
+            }
+        }
+    }
+    when (record.tnf) {
+        NdefRecord.TNF_MIME_MEDIA -> {
+            put("kind", "mime")
+            put("mimeType", String(record.type, Charsets.US_ASCII))
+            put("payloadText", runCatching { String(record.payload, Charsets.UTF_8) }.getOrDefault("").take(500))
+        }
+        NdefRecord.TNF_EXTERNAL_TYPE -> {
+            put("kind", "external")
+            put("externalType", String(record.type, Charsets.US_ASCII))
+        }
+        NdefRecord.TNF_UNKNOWN -> put("kind", "unknown")
+    }
+}
+
+/**
+ * R145c: 碰卡缓存专用读取。尽力做一次完整 read；connect 失败（卡片已移开）则
+ * [buildCachedTagJson] 降级为只缓存 uid/techList 并如实标 failedToConnect=true。
+ * 全程 runCatching，Tag getter 异常也兜底，绝不抛（防失败条款）。
+ */
+internal fun readCachedTagJson(tag: Tag): String {
+    val base = runCatching { buildNfcReadJson(tag) }.getOrNull()
+    return runCatching {
+        buildCachedTagJson(base, tag.id.hex(), tag.id.size, tag.techList.toList()).toString()
+    }.getOrElse {
+        buildCachedTagJson(null, "", 0, emptyList()).toString()
+    }
+}
+
 class NfcTool(private val session: NfcSession, override val name: String) : Tool {
     override val description = when (name) {
         "nfc_status" -> "查询设备 NFC 是否支持及是否开启。"
-        "nfc_read" -> "等待贴卡最多 60 秒，读取 NFC UID、技术和 NDEF Text/URI/Smart Poster 记录。贴卡前先告诉用户。"
+        "nfc_read" -> "读取 NFC UID、技术和 NDEF Text/URI/Smart Poster 记录。碰卡拉起对话时该次贴卡数据已缓存，调用即得、无需再贴卡；无缓存时等待贴卡最多 60 秒（调用前先告诉用户）。force=true 跳过缓存强制重新贴卡读取实时数据。"
         "nfc_write_text" -> "等待贴卡并写入 NDEF 文本。会覆盖卡片原有 NDEF 内容，先告知用户。"
         "nfc_write_uri" -> "等待贴卡并写入 NDEF URI。会覆盖卡片原有 NDEF 内容，先告知用户。"
         "nfc_write_raw" -> "等待贴卡并写入自定义 NDEF 记录：MIME、external type 或原始 payload（base64/hex）。"
@@ -99,6 +180,7 @@ class NfcTool(private val session: NfcSession, override val name: String) : Tool
         else -> "NFC 工具"
     }
     override val parameters = when (name) {
+        "nfc_read" -> schemaOf("force" to boolParam("true：跳过碰卡缓存，强制等待重新贴卡读取实时数据；默认直接消费碰卡缓存"))
         "nfc_write_text" -> schemaOf("text" to strParam("要写入的文本"), required = listOf("text"))
         "nfc_write_uri" -> schemaOf("uri" to strParam("要写入的 URI"), required = listOf("uri"))
         "nfc_write_raw" -> schemaOf(
@@ -112,6 +194,15 @@ class NfcTool(private val session: NfcSession, override val name: String) : Tool
     override val destructive get() = name.startsWith("nfc_write")
     override suspend fun execute(args: JsonObject): String {
         if (name == "nfc_hce_status") return hceStatus()
+        // R145c: 碰卡拉起的那次对话优先消费缓存，零二次贴卡。缓存是快照，不依赖当前
+        // NFC 是否开启，故放在 status() 检查之前；无缓存 / force 时回落到原 awaitTag() 路径。
+        // review 必修 1：takeAwait 短等（默认 3s）在途后台读卡落地——begin 占位后 AI 立即
+        // 调 nfc_read 也能拿到数据；force=true 清缓存（在途线程 complete 因代际不符被丢弃，
+        // review 必修 2），强制走重新贴卡。
+        if (name == "nfc_read") {
+            if (args.boolArg("force") == true) NfcTagCache.clear()
+            else NfcTagCache.takeAwait()?.let { return it }
+        }
         val state = session.status()
         if (name == "nfc_status" || state.startsWith("ERROR:")) return state
         val value = if (name == "nfc_write_text") args.strArg("text") else if (name == "nfc_write_uri") args.strArg("uri") else null
@@ -159,60 +250,7 @@ class NfcTool(private val session: NfcSession, override val name: String) : Tool
             else -> NdefRecord(NdefRecord.TNF_UNKNOWN, byteArrayOf(), byteArrayOf(), bytes)
         }
     }
-    private fun read(tag: Tag): String {
-        val ndef = Ndef.get(tag)
-        val message = if (ndef != null) {
-            try { ndef.connect(); ndef.ndefMessage } finally { runCatching { ndef.close() } }
-        } else null
-        return buildJsonObject {
-            put("uid", tag.id.hex())
-            put("idSize", tag.id.size)
-            putJsonArray("techList") { tag.techList.forEach { add(it) } }
-            put("isNdef", ndef != null)
-            if (ndef != null) {
-                put("maxSize", ndef.maxSize)
-                put("writable", ndef.isWritable)
-                put("canMakeReadOnly", runCatching { ndef.canMakeReadOnly() }.getOrDefault(false))
-            }
-            if (message != null) {
-                put("size", message.toByteArray().size)
-                putJsonArray("records") { message.records.forEach { add(recordJson(it)) } }
-            }
-        }.toString()
-    }
-    private fun recordJson(record: NdefRecord): JsonObject = buildJsonObject {
-        put("tnf", record.tnf.toInt()); put("typeHex", record.type.hex()); put("idHex", record.id.hex())
-        put("payloadHex", record.payload.hex()); put("size", record.payload.size)
-        if (record.tnf == NdefRecord.TNF_WELL_KNOWN) when {
-            record.type.contentEquals(NdefRecord.RTD_TEXT) && record.payload.isNotEmpty() -> {
-                val n = record.payload[0].toInt() and 0x3f
-                if (record.payload.size >= 1 + n) {
-                    val charset = if (record.payload[0].toInt() and 0x80 != 0) Charsets.UTF_16 else Charsets.UTF_8
-                    put("kind", "text"); put("language", String(record.payload, 1, n, Charsets.US_ASCII))
-                    put("text", String(record.payload, 1 + n, record.payload.size - 1 - n, charset))
-                }
-            }
-            record.type.contentEquals(NdefRecord.RTD_URI) -> { put("kind", "uri"); put("uri", record.toUri()?.toString() ?: "") }
-            record.type.contentEquals(NdefRecord.RTD_SMART_POSTER) -> {
-                put("kind", "smart_poster")
-                runCatching { NdefMessage(record.payload).records }.getOrNull()?.let { nested ->
-                    putJsonArray("records") { nested.forEach { add(recordJson(it)) } }
-                }
-            }
-        }
-        when (record.tnf) {
-            NdefRecord.TNF_MIME_MEDIA -> {
-                put("kind", "mime")
-                put("mimeType", String(record.type, Charsets.US_ASCII))
-                put("payloadText", runCatching { String(record.payload, Charsets.UTF_8) }.getOrDefault("").take(500))
-            }
-            NdefRecord.TNF_EXTERNAL_TYPE -> {
-                put("kind", "external")
-                put("externalType", String(record.type, Charsets.US_ASCII))
-            }
-            NdefRecord.TNF_UNKNOWN -> put("kind", "unknown")
-        }
-    }
+    private fun read(tag: Tag): String = buildNfcReadJson(tag).toString()
     private fun write(tag: Tag, record: NdefRecord): String {
         val message = NdefMessage(arrayOf(record))
         val ndef = Ndef.get(tag)

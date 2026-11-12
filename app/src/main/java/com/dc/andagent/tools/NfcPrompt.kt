@@ -17,8 +17,9 @@ import java.nio.charset.Charset
  *  - [extractNfcTag] 读 Intent 里的 android.nfc 对象，转成纯数据 [NfcTagPayload]；
  *  - [describeNfcPayload] 是纯函数，把 [NfcTagPayload] 组装成中文提示词，
  *    可直接用 JUnit 精确断言各类型文本。
- * [buildNfcPrompt] 是两者组合的对外入口。完整的读卡仍由既有 nfc_read 工具负责，
- * 本文件只做「提示词预览 + 注入」，不改动 NfcTool / NfcSession / queueDeeplink。
+ * [buildNfcPrompt] 是两者组合的对外入口；R145c 起同时把碰卡 tag 数据写入 [NfcTagCache]，
+ * 供对话内 nfc_read 零二次贴卡消费。提示语是否带 [CACHED_TAP_HINT] 由缓存占位是否成功
+ * 决定（review 建议 2）。不改 foreground dispatch 注册逻辑、不改手动贴卡路径。
  */
 
 /** 单条 NDEF 记录的纯数据表示（不含任何 android.nfc 对象）。 */
@@ -45,12 +46,25 @@ data class NfcTagPayload(
 }
 
 /**
+ * R145c: 碰卡缓存占位成功时追加的提示——AI 直接调 nfc_read，不再要求用户二次贴卡。
+ * review 建议 2 后改为条件追加：仅当 [cacheNfcTagFromIntent] 真的建立/复用了缓存占位
+ * 才带上，否则用不带本提示的原 R145 文案（避免无 Tag 对象时谎报「数据已缓存」）。
+ */
+const val CACHED_TAP_HINT = "（碰卡数据已缓存，调用即得，无需再贴卡）"
+
+/**
  * 纯函数：把 [payload] 组装成用户语言（中文）的自动提示词。
  * - 有 NDEF 记录时优先：TEXT 取文本、URI 取 URI、其它给 type 字节摘要；
  * - 无 NDEF 的裸 tag：tag id、技术列表、容量；
  * - 空 / 无法解析返回 null（不注入）。
+ *
+ * [cached] 表示本次碰卡是否成功建立/复用了缓存占位（由 [cacheNfcTagFromIntent] 的返回值
+ * 传入）：true 时带 [CACHED_TAP_HINT]（AI 调 nfc_read 即得，无需二次贴卡）；false 时
+ * （intent 无 Tag 对象、根本没写缓存）用不带 hint 的原 R145 文案，避免对对话谎称
+ * 「数据已缓存」。默认 true，兼容仅需提示词文本的纯函数直接调用与既有单测。
  */
-fun describeNfcPayload(payload: NfcTagPayload): String? {
+fun describeNfcPayload(payload: NfcTagPayload, cached: Boolean = true): String? {
+    val hint = if (cached) CACHED_TAP_HINT else ""
     val records = payload.records
     if (!records.isNullOrEmpty()) {
         val body = records.joinToString("；") { r ->
@@ -61,8 +75,8 @@ fun describeNfcPayload(payload: NfcTagPayload): String? {
             }
         }
         // URI 记录的引导语与示例对齐，其余（文本 / 其它）统一引导 nfc_read 深读。
-        val suffix = if (records.first().kind == NfcRecordKind.URI) "请读取并分析。"
-        else "请用 nfc_read 读取完整数据并分析这条标签的用途与内容结构。"
+        val suffix = if (records.first().kind == NfcRecordKind.URI) "请读取并分析$hint。"
+        else "请用 nfc_read 读取完整数据并分析这条标签的用途与内容结构$hint。"
         return "NFC 标签已贴上：检测到 $body。$suffix"
     }
 
@@ -71,7 +85,7 @@ fun describeNfcPayload(payload: NfcTagPayload): String? {
     val techStr = payload.techs.joinToString(", ", "[", "]")
     val cap = payload.capacityBytes
     val capStr = if (cap != null) "，容量 ${cap}B" else ""
-    return "NFC 标签已贴上：tag id=${payload.idHex}，技术=$techStr$capStr。请用 nfc_read 读取数据并分析这张卡的类型与内容。"
+    return "NFC 标签已贴上：tag id=${payload.idHex}，技术=$techStr$capStr。请用 nfc_read 读取数据并分析这张卡的类型与内容$hint。"
 }
 
 private fun otherRecordFragment(r: NfcRecordData): String {
@@ -182,8 +196,47 @@ private fun decodeUriRecord(payload: ByteArray): String {
     return prefix + rest
 }
 
-/** R145 spec 入口：Intent → 中文提示词（extract → describe 两层组合）。 */
-fun buildNfcPrompt(intent: Intent): String? = extractNfcTag(intent)?.let(::describeNfcPayload)
+/**
+ * R145c spec 入口：Intent → 中文提示词。碰卡 intent 进入注入链路时把 tag 数据经
+ * [NfcTagCache.begin] 占位 + 后台线程读卡回填（[cacheNfcTagFromIntent]），供对话内
+ * nfc_read 零二次贴卡消费。
+ *
+ * 前台读取冲突标记：intent 带 [NFC_CONSUMED_BY_READ_EXTRA]（该卡正在满足进行中的
+ * nfc_read/write 前台读取，缓存并未写入）时直接返回 null 不注入——避免对对话谎称
+ * 「数据已缓存」。不改 foreground dispatch 注册逻辑、不改手动贴卡等待路径。
+ *
+ * review 建议 2：提示语是否带 [CACHED_TAP_HINT] 以「是否真的成功建立/复用缓存占位」为准——
+ * [cacheNfcTagFromIntent] 返回 false（intent 无 Tag 对象、根本没写缓存）时用不带 hint 的
+ * 原 R145 文案；true 时带 hint。避免「只有 EXTRA_ID、没有 Tag」的 intent 谎报数据已缓存。
+ */
+fun buildNfcPrompt(intent: Intent): String? {
+    if (intent.getBooleanExtra(NFC_CONSUMED_BY_READ_EXTRA, false)) return null
+    val payload = extractNfcTag(intent) ?: return null
+    val cached = cacheNfcTagFromIntent(intent, payload.idHex)
+    return describeNfcPayload(payload, cached)
+}
+
+/**
+ * R145c: 碰卡瞬间在注入链路里占位并后台读卡缓存（begin 在 dispatch 线程同步执行，
+ * nfc_read 的 takeAwait 能等到在途读卡落地，不再掉进二次贴卡等待）。Tag 对象只在
+ * dispatch 后可连接，且卡可能已被移开，读卡放后台线程；connect 失败由
+ * [readCachedTagJson] 降级为只缓存 uid/techList 并标 failedToConnect=true，全程
+ * runCatching，绝不 crash。代际号防旧卡乱序覆盖 / force 清后写回。
+ *
+ * 返回 Boolean 给 [buildNfcPrompt] 决定提示语是否带 [CACHED_TAP_HINT]：
+ * - false：intent 无 Tag 对象（例如只有 EXTRA_ID），无法建立缓存占位 → 旧 R145 文案；
+ * - true：占位成功（新代际）或复用成功（begin 返回 -1 完整缓存 / -2 在途 pending）。
+ *   -1/-2 均不起新线程（review 必修 1：同卡在途不重复 dispatch 开新后台读卡）。
+ */
+fun cacheNfcTagFromIntent(intent: Intent, uid: String): Boolean {
+    val tag = runCatching { parcelTag(intent) }.getOrNull() ?: return false
+    val gen = NfcTagCache.begin(uid)
+    if (gen == -1L || gen == -2L) return true  // 复用：不新增后台读卡
+    Thread({
+        NfcTagCache.complete(gen, runCatching { readCachedTagJson(tag) }.getOrDefault("{}"))
+    }, "nfc-tag-cache").apply { isDaemon = true }.start()
+    return true
+}
 
 /* --------------------------------- 去重窗口 --------------------------------- */
 

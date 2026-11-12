@@ -203,7 +203,7 @@ const TOOL_DEFS = [
   { name: "json_fix", description: "修复并验证常见不规范 JSON：注释、尾逗号、单引号、未引号键、智能引号、截断容器、Python 值。", parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
   { name: "js_eval", description: "在 QuickJS 中执行脚本。脚本可用 andagent.tool(name, argsJson) 同步调用设备工具，andagent.log(msg) 记录日志；andagent.docx(specJson, filename)、andagent.pptx(specJson, filename)、andagent.xlsx(specJson, filename) 生成文档；最后表达式作为 JSON 结果。", parameters: { type: "object", properties: { script: { type: "string", description: "JavaScript 脚本" }, timeout_s: { type: "integer", description: "超时秒数，默认 30，最大 30" } }, required: ["script"] } },
   { name: "nfc_status", description: "查询设备是否支持 NFC 及开关状态。", parameters: { type: "object", properties: {}, required: [] } },
-  { name: "nfc_read", description: "等待贴卡最多 60 秒，读取 UID、技术和 NDEF 记录。调用前提示用户贴卡。", parameters: { type: "object", properties: {}, required: [] } },
+  { name: "nfc_read", description: "读取 UID、技术和 NDEF 记录。碰卡拉起对话时该次贴卡数据已缓存，直接调用即得、无需再贴卡；无缓存时才等待贴卡最多 60 秒（调用前提示用户贴卡）。force=true 跳过缓存强制重新贴卡读取实时数据。", parameters: { type: "object", properties: { force: { type: "boolean", description: "跳过碰卡缓存，强制重新贴卡读取实时数据" } }, required: [] } },
   { name: "nfc_write_text", description: "覆盖 NFC 卡片的 NDEF 内容为文本；调用前说明写入内容并提示贴卡。", parameters: { type: "object", properties: { text: { type: "string", description: "写入文本" } }, required: ["text"] } },
   { name: "nfc_write_uri", description: "覆盖 NFC 卡片的 NDEF 内容为 URI；调用前说明写入 URI 并提示贴卡。", parameters: { type: "object", properties: { uri: { type: "string", description: "写入 URI" } }, required: ["uri"] } },
   { name: "nfc_iso_dep_info", description: "等待贴卡并读取 ISO-DEP 卡的 ATS/历史字节、最大传输长度与 compact TLV；用于判断卡是否走 APDU 通道。", parameters: { type: "object", properties: {}, required: [] } },
