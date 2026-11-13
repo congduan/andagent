@@ -137,6 +137,14 @@ function startLlm(id: string, url: string, headersJson: string, body: string, me
 
 /* -------------------------------- KV -------------------------------- */
 
+/* R150-review 建议①：mock 朗读态 + 3s 后模拟「自然结束」的定时器。 */
+let mockTtsSpeaking = false;
+let mockTtsTimerId: number | null = null;
+function mockTtsTimer(): void {
+  if (mockTtsTimerId !== null) clearTimeout(mockTtsTimerId);
+  mockTtsTimerId = window.setTimeout(() => { mockTtsSpeaking = false; mockTtsTimerId = null; }, 3000);
+}
+
 function kvCall(name: string, argsJson: string): string {
   const args = safeParse<Record<string, unknown>>(argsJson) ?? {};
   const ns = typeof args.namespace === "string" && args.namespace ? args.namespace : "default";
@@ -260,9 +268,11 @@ function install(): void {
     kvCall,
 
     /* R150: 卡片朗读——浏览器预览无系统 TTS，返回与真机同形状的占位串，不炸。 */
-    kvTtsSpeak: (_text) => "OK: speaking(mock)",
-    kvTtsStop: () => "OK: stopped",
-    kvTtsState: () => JSON.stringify({ available: true, speaking: false }),
+    kvTtsSpeak: (_text) => { mockTtsSpeaking = true; mockTtsTimer(); return "OK: speaking(mock)"; },
+    kvTtsStop: () => { mockTtsSpeaking = false; if (mockTtsTimerId !== null) { clearTimeout(mockTtsTimerId); mockTtsTimerId = null; } return "OK: stopped"; },
+    // R150-review 建议①：mock 维护播放态并在 3s 后模拟「自然结束」，与真桥
+    // ttsState 语义一致（浏览器预览的按钮态轮询路径也能走通）。
+    kvTtsState: () => JSON.stringify({ available: true, speaking: mockTtsSpeaking }),
 
     /* 深链 / a2ui：空收件箱 */
     consumeDeeplink: () => "[]",
