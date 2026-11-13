@@ -206,11 +206,6 @@ const TOOL_DEFS = [
   { name: "nfc_read", description: "读取 UID、技术和 NDEF 记录。碰卡拉起对话时该次贴卡数据已缓存，直接调用即得、无需再贴卡；无缓存时才等待贴卡最多 60 秒（调用前提示用户贴卡）。force=true 跳过缓存强制重新贴卡读取实时数据。", parameters: { type: "object", properties: { force: { type: "boolean", description: "跳过碰卡缓存，强制重新贴卡读取实时数据" } }, required: [] } },
   { name: "nfc_write_text", description: "覆盖 NFC 卡片的 NDEF 内容为文本；调用前说明写入内容并提示贴卡。", parameters: { type: "object", properties: { text: { type: "string", description: "写入文本" } }, required: ["text"] } },
   { name: "nfc_write_uri", description: "覆盖 NFC 卡片的 NDEF 内容为 URI；调用前说明写入 URI 并提示贴卡。", parameters: { type: "object", properties: { uri: { type: "string", description: "写入 URI" } }, required: ["uri"] } },
-  { name: "nfc_iso_dep_info", description: "等待贴卡并读取 ISO-DEP 卡的 ATS/历史字节、最大传输长度与 compact TLV；用于判断卡是否走 APDU 通道。", parameters: { type: "object", properties: {}, required: [] } },
-  { name: "nfc_iso_dep_transceive", description: "等待贴卡并透传 ISO-DEP APDU（IsoDep.transceive）：apdu 为 hex，可多条；aid 可自动 SELECT；SW=61xx 自动 GET RESPONSE。可读公交卡余额、门禁卡、DESFire、电子护照。证件/支付类 AID 需 confirm_privacy=true + purpose（须先取得用户同意），写入/校验 PIN 需 confirm=true。", parameters: { type: "object", properties: { apdu: { type: "string", description: "命令 APDU hex，多条用换行/分号/逗号分隔" }, aid: { type: "string", description: "可选：先自动 SELECT 的 AID" }, timeout_ms: { type: "integer", description: "超时毫秒，默认 5000" }, auto_get_response: { type: "boolean", description: "SW=61xx 自动 GET RESPONSE，默认 true" }, confirm: { type: "boolean", description: "写入/校验 PIN 类指令必须 true" }, confirm_privacy: { type: "boolean", description: "证件/支付类 AID 必须 true" }, purpose: { type: "string", description: "用户授权的用途" } }, required: [] } },
-  { name: "nfc_felica_info", description: "等待贴 FeliCa 卡（Suica/ICOCA 等）并读取 IDm/PMm/系统码。", parameters: { type: "object", properties: {}, required: [] } },
-  { name: "nfc_felica_transceive", description: "等待贴 FeliCa 卡并透传原始帧（NfcF.transceive）；写入/认证类命令需 confirm=true。", parameters: { type: "object", properties: { frame: { type: "string", description: "FeliCa 帧 hex（含长度字节）" }, timeout_ms: { type: "integer", description: "超时毫秒，默认 5000" }, confirm: { type: "boolean", description: "写入/认证类命令必须 true" } }, required: ["frame"] } },
-  { name: "nfc_felica_read_blocks", description: "等待贴 FeliCa 卡，用 Read Without Encryption 读块并返回 16 字节 hex/ASCII。", parameters: { type: "object", properties: { service_codes: { type: "string", description: "服务码，2 字节 hex，如 008B" }, blocks: { type: "string", description: "块号或 serviceIndex:blockNo，如 0 或 0:0,0:1" }, timeout_ms: { type: "integer", description: "超时毫秒，默认 5000" }, block_list_hex: { type: "string", description: "可选：直接给 block list 元素 hex" } }, required: ["service_codes", "blocks"] } },
   { name: "web_embed", description: "在对话中展示内嵌浏览器：支持 HTTPS 网站，以及本地 HTML 文件（file:///、content:// 或 /sdcard/... 绝对路径）。本地 HTML 会在原生内嵌 WebView 打开，可用 devtools_console / devtools_errors 查加载期报错、devtools_eval 验证 DOM（需 DevTools 调试开启；见网页开发工作流）。", parameters: { type: "object", properties: { uri: { type: "string", description: "HTTPS 网站地址，或本地 HTML 的 file:///、content:// URI / 绝对路径" } }, required: ["uri"] } },
   { name: "screen_capture", description: "经 scrcpy-server 取一帧屏幕并返回 JPEG 缩略图。", parameters: { type: "object", properties: {}, required: [] } },
   { name: "screen_record_h264", description: "用 MediaProjection 录制 H.264 MP4 到 Movies，可设置时长与码率。", parameters: { type: "object", properties: { duration_s: { type: "integer", description: "秒数，默认 30" }, bit_rate: { type: "integer", description: "码率 bps" } }, required: [] } },
@@ -1126,6 +1121,18 @@ const A2UI_GUIDE_EN = [
   "```",
 ].join("\n");
 
+/**
+ * 按工具名去重（先出现者保留，内置优先于扩展/MCP）。部分 OpenAI 兼容网关
+ * （如腾讯 TokenHub）遇到同名 tool 会直接 400，而官方 DeepSeek/GLM 会容忍，
+ * 所以重复定义平时不易察觉。
+ */
+export function uniqueToolsByName<T extends { name: string }>(tools: T[]): T[] {
+  const seen = new Set<string>();
+  return tools.filter((tool) => !seen.has(tool.name) && !!seen.add(tool.name));
+}
+
+export const BUILTIN_TOOL_NAMES: readonly string[] = TOOL_DEFS.map((tool) => tool.name);
+
 const ZERO_USAGE = {
   input: 0,
   output: 0,
@@ -1795,7 +1802,7 @@ export class AgentEngine {
             // Compact projection: base64 tool payloads never reach the prompt.
             // R88: 图片附件的 base64 在这一步按路径补水（带缓存），消息本体只存路径。
             messages: hydrateChatImages(toModelMessages(this.messages)),
-            tools: [...TOOL_DEFS, ...extensionTools()],
+            tools: uniqueToolsByName([...TOOL_DEFS, ...extensionTools()]),
           },
           {
             // pi-ai's OpenAI client requires a nonempty key even when the
