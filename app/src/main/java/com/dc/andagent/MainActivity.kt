@@ -139,6 +139,7 @@ import com.dc.andagent.tools.ScreenRecordStopTool
 import com.dc.andagent.tools.ScreenRecordTool
 import com.dc.andagent.tools.SensorListTool
 import com.dc.andagent.tools.SensorReadTool
+import com.dc.andagent.tools.DspTools
 import com.dc.andagent.tools.StepsHistoryTool
 import com.dc.andagent.tools.MicListTool
 import com.dc.andagent.tools.DisplayModeTool
@@ -555,6 +556,8 @@ class MainActivity : ComponentActivity() {
             // R3a: sensors + health
             "sensor_list" to SensorListTool(appContext),
             "sensor_read" to SensorReadTool(appContext),
+            "audio_spectrum" to DspTools(appContext, permissionBroker, "audio_spectrum"),
+            "audio_level" to DspTools(appContext, permissionBroker, "audio_level"),
             "steps_today" to StepsTodayTool(appContext, healthPermissionRequester),
             "open_settings" to OpenSettingsTool(appContext),
             "open_uri" to OpenUriTool(appContext),
