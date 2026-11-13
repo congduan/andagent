@@ -1769,6 +1769,7 @@ export class AgentEngine {
             systemPrompt: [
               currentLanguage() === "en" ? LANGUAGE_GUIDE_EN : LANGUAGE_GUIDE,
               this.settings.systemPrompt.trim(),
+              currentLanguage() === "en" ? "Local llama_generate uses a small on-device model. A 0.5B model is suited to formatting, classification, and light Q&A. State its limits honestly; do not present it as the primary model or claim its output is verified." : "本地 llama_generate 使用小型端侧模型。0.5B 适合格式化、分类和轻问答；如实告知能力边界，不冒充主模型，也不把生成内容当成已核实事实。",
               memoryPrompt(content),
               skillPrompt(),
               currentLanguage() === "en" ? "Reflection: android_reflect can call only allowlisted methods of AudioManager, MediaRouter, CameraManager/CameraCharacteristics, SensorManager, PowerManager, ActivityManager, ConnectivityManager, Build/SystemClock, Settings.System/Global/Secure, TelephonyManager, DisplayManager, and PackageManager. See declared api_* tools; prefer dedicated tools." : "反射桥：android_reflect 仅能调用 AudioManager、MediaRouter、CameraManager/CameraCharacteristics、SensorManager、PowerManager、ActivityManager、ConnectivityManager、Build/SystemClock、Settings.System/Global/Secure、TelephonyManager、DisplayManager、PackageManager 的白名单方法。批量 api_* 工具见工具列表；优先用专门工具，反射用于长尾查询。",

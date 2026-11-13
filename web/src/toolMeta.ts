@@ -12,6 +12,12 @@ export interface ToolMeta {
 }
 
 export const TOOL_META: Record<string, ToolMeta> = {
+  llama_status: { label: "本地模型状态", labelEn: "Local model status", icon: "brain" },
+  llama_model_download: { label: "下载本地模型", labelEn: "Download local model", icon: "download", destructive: true },
+  llama_model_delete: { label: "删除本地模型", labelEn: "Delete local model", icon: "trash", destructive: true },
+  llama_load: { label: "加载本地模型", labelEn: "Load local model", icon: "brain" },
+  llama_generate: { label: "本地模型生成", labelEn: "Local model generate", icon: "brain" },
+  llama_unload: { label: "卸载本地模型", labelEn: "Unload local model", icon: "brain" },
   get_time: { label: "获取时间", labelEn: "Get time", icon: "clock" },
   wait: { label: "等待", labelEn: "Wait", icon: "clock" },
   tts_to_file: { label: "文本转音频", labelEn: "Text to audio", icon: "music" },

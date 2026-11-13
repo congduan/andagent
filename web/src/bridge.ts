@@ -16,6 +16,9 @@ const LONG_TASK_TOOLS = new Set(["ssh_download", "ssh_upload", "ssh_exec", "sign
   "location_stream", "telephony_signal",
   // R144: mqtt_sub 订阅窗口最长 60s（+连接/收尾），贴近默认 65s 预算，须走长任务超时。
   "mqtt_sub"]);
+LONG_TASK_TOOLS.add("llama_model_download");
+LONG_TASK_TOOLS.add("llama_load");
+LONG_TASK_TOOLS.add("llama_generate");
 /**
  * Kotlin bridge access: settings, tools, and the LLM HTTP transport.
  *

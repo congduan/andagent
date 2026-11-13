@@ -736,6 +736,7 @@ class MainActivity : ComponentActivity() {
         tools.putAll(PDF_TOOLS.associateWith { PdfTool(appContext, it) })
         // R122: eSIM 管理（EuiccManager：状态/下载/启用/停用/删除；LPA 缺失或权限被拒时如实降级）。
         tools.putAll(ESIM_TOOLS.associateWith { EsimTool(appContext, permissionBroker, it) })
+        tools.putAll(com.dc.andagent.llama.LLAMA_TOOLS.associateWith { com.dc.andagent.llama.LlamaTool(appContext, it) })
         // R42: the ad-hoc bridge and declarations share one restricted executor.
         tools["android_reflect"] = AndroidReflectTool(RestrictedReflectExecutor(appContext))
         tools.putAll(com.dc.andagent.memory.MEMORY_TOOLS.associateWith { com.dc.andagent.memory.MemoryTool(memoryStore, it) })

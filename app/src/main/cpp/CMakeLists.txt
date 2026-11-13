@@ -11,6 +11,30 @@ target_link_libraries(memexec log)
 add_library(scriptinterrupt SHARED scriptinterrupt.c)
 target_link_libraries(scriptinterrupt dl)
 
+# R152a: pinned llama.cpp CPU backend, statically folded into one JNI .so.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_COMMIT 5676dfb CACHE STRING "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_CPU_ARM_ARCH armv8-a CACHE STRING "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
+set(GGML_CUDA OFF CACHE BOOL "" FORCE)
+add_subdirectory(llama)
+foreach(target llama ggml ggml-base ggml-cpu)
+    target_compile_options(${target} PRIVATE -O3 -g0 -fvisibility=hidden)
+endforeach()
+add_library(llama_jni SHARED llama_jni.cpp)
+target_include_directories(llama_jni PRIVATE llama/include)
+target_compile_options(llama_jni PRIVATE -O3 -fvisibility=hidden)
+target_link_options(llama_jni PRIVATE -Wl,--strip-all)
+target_link_libraries(llama_jni llama ggml ggml-cpu log)
+
 # ---- R83①: termux terminal-emulator PTY JNI (Apache-2.0, v0.118.1) --------
 # com.termux.terminal.JNI loads "termux"; createSubprocess forks a /dev/ptmx
 # subprocess with clearenv() + the supplied environment array.

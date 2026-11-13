@@ -45,6 +45,12 @@ export const A2UI_DISPLAY_GUIDE = [
 ].join("\n");
 
 export const EXTRA_TOOL_DEFS = [
+  { name: "llama_status", description: "查看本机 GGUF 模型列表、加载态和内存；推荐 Qwen2.5-0.5B-Instruct-Q4_K_M（约 400MB）。", parameters: { type: "object", properties: {} } },
+  { name: "llama_model_download", description: "下载 HTTPS GGUF 到应用私有目录，支持断点续传与 GGUF magic 校验；流式下载可能耗时，返回完成状态或错误，不表示模型已加载。省略参数下载推荐的 Qwen2.5-0.5B-Instruct-Q4_K_M。", parameters: { type: "object", properties: { url: { type: "string" }, name: { type: "string" } } } },
+  { name: "llama_model_delete", description: "删除已下载模型文件；已加载时先卸载。", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
+  { name: "llama_load", description: "加载单个本地 GGUF 模型；设备物理内存低于 4GB 或当前可用内存不足时拒绝。", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
+  { name: "llama_generate", description: "用已加载的本地 CPU 小模型生成文本，最多 120 秒；0.5B 模型仅适合格式化、分类和轻问答，不能替代主模型或保证事实准确。", parameters: { type: "object", properties: { prompt: { type: "string" }, max_tokens: { type: "integer", description: "1..512，默认 256" }, temperature: { type: "number", description: "0..2，默认 0.7" } }, required: ["prompt"] } },
+  { name: "llama_unload", description: "释放本地模型及上下文内存。", parameters: { type: "object", properties: {} } },
   { name: "tts_to_file", description: "用系统 TTS 将文本合成为 WAV 音频文件，返回可用 ```audio 围栏展示的本地路径。", parameters: { type: "object", properties: { text: { type: "string", description: "待合成文本，最多 4000 字符" }, rate: { type: "number", description: "语速倍率 0.5..2.0，默认 1.0" } }, required: ["text"] } },
   { name: "live_start", description: "循环执行 JS。循环体内用 andagent.tool(name, JSON.stringify(args)) 获取设备数据，andagent.kv.get/set 跨 tick 保存状态，live.result(data) 提交本轮结果。每 tick 最多 500ms；结果最多 16KB。", parameters: { type: "object", properties: { name: { type: "string" }, code: { type: "string" }, interval_ms: { type: "integer", description: "默认 1000，最小 200" }, consumer: { type: "string", enum: ["dialog", "overlay", "kv"] } }, required: ["name", "code"] } },
   { name: "live_stop", description: "停止指定实时循环，当前 tick 完成后退出。", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
