@@ -188,57 +188,121 @@ class AgentBridge(
 
     // R150: 工具卡片「语音播放」——Android WebView 无 Web Speech API，走系统
     // TextToSpeech 经此桥。惰性单例、FLUSH 打断旧播报、进度回调维护 speaking 态。
+    // R150-review 必修①④：用 INITIALIZING/READY/FAILED 三态区分「初始化中」与
+    // 「确认失败」（只有 FAILED 才回收重建，初始化中不误杀引擎）；每次创建引擎
+    // 递增 generation，utterance ID 带代次，过期引擎的进度回调一律忽略；speak/
+    // stop/状态更新全部在 ttsLock 内串行化，防并发调用互相覆盖状态。
+    private enum class TtsPhase { INITIALIZING, READY, FAILED }
+
     private val ttsLock = Any()
     private var ttsEngine: android.speech.tts.TextToSpeech? = null
-    private var ttsReady = false
+    private var ttsPhase = TtsPhase.INITIALIZING
+    private var ttsGeneration = 0
     private var ttsSpeaking = false
+    // R150-review 必修②：每次播报唯一 utterance ID，旧播报迟到回调不得清掉新播报状态。
+    private var ttsUtteranceSeq = 0
+    private var ttsActiveUtteranceId: String? = null
 
-    private fun ttsEngineOrNull(): android.speech.tts.TextToSpeech? = synchronized(ttsLock) {
-        ttsEngine?.let {
-            if (ttsReady) return it
-            // init 失败的旧引擎：惰性回收（shutdown 后置空，下次调用重建）。
-            runCatching { it.shutdown() }
-            ttsEngine = null
-            return null
+    private fun ttsEnsureEngine(): android.speech.tts.TextToSpeech? = synchronized(ttsLock) {
+        when (ttsPhase) {
+            TtsPhase.READY -> return ttsEngine
+            TtsPhase.INITIALIZING -> if (ttsEngine != null) return null // 已有引擎在初始化中，等回调
+            TtsPhase.FAILED -> {
+                // 只有确认初始化失败的引擎才在这里回收；随后重建。
+                runCatching { ttsEngine?.shutdown() }
+                ttsEngine = null
+            }
         }
+        val generation = ++ttsGeneration
         val engine = android.speech.tts.TextToSpeech(appContext) { status ->
-            // 注意：此回调异步触发且不能自引用尚未完成初始化的 engine（Kotlin 编译限制），
-            // init 失败引擎的 shutdown 回收统一走 ttsEngineOrNull 的惰性路径。
-            synchronized(ttsLock) { ttsReady = status == android.speech.tts.TextToSpeech.SUCCESS }
+            synchronized(ttsLock) {
+                if (generation != ttsGeneration) return@synchronized // 过期引擎回调，忽略
+                if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                    ttsPhase = TtsPhase.READY
+                } else {
+                    ttsPhase = TtsPhase.FAILED
+                    runCatching { ttsEngine?.shutdown() }
+                    ttsEngine = null
+                }
+            }
         }
         engine.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) { synchronized(ttsLock) { ttsSpeaking = true } }
-            override fun onDone(utteranceId: String?) { synchronized(ttsLock) { ttsSpeaking = false } }
-            override fun onError(utteranceId: String?) { synchronized(ttsLock) { ttsSpeaking = false } }
+            // 只接受当前活跃 utterance：旧播报迟到的 onDone/onError 不得覆盖新播报状态。
+            override fun onStart(utteranceId: String?) {
+                synchronized(ttsLock) { if (utteranceId == ttsActiveUtteranceId) ttsSpeaking = true }
+            }
+            override fun onDone(utteranceId: String?) {
+                synchronized(ttsLock) { if (utteranceId == ttsActiveUtteranceId) ttsSpeaking = false }
+            }
+            override fun onError(utteranceId: String?) {
+                synchronized(ttsLock) { if (utteranceId == ttsActiveUtteranceId) ttsSpeaking = false }
+            }
         })
         ttsEngine = engine
+        ttsPhase = TtsPhase.INITIALIZING
         return null
     }
 
     @JavascriptInterface
-    fun kvTtsSpeak(text: String): String = runCatching {
-        val engine = ttsEngineOrNull() ?: return@runCatching "ERROR: 系统 TTS 初始化失败或不可用"
+    fun kvTtsSpeak(text: String): String {
         val clipped = if (text.length > 4000) text.take(4000) else text
-        if (clipped.isBlank()) return@runCatching "ERROR: 无可播报文本"
-        val result = engine.speak(clipped, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "andagent-card")
-        synchronized(ttsLock) { ttsSpeaking = result == android.speech.tts.TextToSpeech.SUCCESS }
-        if (result == android.speech.tts.TextToSpeech.SUCCESS) "OK: speaking"
-        else "ERROR: TTS speak 失败 code=$result"
-    }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+        if (clipped.isBlank()) return "ERROR: 无可播报文本"
+        return runCatching {
+            synchronized(ttsLock) {
+                val engine = ttsEnsureEngine()
+                if (engine == null) {
+                    // 区分「初始化中」（可重试）与「确认失败」，不伪报、不误杀。
+                    if (ttsPhase == TtsPhase.INITIALIZING) "ERROR: TTS 初始化中，请稍后重试"
+                    else "ERROR: 系统 TTS 初始化失败或不可用"
+                } else {
+                    val id = "andagent-card-$ttsGeneration-${++ttsUtteranceSeq}"
+                    val result = engine.speak(clipped, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, id)
+                    ttsSpeaking = result == android.speech.tts.TextToSpeech.SUCCESS
+                    if (result == android.speech.tts.TextToSpeech.SUCCESS) {
+                        ttsActiveUtteranceId = id
+                        "OK: speaking"
+                    } else "ERROR: TTS speak 失败 code=$result"
+                }
+            }
+        }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+    }
 
     @JavascriptInterface
     fun kvTtsStop(): String = runCatching {
-        ttsEngineOrNull()?.stop()
-        synchronized(ttsLock) { ttsSpeaking = false }
+        synchronized(ttsLock) {
+            if (ttsPhase == TtsPhase.READY) ttsEngine?.stop()
+            ttsSpeaking = false
+        }
         "OK: stopped"
     }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
 
     @JavascriptInterface
     fun kvTtsState(): String = runCatching {
-        val available = ttsEngineOrNull() != null
-        val speaking = synchronized(ttsLock) { ttsSpeaking }
-        """{"available":$available,"speaking":$speaking}"""
+        // 只读状态，不触发引擎创建/重建（避免状态轮询干扰初始化中的引擎）。
+        synchronized(ttsLock) {
+            val available = ttsPhase == TtsPhase.READY
+            """{"available":$available,"speaking":$ttsSpeaking}"""
+        }
     }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+
+    /** R150-review 必修③：桥销毁同步释放 TTS 引擎，防 Activity 销毁后仍持有/播报。 */
+    private fun ttsRelease() {
+        runCatching {
+            synchronized(ttsLock) {
+                try {
+                    if (ttsPhase == TtsPhase.READY) ttsEngine?.stop()
+                } finally {
+                    // stop 抛异常也要保底 shutdown + 状态复位，避免泄漏引擎。
+                    ttsEngine?.shutdown()
+                    ttsEngine = null
+                    ttsPhase = TtsPhase.FAILED
+                    ttsSpeaking = false
+                    ttsGeneration++ // 使在途回调全部过期
+                    ttsActiveUtteranceId = null
+                }
+            }
+        }
+    }
 
     /**
      * R110-review 必修项①：资源中心唯一入口。此前 list/close 两个独立
@@ -1354,6 +1418,7 @@ class AgentBridge(
 
     fun shutdown() {
         released = true
+        ttsRelease() // R150-review 必修③：释放 TTS 引擎，防 Activity 销毁后仍持有/播报
         if (liveInstance === this) liveInstance = null
         calls.values.forEach { it.cancel() }
         calls.clear()

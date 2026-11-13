@@ -1,5 +1,5 @@
 import { useI18n } from "./i18n";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ToolCallMessagePartProps } from "@assistant-ui/react";
 import { cancelToolByCallId, ttsSpeak, ttsStop, ttsState } from "./bridge";
 import { selectedText } from "./CopyMenu";
@@ -10,6 +10,10 @@ import { TOOL_META } from "./toolMeta";
 import { Icon } from "./icons";
 
 const COLLAPSE_LINES = 15;
+
+// R150-review 必修③：全局唯一播报 owner（ utterance 队列全局唯一）。
+let ttsOwnerSeq = 0;
+let ttsOwnerKey: string | null = null;
 
 function formatArgs(args: unknown, noArgs: string): string {
   if (!args || (typeof args === "object" && Object.keys(args).length === 0)) {
@@ -100,7 +104,6 @@ export function ToolCard(props: ToolCallMessagePartProps) {
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
   const [notice, setNotice] = useState("");
   const [elapsed, setElapsed] = useState(0);
 
@@ -133,14 +136,48 @@ export function ToolCard(props: ToolCallMessagePartProps) {
   const canFold = lines.length > COLLAPSE_LINES;
   const shown = canFold && !expanded ? lines.slice(0, COLLAPSE_LINES).join("\n") : formatted.text;
   // R150: 朗读结果——仅在结果文本非空且非 running 时可用；播报中再点变「停止」。
+  // R150-review 必修②：speaking 态不能只在点击时写本地 state——播报自然结束后
+  // 按钮会卡在「停止朗读」。改为轮询原生 ttsState 同步；且全局只有一个播报
+  // owner（utterance 队列是全局的），非 owner 卡片一律显示「朗读」、点击即以
+  // FLUSH 抢占，不会出现 B 卡把「停止 A」误当成自己的播报。
   const canSpeak = raw.trim().length > 0 && !running;
+  const ownerKeyRef = useRef(`tts-owner-${++ttsOwnerSeq}`);
+  const speakOwnerRef = useRef(false);
+  const [speakOwner, setSpeakOwner] = useState(false);
+  useEffect(() => {
+    if (!canSpeak && !speakOwner) return;
+    let alive = true;
+    const tick = () => {
+      if (!alive) return;
+      const native = ttsState();
+      const isOwner = ttsOwnerKey === ownerKeyRef.current && !!native?.speaking;
+      if (!isOwner && speakOwnerRef.current) {
+        speakOwnerRef.current = false;
+        setSpeakOwner(false);
+      }
+    };
+    const timer = window.setInterval(tick, 800);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [canSpeak, speakOwner]);
+  useEffect(() => () => {
+    // 本卡片卸载且自己是全局 owner 时才停止播报，避免误停被抢占后 B 的播放。
+    if (ttsOwnerKey === ownerKeyRef.current) { ttsOwnerKey = null; ttsStop(); }
+  }, []);
   const handleTts = () => {
-    if (speaking || ttsState()?.speaking) {
+    if (ttsOwnerKey === ownerKeyRef.current) {
       ttsStop();
-      setSpeaking(false);
+      ttsOwnerKey = null;
+      setSpeakOwner(false);
+      speakOwnerRef.current = false;
       return;
     }
-    if (ttsSpeak(formatted.text.slice(0, 4000))) setSpeaking(true);
+    // 抢占模型：点击朗读总是打断当前播报（Kotlin 侧 QUEUE_FLUSH），并把 owner
+    // 转移给本卡片；其他卡片的「停止」按钮态随之自动回落为「朗读」。
+    if (ttsSpeak(formatted.text.slice(0, 4000))) {
+      ttsOwnerKey = ownerKeyRef.current;
+      speakOwnerRef.current = true;
+      setSpeakOwner(true);
+    }
   };
   const written = /^(WRITTEN|DELETED|TOGGLED)/.test(raw);
   let captureImage: string | null = null;
@@ -267,7 +304,7 @@ export function ToolCard(props: ToolCallMessagePartProps) {
                       onClick={handleTts}
                     >
                       <Icon name="volume" size={12} />
-                      {speaking ? t("toolStopReading") : t("toolReadAloud")}
+                      {speakOwner ? t("toolStopReading") : t("toolReadAloud")}
                     </button>
                   )}
                   <button
