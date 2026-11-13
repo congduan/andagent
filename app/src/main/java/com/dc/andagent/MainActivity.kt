@@ -90,7 +90,9 @@ import com.dc.andagent.tools.DbGuiTool
 import com.dc.andagent.tools.TermuxTool
 import com.dc.andagent.tools.SSH_TOOLS
 import com.dc.andagent.tools.SSH_TRANSFER_TOOLS
+import com.dc.andagent.tools.SSH_TUNNEL_TOOLS
 import com.dc.andagent.tools.SshTransferTool
+import com.dc.andagent.tools.SshTunnelTool
 import com.dc.andagent.tools.SSH_CREDENTIAL_TOOLS
 import com.dc.andagent.tools.SshTool
 import com.dc.andagent.tools.SshCredentialActivity
@@ -694,6 +696,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(SSH_TRANSFER_TOOLS.associateWith { SshTransferTool(appContext, it) { event ->
             if (::bridge.isInitialized) bridge.emitTransferProgress(event)
         } })
+        // R148: SSH 端口转发三工具（L/R/D；D 本版 sshj 不支持，返回固定错误与替代方案）。
+        tools.putAll(SSH_TUNNEL_TOOLS.associateWith { SshTunnelTool(it) })
         // R91.5: 凭据元数据（nickname/host/user），secret 只留在 Keystore 加密文件里。
         tools.putAll(SSH_CREDENTIAL_TOOLS.associateWith { SshCredentialTool(appContext, it) })
         // R100 ②: ADB 真实对接（连接/设备/断开/shell/截图/pull/push，共享 AdbSessionHub 状态）。

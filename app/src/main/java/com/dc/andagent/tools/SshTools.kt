@@ -448,9 +448,14 @@ class SshTool(
         val ref = args.strArg("session_id") ?: return "ERROR: 缺少 session_id"
         val info = SshSessionPool.registry.resolve(ref)
             ?: return "ERROR: 会话不存在：$ref"
+        // R91b: 会话关闭必须级联停掉该会话的全部端口转发（teardown 内执行）。
+        val tunnels = SshTunnels.countForSession(info.id)
         // close() 先摘登记再断开：不会因为在该会话上跑着大文件传输而阻塞其它工具。
         SshSessionPool.close(info.id)
-        return "已断开 SSH 会话 ${info.id}（${info.user}@${info.host}:${info.port}）"
+        return buildString {
+            append("已断开 SSH 会话 ${info.id}（${info.user}@${info.host}:${info.port}）")
+            if (tunnels > 0) append("，并停止 $tunnels 条端口转发")
+        }
     }
 
     /* ---------------------------- storage ------------------------------ */
@@ -678,15 +683,19 @@ object SshSessionPool {
      * ssh_exec / ssh_list / 资源中心快照全部堵在池锁上（资源中心是同步 JS 桥
      * 调用，会直接卡死页面）。
      */
-    fun close(id: String): Live? = remove(id)?.also(::teardown)
+    fun close(id: String): Live? = remove(id)?.also { teardown(id, it) }
 
     /** 关闭会话，ref 支持 session_id 与 nickname（与 ssh_exec / ssh_close 语义一致）。 */
     fun closeByRef(ref: String): Live? = registry.resolve(ref)?.let { close(it.id) }
 
     /** 断开连接并清理随会话存活的通道；调用方不得持有池锁。 */
-    private fun teardown(entry: Live) {
+    private fun teardown(id: String, entry: Live) {
         // 先 disconnect：立刻打断在途 ssh_exec / SFTP 传输，让它们尽快从会话锁里退出。
         runCatching { entry.session.disconnect() }
+        // R91b: 会话消失必须级联停掉该会话的全部端口转发——sshj 的 disconnect 只关
+        // 本地 listener，SshTunnels 里的登记与远端 forwarding 句柄仍需显式摘除，
+        // 否则 ssh_tunnel_list 会留下指向死会话的僵尸条目。
+        SshTunnels.stopSession(id)
         synchronized(entry.session) {
             runCatching { entry.sftpChannel?.close() }
             entry.sftpChannel = null

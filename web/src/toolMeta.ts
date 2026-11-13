@@ -95,6 +95,10 @@ export const TOOL_META: Record<string, ToolMeta> = {
   ssh_download: { label: "SSH 下载", labelEn: "SSH download", icon: "download" },
   ssh_upload: { label: "SSH 上传", labelEn: "SSH upload", icon: "upload" },
   ssh_remote_ls: { label: "远程文件", labelEn: "Remote files", icon: "folder" },
+  // R91b: SSH 端口转发（start 对外暴露端口 → destructive；stop 非破坏性）。
+  ssh_tunnel_start: { label: "SSH 端口转发", labelEn: "SSH tunnel", icon: "link", destructive: true },
+  ssh_tunnel_list: { label: "SSH 转发列表", labelEn: "SSH tunnels", icon: "monitor" },
+  ssh_tunnel_stop: { label: "停止 SSH 转发", labelEn: "Stop SSH tunnel", icon: "stop" },
   credential_list: { label: "SSH 凭据", labelEn: "SSH credentials", icon: "key" },
   credential_delete: { label: "删除 SSH 凭据", labelEn: "Delete SSH credential", icon: "key", destructive: true },
   // R100 ②: ADB 工具族（shell/pull/push 走破坏性确认闸，与 Kotlin destructive 对齐）
