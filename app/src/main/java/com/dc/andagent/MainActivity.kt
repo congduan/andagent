@@ -140,6 +140,7 @@ import com.dc.andagent.tools.ScreenRecordTool
 import com.dc.andagent.tools.SensorListTool
 import com.dc.andagent.tools.SensorReadTool
 import com.dc.andagent.tools.DspTools
+import com.dc.andagent.tools.ArchiveTool
 import com.dc.andagent.tools.StepsHistoryTool
 import com.dc.andagent.tools.MicListTool
 import com.dc.andagent.tools.DisplayModeTool
@@ -560,6 +561,11 @@ class MainActivity : ComponentActivity() {
             "sensor_read" to SensorReadTool(appContext),
             "audio_spectrum" to DspTools(appContext, permissionBroker, "audio_spectrum"),
             "audio_level" to DspTools(appContext, permissionBroker, "audio_level"),
+            // R152e: 压缩格式补全（接口占位，见 ArchiveTools.kt）。
+            "archive_list" to ArchiveTool("archive_list"),
+            "archive_extract" to ArchiveTool("archive_extract"),
+            "archive_create" to ArchiveTool("archive_create"),
+            "zstd_compress" to ArchiveTool("zstd_compress"),
             "steps_today" to StepsTodayTool(appContext, healthPermissionRequester),
             "open_settings" to OpenSettingsTool(appContext),
             "open_uri" to OpenUriTool(appContext),

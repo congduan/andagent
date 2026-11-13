@@ -224,6 +224,11 @@ export const TOOL_META: Record<string, ToolMeta> = {
   miio_discover: { label: "米家设备发现", labelEn: "Mi Home discover", icon: "wifi" },
   miio_send: { label: "米家设备控制", labelEn: "Mi Home control", icon: "zap", destructive: true },
   miio_info: { label: "米家设备信息", labelEn: "Mi Home info", icon: "info" },
+  // R152e: 压缩格式补全四工具（接口占位；archive_extract 为 destructive，与 Kotlin ARCHIVE_TOOLS 对齐）
+  archive_list: { label: "归档条目列表", labelEn: "List archive entries", icon: "package" },
+  archive_extract: { label: "解包归档", labelEn: "Extract archive", icon: "package", destructive: true },
+  archive_create: { label: "创建归档", labelEn: "Create archive", icon: "package" },
+  zstd_compress: { label: "zstd 压缩", labelEn: "zstd compress", icon: "package" },
   // R122: eSIM 管理（status 只读；download/enable/disable/delete 与 Kotlin destructive 对齐）
   esim_status: { label: "eSIM 状态", labelEn: "eSIM status", icon: "smartphone" },
   esim_download: { label: "下载 eSIM", labelEn: "Download eSIM", icon: "download", destructive: true },

@@ -186,6 +186,60 @@ class AgentBridge(
     @JavascriptInterface
     fun cancelSshTransfer(key: String) { if (key.isNotBlank()) SshTransferCancel.request(key) }
 
+    // R150: 工具卡片「语音播放」——Android WebView 无 Web Speech API，走系统
+    // TextToSpeech 经此桥。惰性单例、FLUSH 打断旧播报、进度回调维护 speaking 态。
+    private val ttsLock = Any()
+    private var ttsEngine: android.speech.tts.TextToSpeech? = null
+    private var ttsReady = false
+    private var ttsSpeaking = false
+
+    private fun ttsEngineOrNull(): android.speech.tts.TextToSpeech? = synchronized(ttsLock) {
+        ttsEngine?.let {
+            if (ttsReady) return it
+            // init 失败的旧引擎：惰性回收（shutdown 后置空，下次调用重建）。
+            runCatching { it.shutdown() }
+            ttsEngine = null
+            return null
+        }
+        val engine = android.speech.tts.TextToSpeech(appContext) { status ->
+            // 注意：此回调异步触发且不能自引用尚未完成初始化的 engine（Kotlin 编译限制），
+            // init 失败引擎的 shutdown 回收统一走 ttsEngineOrNull 的惰性路径。
+            synchronized(ttsLock) { ttsReady = status == android.speech.tts.TextToSpeech.SUCCESS }
+        }
+        engine.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) { synchronized(ttsLock) { ttsSpeaking = true } }
+            override fun onDone(utteranceId: String?) { synchronized(ttsLock) { ttsSpeaking = false } }
+            override fun onError(utteranceId: String?) { synchronized(ttsLock) { ttsSpeaking = false } }
+        })
+        ttsEngine = engine
+        return null
+    }
+
+    @JavascriptInterface
+    fun kvTtsSpeak(text: String): String = runCatching {
+        val engine = ttsEngineOrNull() ?: return@runCatching "ERROR: 系统 TTS 初始化失败或不可用"
+        val clipped = if (text.length > 4000) text.take(4000) else text
+        if (clipped.isBlank()) return@runCatching "ERROR: 无可播报文本"
+        val result = engine.speak(clipped, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "andagent-card")
+        synchronized(ttsLock) { ttsSpeaking = result == android.speech.tts.TextToSpeech.SUCCESS }
+        if (result == android.speech.tts.TextToSpeech.SUCCESS) "OK: speaking"
+        else "ERROR: TTS speak 失败 code=$result"
+    }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+
+    @JavascriptInterface
+    fun kvTtsStop(): String = runCatching {
+        ttsEngineOrNull()?.stop()
+        synchronized(ttsLock) { ttsSpeaking = false }
+        "OK: stopped"
+    }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+
+    @JavascriptInterface
+    fun kvTtsState(): String = runCatching {
+        val available = ttsEngineOrNull() != null
+        val speaking = synchronized(ttsLock) { ttsSpeaking }
+        """{"available":$available,"speaking":$speaking}"""
+    }.getOrElse { "ERROR: ${it.message ?: it.javaClass.simpleName}" }
+
     /**
      * R110-review 必修项①：资源中心唯一入口。此前 list/close 两个独立
      * @JavascriptInterface 会被注入所有 iframe，canvas/HTML 卡片 sandbox、

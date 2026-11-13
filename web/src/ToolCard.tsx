@@ -1,7 +1,7 @@
 import { useI18n } from "./i18n";
 import { useEffect, useMemo, useState } from "react";
 import type { ToolCallMessagePartProps } from "@assistant-ui/react";
-import { cancelToolByCallId } from "./bridge";
+import { cancelToolByCallId, ttsSpeak, ttsStop, ttsState } from "./bridge";
 import { selectedText } from "./CopyMenu";
 import { WebViewCard } from "./WebViewCard";
 import { MediaCard, mediaFromResult } from "./MediaCard";
@@ -100,6 +100,7 @@ export function ToolCard(props: ToolCallMessagePartProps) {
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const [notice, setNotice] = useState("");
   const [elapsed, setElapsed] = useState(0);
 
@@ -131,6 +132,16 @@ export function ToolCard(props: ToolCallMessagePartProps) {
   const lines = formatted.text.split("\n");
   const canFold = lines.length > COLLAPSE_LINES;
   const shown = canFold && !expanded ? lines.slice(0, COLLAPSE_LINES).join("\n") : formatted.text;
+  // R150: 朗读结果——仅在结果文本非空且非 running 时可用；播报中再点变「停止」。
+  const canSpeak = raw.trim().length > 0 && !running;
+  const handleTts = () => {
+    if (speaking || ttsState()?.speaking) {
+      ttsStop();
+      setSpeaking(false);
+      return;
+    }
+    if (ttsSpeak(formatted.text.slice(0, 4000))) setSpeaking(true);
+  };
   const written = /^(WRITTEN|DELETED|TOGGLED)/.test(raw);
   let captureImage: string | null = null;
   if (["screen_capture", "image_edit", "image_preview", "image_collage", "devtools_screenshot", "adb_screencap"].includes(props.toolName) && !running && !failed) {
@@ -249,6 +260,16 @@ export function ToolCard(props: ToolCallMessagePartProps) {
                     {t("result")}{formatted.json ? " · JSON" : ""}
                     {canFold ? ` · ${lines.length} ${t("rows")}` : ""}
                   </span>
+                  {canSpeak && (
+                    <button
+                      type="button"
+                      className="tool-speak"
+                      onClick={handleTts}
+                    >
+                      <Icon name="volume" size={12} />
+                      {speaking ? t("toolStopReading") : t("toolReadAloud")}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="tool-copy"

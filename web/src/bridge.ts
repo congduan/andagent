@@ -193,6 +193,10 @@ interface AndroidBridge {
   kvSettingCall?(name: string, argsJson: string): string;
   /** R53: 原生 KV 通道（kv_get/kv_set/... 六工具），同步返回工具结果 JSON。 */
   kvCall?(name: string, argsJson: string): string;
+  /** R150: 工具卡片朗读——系统 TextToSpeech 桥（浏览器预览缺失时静默降级，不 throw）。 */
+  kvTtsSpeak?(text: string): string;
+  kvTtsStop?(): string;
+  kvTtsState?(): string;
   consumeDeeplink(): string;
   /** R105: drain queued cron a2ui fences as a JSON array of strings. */
   consumeA2uiForms?(): string;
@@ -1587,5 +1591,54 @@ export function kvCall<T = unknown>(name: string, args: Record<string, unknown> 
     return JSON.parse(raw) as T;
   } catch {
     return undefined;
+  }
+}
+
+/** R150: 卡片朗读状态（与 Kotlin kvTtsState 的 JSON 形状一致）。 */
+export interface TtsState {
+  available: boolean;
+  speaking: boolean;
+}
+
+/**
+ * R150: 工具卡片「朗读结果」三包装函数。仿 hasKvBridge/kvCall 模式：桥缺失
+ * （浏览器预览）时静默降级返回 false / null，不抛异常打断卡片渲染。
+ */
+export function ttsSpeak(text: string): boolean {
+  const fn = bridge()?.kvTtsSpeak;
+  if (typeof fn !== "function") return false;
+  try {
+    const raw = fn(text);
+    return typeof raw === "string" && raw.startsWith("OK");
+  } catch (e) {
+    console.warn("kvTtsSpeak failed", e);
+    return false;
+  }
+}
+
+export function ttsStop(): boolean {
+  const fn = bridge()?.kvTtsStop;
+  if (typeof fn !== "function") return false;
+  try {
+    const raw = fn();
+    return typeof raw === "string" && raw.startsWith("OK");
+  } catch (e) {
+    console.warn("kvTtsStop failed", e);
+    return false;
+  }
+}
+
+export function ttsState(): TtsState | null {
+  const fn = bridge()?.kvTtsState;
+  if (typeof fn !== "function") return null;
+  try {
+    const raw = fn();
+    if (typeof raw !== "string" || !raw) return null;
+    const parsed = JSON.parse(raw) as { available?: unknown; speaking?: unknown };
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return { available: parsed.available === true, speaking: parsed.speaking === true };
+  } catch (e) {
+    console.warn("kvTtsState failed", e);
+    return null;
   }
 }

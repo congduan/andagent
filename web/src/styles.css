@@ -3314,6 +3314,24 @@ button:disabled {
   flex: none;
 }
 
+/* R150: 工具卡片「朗读结果」按钮（与复制按钮同排；不抢 auto 边距）。 */
+.tool-speak {
+  border: none;
+  border-radius: 6px;
+  background: var(--wash-3);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tool-speak:hover {
+  background: var(--wash-5);
+}
+
 .webview-card, .geo-card, .kv-card { margin: 10px 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); }
 .webview-uri { overflow-wrap: anywhere; margin-bottom: 8px; }
 .webview-card button, .geo-card button { color: var(--text); border: 1px solid var(--border-strong); border-radius: 7px; padding: 7px 11px; background: rgba(127,155,255,.15); }

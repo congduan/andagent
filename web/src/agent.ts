@@ -1038,6 +1038,15 @@ const STORAGE_MEDIA_GUIDE_EN = [
   "For audio or video files, output a ```audio or ```video fence with JSON such as {\"uri\":\"/local/path/file.mp4\",\"title\":\"Filename\"}. uri may be a local path or HTTPS URL.",
 ].join("\n");
 
+/** R152e: 归档工具接口占位指引（中英双语，说明原生后端未集成、如实返回未支持）。 */
+const ARCHIVE_GUIDE = [
+  "归档工具（R152e 接口占位）：archive_list / archive_extract / archive_create / zstd_compress 目前只是接口占位——原生 libarchive/libzstd 未集成，调用会如实返回「未支持」，不要向用户声称已列出/解包/打包/压缩成功，也不要编造结果。path 只接受 /sdcard 白名单内的绝对路径（Kotlin 侧校验，含 .. 或非白名单一律拒绝）；archive_extract 是 destructive，entries 里含 ../ 的越界条目会被 zip-slip 防护拒绝。待主控接入原生后端后再实际使用。",
+].join("\n");
+
+const ARCHIVE_GUIDE_EN = [
+  "Archive tools (R152e interface placeholder): archive_list / archive_extract / archive_create / zstd_compress are interface placeholders only — the native libarchive/libzstd backend is NOT integrated, so calls honestly return not supported. Never tell the user entries were listed / extracted / packed / compressed successfully and never invent results. path must be an absolute path under the /sdcard whitelist (validated on the Kotlin side; .. and non-whitelist paths are rejected). archive_extract is destructive; entries containing ../ are rejected by zip-slip protection. Use them for real only after the native backend is wired in.",
+].join("\n");
+
 /** Always appended, so prompts saved before this fix cannot re-enable base64 fences. */
 const MEDIA_CONTEXT_GUIDE = [
   "图片与上下文约定：",
@@ -1774,6 +1783,7 @@ export class AgentEngine {
               currentLanguage() === "en" ? SSH_TRANSFER_GUIDE_EN : SSH_TRANSFER_GUIDE,
               currentLanguage() === "en" ? SHORTCUT_GUIDE_EN : SHORTCUT_GUIDE,
               currentLanguage() === "en" ? STORAGE_MEDIA_GUIDE_EN : STORAGE_MEDIA_GUIDE,
+              currentLanguage() === "en" ? ARCHIVE_GUIDE_EN : ARCHIVE_GUIDE,
               currentLanguage() === "en" ? MEDIA_CONTEXT_GUIDE_EN : MEDIA_CONTEXT_GUIDE,
               currentLanguage() === "en" ? A2UI_GUIDE_EN : A2UI_GUIDE,
               currentLanguage() === "en" ? PERMISSION_GUIDE_EN : PERMISSION_GUIDE,

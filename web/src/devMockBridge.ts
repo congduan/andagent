@@ -259,6 +259,11 @@ function install(): void {
     /* KV（canvas / live 围栏的 andagent.kv、sessions 的持久层） */
     kvCall,
 
+    /* R150: 卡片朗读——浏览器预览无系统 TTS，返回与真机同形状的占位串，不炸。 */
+    kvTtsSpeak: (_text) => "OK: speaking(mock)",
+    kvTtsStop: () => "OK: stopped",
+    kvTtsState: () => JSON.stringify({ available: true, speaking: false }),
+
     /* 深链 / a2ui：空收件箱 */
     consumeDeeplink: () => "[]",
     consumeA2uiForms: () => "[]",
