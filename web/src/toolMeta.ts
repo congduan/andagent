@@ -220,6 +220,10 @@ export const TOOL_META: Record<string, ToolMeta> = {
   mqtt_pub: { label: "MQTT 发布", labelEn: "MQTT publish", icon: "antenna" },
   mqtt_sub: { label: "MQTT 订阅窗口", labelEn: "MQTT subscribe window", icon: "antenna" },
   mqtt_status: { label: "MQTT 订阅状态", labelEn: "MQTT subscription status", icon: "antenna" },
+  // R79: miIO LAN 协议 PoC 三工具（miio_send 控制设备为 destructive，与 Kotlin MIIO_TOOLS 对齐）
+  miio_discover: { label: "米家设备发现", labelEn: "Mi Home discover", icon: "wifi" },
+  miio_send: { label: "米家设备控制", labelEn: "Mi Home control", icon: "zap", destructive: true },
+  miio_info: { label: "米家设备信息", labelEn: "Mi Home info", icon: "info" },
   // R122: eSIM 管理（status 只读；download/enable/disable/delete 与 Kotlin destructive 对齐）
   esim_status: { label: "eSIM 状态", labelEn: "eSIM status", icon: "smartphone" },
   esim_download: { label: "下载 eSIM", labelEn: "Download eSIM", icon: "download", destructive: true },

@@ -217,6 +217,8 @@ import com.dc.andagent.tools.PcapTool
 import com.dc.andagent.tools.PCAP_TOOLS
 import com.dc.andagent.tools.MqttTool
 import com.dc.andagent.tools.MQTT_TOOLS
+import com.dc.andagent.tools.MiioTool
+import com.dc.andagent.tools.MIIO_TOOLS
 import com.dc.andagent.tools.DiscoveryTool
 import com.dc.andagent.tools.DISCOVERY_TOOLS
 import com.dc.andagent.tools.DEVTOOLS_TOOLS
@@ -684,6 +686,8 @@ class MainActivity : ComponentActivity() {
         tools.putAll(PCAP_TOOLS.associateWith { PcapTool(it) })
         // R144 (Roadmap R78 a): MQTT 三工具 mqtt_pub / mqtt_sub / mqtt_status（LAN broker 发布与订阅窗口）。
         tools.putAll(MQTT_TOOLS.associateWith { MqttTool(appContext, it) })
+        // R79 (Roadmap): miIO LAN 协议 PoC 三工具 miio_discover / miio_send / miio_info（UDP 54321，真机覆盖看运气，不承诺全设备支持）。
+        tools.putAll(MIIO_TOOLS.associateWith { MiioTool(appContext, it) })
         // R121: 语义化局域网发现（SSDP/UPnP + mDNS/DNS-SD）：电视/音箱/打印机/HA 识别 + UPnP 描述文档。
         tools.putAll(DISCOVERY_TOOLS.associateWith { DiscoveryTool(it, appContext) })
         // R122: Wi-Fi 三件套（DPP 免密入网 / Wi-Fi Direct 无路由器 P2P / RTT 测距）。

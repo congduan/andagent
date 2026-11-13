@@ -907,6 +907,7 @@ const NETWORK_GUIDE = [
   "只有 lan_discover 找不到（设备不发 SSDP/mDNS，如部分老式打印机或路由器）才退回 lan_scan：mode=ping 扫当前 Wi-Fi 的 /24，mode=port 查已知端口（8123、80、1883）。仅扫描自己所在的网络，不要扫描他人网段；不要用 http_request 对同一地址高频轮询。",
   "http_request 返回 JSON：status/ok/url/headers/body/truncated/elapsedMs。长正文用 max_chars 控制；非 2xx 时先看 status 与 body 前段再决定是否重试，不要盲目重复同一请求。",
   "MQTT 局域网设备：mqtt_pub 向 broker(tcp://主机:1883) 的 topic 发布消息（payload 可为 JSON 字符串，可选 qos/retain），mqtt_sub 用 topic_filter(+ 单层 / # 多层) 在 duration_ms 窗口内收集消息，mqtt_status 查当前/最近一次订阅统计；username/password 随调用传入、不回显不落盘。broker 不可达 / 认证失败 / DNS 失败返回 ok=false 与具体原因。",
+  "米家（miIO）局域网设备：先用 miio_discover 发现同网段设备（ip/port/stamp/deviceId，UDP 54321 HELLO 握手）；token 从米家 App / 云端获取（发现结果不含 token，miio_send 控制设备前须用户确认）；miio_send 用 token 加密下发控制命令（如 set_power），miio_info 读设备 miIO.info 并透传 result。三者均为 LAN 协议 PoC，不承诺全设备支持，失败返回 ok=false+reason；token 随调用传入、输出仅脱敏、绝不落盘。",
 ].join("\n");
 
 const WIFI_GUIDE = [
@@ -927,6 +928,7 @@ const NETWORK_GUIDE_EN = [
   "Fall back to lan_scan only when a device sends neither SSDP nor mDNS: mode=ping scans the current Wi-Fi /24, mode=port probes a known port (8123, 80, 1883). Scan only the network you are on, never someone else's range, and do not hammer one address through http_request.",
   "http_request returns JSON with status/ok/url/headers/body/truncated/elapsedMs. Bound long bodies with max_chars; on non-2xx inspect status and the body prefix before deciding whether to retry, and do not blindly repeat the same request.",
   "MQTT LAN devices: mqtt_pub publishes a message (payload may be a JSON string, optional qos/retain) to a topic on a broker (tcp://host:1883); mqtt_sub collects messages in a duration_ms window using a topic_filter (+ single-level / # multi-level); mqtt_status reports the current / last subscription stats. Pass username/password per call — they are never echoed or stored. Unreachable broker / auth failure / DNS failure return ok=false with a concrete reason.",
+  "Xiaomi Mi Home (miIO) LAN devices: start with miio_discover to find devices on the current subnet (ip/port/stamp/deviceId, UDP 54321 HELLO handshake); obtain the token from the Mi Home app / cloud (discovery never returns the token, and miio_send control requires user confirmation); miio_send sends a token-encrypted command (e.g. set_power), miio_info reads miIO.info and passes the result through. All three are LAN protocol PoCs with no guarantee of full-device support; failures return ok=false with a reason; tokens are passed per call, masked in output, never stored.",
 ].join("\n");
 
 const A11Y_GUIDE = [
