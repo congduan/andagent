@@ -103,7 +103,11 @@ object PodsMonitor {
         callback?.let { cb -> runCatching { scanner?.stopScan(cb) } }
         callback = null; scanner = null; running = false
     }
-    fun filters() = listOf(ScanFilter.Builder().setManufacturerData(0x004c, byteArrayOf(0x07), byteArrayOf(-1)).build())
+    // R149b：不要按首字节 0x07 过滤——佩戴/使用中的 AirPods 广播常以其它
+    // Continuity 帧打头（0x02 near-info 等），0x07 状态帧在链的后段；按前缀过滤
+    // 会把整包丢掉（「戴在耳朵上扫不出来」的根因）。只按 company id 过滤，
+    // AppleBleParser.parse 的链式解析自己找 0x07 帧。
+    fun filters() = listOf(ScanFilter.Builder().setManufacturerData(0x004c, byteArrayOf(), byteArrayOf()).build())
     // monitor 常驻监听用 LOW_POWER（已连接设备广播稀疏，约 2 分钟一包；
     // LOW_LATENCY 高占空比扫描不可长期跑）。显式 scan 工具用低延迟短窗。
     fun settings(lowPower: Boolean = true) = ScanSettings.Builder()
